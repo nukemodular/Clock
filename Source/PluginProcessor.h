@@ -90,6 +90,7 @@ private:
     // Click generator
     float clickEnv { 0.0f };
     float clickGainLinear { 0.5f };
+    float lastClickLevelDbCached { std::numeric_limits<float>::quiet_NaN() };
 
     // External MIDI output (device only)
     std::unique_ptr<juce::MidiOutput> externalMidiOut;

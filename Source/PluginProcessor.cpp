@@ -1,6 +1,17 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+namespace {
+    constexpr double kSixteenthQ = 0.25;      // 1/16th in quarter-notes
+    constexpr double kBarEps     = 1.0e-6;    // bar-start epsilon
+
+    inline void addBoth(juce::MidiBuffer& mainBuf, juce::MidiBuffer& extBuf, const juce::MidiMessage& msg, int sample)
+    {
+        mainBuf.addEvent(msg, sample);
+        extBuf.addEvent(msg, sample);
+    }
+}
+
 //==============================================================================
 ClockSyncAudioProcessor::ClockSyncAudioProcessor()
     : juce::AudioProcessor(
@@ -101,7 +112,11 @@ int ClockSyncAudioProcessor::getClockResolution() const
 void ClockSyncAudioProcessor::updateDerivedParams()
 {
     const auto levelDb = parameters.getRawParameterValue(paramClickLevelDb)->load();
-    clickGainLinear = juce::Decibels::decibelsToGain(levelDb);
+    if (! std::isfinite(lastClickLevelDbCached) || levelDb != lastClickLevelDbCached)
+    {
+        clickGainLinear = juce::Decibels::decibelsToGain(levelDb);
+        lastClickLevelDbCached = levelDb;
+    }
 }
 
 void ClockSyncAudioProcessor::updateExternalOut()
@@ -321,6 +336,7 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
     if (isPlaying && std::isfinite(ppqStart))
     {
         const double ppqPerSample = 1.0 / samplesPerQuarter; // quarter-notes per sample
+        const auto clockMsg = juce::MidiMessage::midiClock();
         // Update UI step (1..16) based on position within current bar.
         // If the next bar boundary falls within this block, force the UI to show step 1
         // so the visual starts at 12 o'clock on bar transitions that occur mid-block.
@@ -355,7 +371,7 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
         // Immediate retrigger while running: Start-only at the next 1/16 boundary (no Stop here)
         if (runActive && pendingRetrigger16th.load(std::memory_order_relaxed))
         {
-            const double gridQ = 0.25; // 1/16 note
+            const double gridQ = kSixteenthQ;
             const double eps = 1.0e-6;
             const double mod = std::fmod(ppqStart, gridQ);
             const bool onGrid = std::fabs(mod) <= eps || std::fabs(mod - gridQ) <= eps;
@@ -367,8 +383,7 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                 // Place Start exactly on the computed 1/16 grid sample, so it aligns with the clock tick grid
                 const int startOffset = retrigOffset;
                 const auto startMsg = juce::MidiMessage::midiStart();
-                midi.addEvent(startMsg, startOffset);
-                extClock.addEvent(startMsg, startOffset);
+                addBoth(midi, extClock, startMsg, startOffset);
 
                 // Clear immediate flag and arm a bar restart
                 pendingRetrigger16th.store(false, std::memory_order_relaxed);
@@ -417,11 +432,11 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                 const bool inGap = inGapBar || inGapImmediate;
                 if (! inGap && ! onForbidden)
                 {
-                    midi.addEvent(juce::MidiMessage::midiClock(), sampleOffset);
+                    midi.addEvent(clockMsg, sampleOffset);
                     uiClockCounter.fetch_add(1, std::memory_order_relaxed);
                     const bool shouldSendExternal = runActive || (! runActive && keepClockStopped);
                     if (externalMidiOut && shouldSendExternal)
-                        extClock.addEvent(juce::MidiMessage::midiClock(), sampleOffset);
+                        extClock.addEvent(clockMsg, sampleOffset);
                 }
                 if (clickEnabled && (t % resolutionBefore) == 0)
                     clickEnv = 1.0f;
@@ -455,11 +470,11 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                 // Past boundary; optionally suppress clock on the exact Start frame to avoid double clocks with Start
                 if (!(forbiddenClockSample >= 0 && sampleOffset == forbiddenClockSample))
                 {
-                    midi.addEvent(juce::MidiMessage::midiClock(), sampleOffset);
+                    midi.addEvent(clockMsg, sampleOffset);
                     uiClockCounter.fetch_add(1, std::memory_order_relaxed);
                     const bool shouldSendExternal = runActive || (! runActive && keepClockStopped);
                     if (externalMidiOut && shouldSendExternal)
-                        extClock.addEvent(juce::MidiMessage::midiClock(), sampleOffset);
+                        extClock.addEvent(clockMsg, sampleOffset);
                 }
                 if (clickEnabled && (t % resolutionAfter) == 0)
                     clickEnv = 1.0f;
@@ -520,7 +535,7 @@ void ClockSyncAudioProcessor::handleBarAlignedChanges(const juce::AudioPlayHead:
     const bool haveRateChange = (pendingRateIndex >= 0);
     const bool haveStart = pendingStart;
     const bool haveBarRestart = pendingBarRestart.load(std::memory_order_relaxed);
-    const double barEps = 1.0e-6;
+    const double barEps = kBarEps;
     // Special case: if we're exactly at a bar start and either a Start or a rate-change is pending,
     // fire at sample 0. This covers the case where the boundary fell exactly at the end of the previous block.
     if ((haveStart || haveRateChange || haveBarRestart) && posInBar <= barEps)
@@ -535,7 +550,7 @@ void ClockSyncAudioProcessor::handleBarAlignedChanges(const juce::AudioPlayHead:
         {
             // Define a musical gap: nearly 1/16th note before the bar boundary
             // 1/16 note = 0.25 quarter-notes. Subtract 1 sample to avoid rounding to same sample.
-            const double gapPPQ = 0.25; // 1/16th note in quarters
+            const double gapPPQ = kSixteenthQ; // 1/16th note in quarters
             const int gapSamples = juce::jmax(1, (int) std::llround(gapPPQ * samplesPerQuarter) - 1);
             // sampleOffset already computed as the boundary sample within this block
             int stopOffset = juce::jmax(0, sampleOffset - gapSamples);
