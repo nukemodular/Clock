@@ -21,9 +21,9 @@ public:
         juce::ignoreUnused(slider);
         // Center a 12x150 background inside the given bounds
         const int bgW = 12;
-        const int bgH = 150;
+        const int bgH = 100;
         const int trackW = 6;
-        const int trackH = 144;
+        const int trackH = 94;
         const int knobW = 6;
         const int knobH = 9;
 
@@ -57,7 +57,7 @@ public:
     void drawButtonBackground(juce::Graphics& g, juce::Button& button, const juce::Colour& /*bgColor*/, bool isHighlighted, bool isDown) override
     {
         auto b = button.getLocalBounds().toFloat();
-        const float corner = 5.0f;
+        const float corner = 3.0f;
         // Default looks like a hover; down or toggled = blue
         juce::Colour fill = kAccent.brighter(0.15f);
         if (button.getToggleState() || isDown)
@@ -73,7 +73,7 @@ public:
     void drawButtonText(juce::Graphics& g, juce::TextButton& b, bool, bool) override
     {
         g.setColour(kBase);
-        g.setFont(juce::Font(juce::FontOptions("Arial", 13.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions("Arial", 11.0f, juce::Font::bold)));
         g.drawFittedText(b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, 1);
     }
 
@@ -82,14 +82,19 @@ public:
         juce::ignoreUnused(width, height);
         auto r = box.getLocalBounds().toFloat();
         g.setColour(kBase);
-        g.fillRoundedRectangle(r, 4.0f);
+        g.fillRoundedRectangle(r, 3.0f);
         g.setColour(kAccent);
-        g.drawRoundedRectangle(r, 4.0f, 1.0f);
+        g.drawRoundedRectangle(r, 5.0f, 1.0f);
     }
 
     juce::Font getPopupMenuFont() override
     {
-        return juce::Font(juce::FontOptions("Arial", 13.0f, juce::Font::bold));
+        return juce::Font(juce::FontOptions("Arial", 11.0f, juce::Font::bold));
+    }
+
+    juce::Font getComboBoxFont(juce::ComboBox&) override
+    {
+        return juce::Font(juce::FontOptions("Arial", 11.0f, juce::Font::bold));
     }
 
     void drawPopupMenuBackground(juce::Graphics& g, int width, int height) override
@@ -147,7 +152,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     : juce::AudioProcessorEditor(&p), processor(p)
 {
     setResizable(false, false);
-    setSize(300, 300);
+    setSize(340, 300);
     startTimerHz(60); // smooth enough for LED/animations
 
     // Rate selection (radio buttons)
@@ -265,9 +270,7 @@ void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
     juce::Path headerPath; headerPath.addRoundedRectangle(header, 6.0f);
     g.setColour(kBase);
     g.fillPath(headerPath);
-    g.setColour(kAccent);
-    g.setFont(juce::Font(juce::FontOptions("Arial", 18.0f, juce::Font::bold)));
-    g.drawFittedText("ClockSync", header.toNearestInt(), juce::Justification::centred, 1);
+    // Label removed; header now hosts deviceBox + refreshButton components.
 
     // Small status text near the LED: STOP / ARM / RUN
     const bool isRunning = processor.getUiIsRunning();
@@ -275,7 +278,7 @@ void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
     juce::String status = isRunning ? "RUN" : (isArmed ? "ARM" : "STOP");
     g.setFont(juce::Font(juce::FontOptions("Arial", 11.0f, juce::Font::bold)));
     g.setColour(isRunning ? kCyan : (isArmed ? kAccent : kAccent));
-    g.drawFittedText(status, juce::Rectangle<int>(getWidth() - 90, (int)header.getY(), 50, (int)header.getHeight()), juce::Justification::centredRight, 1);
+    g.drawFittedText(status, juce::Rectangle<int>(getWidth() - 80, (int)header.getY(), 50, (int)header.getHeight()), juce::Justification::centredRight, 1);
 
     // LED indicator (top-right)
     const float ledRadius = 6.0f;
@@ -319,29 +322,37 @@ void ClockSyncAudioProcessorEditor::resized()
     // Top toggles
     // runToggle hidden
 
-    // MIDI device row with side buttons (IDLE CLK on left, RESET on right)
+    // Device combo + refresh button now inside header bar
     {
-        const int y = 30;
-        const int sideW = 70; // compact side buttons for 300px width
-        const int gap = 10;
-        keepClockButton.setBounds(10, y, sideW, 24);
-        //const int comboX = 10 + sideW + gap;
-
-        const int comboW = 140;
-        //const int comboX = comboW * 0.5f 
-        deviceBox.setBounds(90, y, comboW, 24);
-        refreshButton.setBounds(230 + gap, y, 50, 24);
+        const int headerH = 28;
+        const int marginX = 8;
+        const int marginY = 4;
+        const int contentH = headerH - marginY * 2; // 20px
+        const int buttonW = 40; // compact refresh button
+        const int gap = 6; // retained gap but refresh stays at left
+        const int fullComboOriginal = getWidth() - marginX * 2 - buttonW - gap; // previous wide combo width
+        int comboW = fullComboOriginal - 60; // reduce width by 60 as requested
+        comboW = std::max(100, comboW); // safety minimum (use std::max to avoid template deduction issues)
+        const int centerX = getWidth() / 2;
+        const int comboX = centerX - comboW / 2;
+        // Place refresh ("reset") button on the left side of header
+        refreshButton.setBounds(marginX + 3, marginY + 3, buttonW, contentH - 6);
+        // Center combo box horizontally in header
+        deviceBox.setBounds(comboX, marginY + 2, comboW, contentH - 4);
     }
 
+    // Keep-clock button remains below header
+    keepClockButton.setBounds(11, 30, 60, 16);
+
     // Click button above slider and slider on right
-    clickButton.setBounds(240, 60, 50, 24);
-    clickLevelSlider.setBounds(250, 90, 40, 160);
+    clickButton.setBounds(250, 30, 40, 16);
+    clickLevelSlider.setBounds(302, 30, 40, 100);
 
     // Step ring area (centered region for 160x160 ring + labels margin)
-    ringArea = juce::Rectangle<int>(70, 90, 160, 160);
+    ringArea = juce::Rectangle<int>(90, 90, 160, 160);
 
     // Trigger circle in bottom-right corner, 6px margin
-    triggerRect = juce::Rectangle<int>(getWidth() - 56, getHeight() - 56, 50, 50);
+    triggerRect = juce::Rectangle<int>(getWidth() - 80, getHeight() / 2 - 10, 70, 70);
 }
 
 void ClockSyncAudioProcessorEditor::timerCallback()
@@ -395,6 +406,22 @@ void ClockSyncAudioProcessorEditor::timerCallback()
     {
         triggerFade *= 0.92f;
         needTrigger = true;
+    }
+
+    // Step number fade tied to 16th-note updates
+    {
+        const int stepNow = juce::jlimit(1, 16, processor.getUiStep16());
+        if (stepNow != stepNumberCached)
+        {
+            stepNumberCached = stepNow;
+            stepNumberFade = 1.0f;
+            needTrigger = true;
+        }
+        else if (stepNumberFade > 0.01f)
+        {
+            stepNumberFade *= 0.90f;
+            needTrigger = true;
+        }
     }
 
     // Dispatch minimal repaints
@@ -462,13 +489,15 @@ void ClockSyncAudioProcessorEditor::drawRing(juce::Graphics& g)
     // Base ring
     g.setColour(kAccent); g.fillEllipse(outer);
     g.setColour(kBase);   g.fillEllipse(inner);
-    g.setColour(kAccent); g.drawEllipse(inner, 2.0f);
+    // No inner stroke; we handle edge cleanliness by slightly overlapping the stop bar into the ring
 
     // Stop indicator
     if (! runParamCached)
     {
         juce::Graphics::ScopedSaveState ss(g);
-        juce::Path clip; clip.addEllipse(inner); g.reduceClipRegion(clip);
+        // Expand clip by one device pixel so the bar can overlap the ring a hair, avoiding a dark AA seam
+        const float px = 1.0f / getDesktopScaleFactor();
+        juce::Path clip; clip.addEllipse(inner.expanded(px)); g.reduceClipRegion(clip);
         const float barW = 28.0f;
         juce::Rectangle<float> bar((float)cx - barW * 0.5f, (float)cy - (float)kRingInnerD, barW, (float)kRingInnerD * 2.0f);
         g.addTransform(juce::AffineTransform::rotation(juce::MathConstants<float>::pi * 0.75f, (float)cx, (float)cy));
@@ -484,18 +513,7 @@ void ClockSyncAudioProcessorEditor::drawRing(juce::Graphics& g)
     juce::Path wedge; wedge.addPieSegment(outer, startAngle, endAngle, (float) kRingInnerD / (float) kRingOuterD);
     g.setColour(runParamCached ? kCyan : kCyan.withAlpha(0.5f)); g.fillPath(wedge);
 
-    // Numbers
-    g.setColour(kAccent);
-    g.setFont(juce::Font(juce::FontOptions("Arial", 11.0f, juce::Font::bold)));
-    const float numRadius = (float) kRingOuterD * 0.5f + 10.0f;
-    for (int i = 0; i < 16; ++i)
-    {
-        const float angMid = startAt12 + (float) i * sliceAngle;
-        const float tx = (float) cx + numRadius * std::cos(angMid);
-        const float ty = (float) cy + numRadius * std::sin(angMid);
-        juce::Rectangle<int> tb((int) tx - 10, (int) ty - 7, 20, 14);
-        g.drawFittedText(juce::String(i + 1), tb, juce::Justification::centred, 1);
-    }
+    // Numbers hidden per request
 }
 
 void ClockSyncAudioProcessorEditor::drawTrigger(juce::Graphics& g)
@@ -505,10 +523,18 @@ void ClockSyncAudioProcessorEditor::drawTrigger(juce::Graphics& g)
     juce::Colour active = kCyan;
     juce::Colour fill = base.interpolatedWith(active, juce::jlimit(0.0f, 1.0f, triggerFade));
     auto rf = triggerRect.toFloat();
-    g.setColour(juce::Colours::black.withAlpha(0.5f));
-    g.fillEllipse(rf.withX(rf.getX() - 1.5f).withY(rf.getY() + 1.5f));
+    // g.setColour(juce::Colours::black.withAlpha(0.5f));
+    // g.fillEllipse(rf.withX(rf.getX() - 1.5f).withY(rf.getY() + 1.5f));
     g.setColour(fill); g.fillEllipse(rf);
-    g.setColour(kBase); g.drawEllipse(rf, 1.5f);
+    g.setColour(kBase); //g.drawEllipse(rf, 1.5f);
+    g.fillEllipse(rf.reduced(12.0f));
+    // Cyan step number (1-16) with fade-out, centred inside triggerRect
+    const int stepNow = juce::jlimit(1, 16, stepNumberCached > 0 ? stepNumberCached : processor.getUiStep16());
+    const float alpha = juce::jlimit(0.0f, 1.0f, stepNumberFade);
+    g.setColour(kCyan.withAlpha(alpha));
+    g.setFont(juce::Font(juce::FontOptions("Arial", 33.0f, juce::Font::bold)));
+    g.drawFittedText(juce::String(stepNow), triggerRect, juce::Justification::centred, 1);
+   
 }
 
 void ClockSyncAudioProcessorEditor::refreshDeviceList()
