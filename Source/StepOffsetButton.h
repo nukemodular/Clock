@@ -152,7 +152,7 @@ private:
     {
         // Arrange 16 small rings around the button, radius grows by openAmount
         const int count = 16;
-        const float itemD = 18.0f; // larger; can touch easily
+        const float itemD = 22.0f; // unified with hit-test; can touch easily
         const float itemR = itemD * 0.5f;
         const float minRadius = baseD * 0.5f + 4.0f; // closer to base so items can touch easily
         const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - itemR - 2.0f;

@@ -209,19 +209,11 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     {
         if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramResyncOffsetStep))
         {
-            if (auto* pi = dynamic_cast<juce::AudioParameterInt*>(p))
-            {
-                pi->beginChangeGesture();
-                // AudioParameterInt::setValueNotifyingHost expects raw value for ints in JUCE 7
-                pi->setValueNotifyingHost((float) juce::jlimit(1, 16, step));
-                pi->endChangeGesture();
-            }
-            else
-            {
-                const auto& range = p->getNormalisableRange();
-                const float norm = range.convertTo0to1((float) juce::jlimit(1, 16, step));
-                p->setValueNotifyingHost(norm);
-            }
+            const auto& range = p->getNormalisableRange();
+            const float norm = range.convertTo0to1((float) juce::jlimit(1, 16, step));
+            p->beginChangeGesture();
+            p->setValueNotifyingHost(norm);
+            p->endChangeGesture();
         }
     };
 
