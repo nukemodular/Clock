@@ -18,14 +18,16 @@ juce_add_plugin(ClockSync
     PRODUCT_NAME "ClockSync"
     BUNDLE_ID com.plugprocess.clocksync
     IS_SYNTH TRUE
-    NEEDS_MIDI_INPUT FALSE
+    NEEDS_MIDI_INPUT TRUE
+    NEEDS_MIDI_OUTPUT TRUE
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD TRUE
-    PLUGIN_MANUFACTURER_CODE PlPr
-    PLUGIN_CODE ClkS
+    PLUGIN_MANUFACTURER_CODE PLPR
+    PLUGIN_CODE CLKS
     FORMATS VST3
-    VST3_CATEGORIES "Instrument"
+    # Include Synth subcategory to improve host discovery under Instruments
+    VST3_CATEGORIES "Instrument Synth"
 )
 
 target_sources(ClockSync
@@ -41,8 +43,6 @@ target_compile_definitions(ClockSync
         JUCE_VST3_CAN_REPLACE_VST2=0
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
-        # Force plugin to advertise MIDI output capability
-        JucePlugin_ProducesMidiOutput=1
 )
 
 target_link_libraries(ClockSync
@@ -60,4 +60,10 @@ if (APPLE)
         MACOSX_BUNDLE TRUE
         XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY ""
     )
+
+    # Optional install rule: allows installing to system VST3 folder via
+    #   cmake --install <build-dir> --component ClockSync_VST3 --prefix /Library
+    install(TARGETS ClockSync
+        BUNDLE DESTINATION "Audio/Plug-Ins/VST3"
+        COMPONENT ClockSync_VST3)
 endif()
