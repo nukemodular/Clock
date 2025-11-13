@@ -70,7 +70,6 @@ private:
     float triggerFade { 0.0f };       // 0..1, blue -> red fade after click
     // Step number fade shown inside triggerRect, updates each 16th
     int stepNumberCached { 0 };
-    float stepNumberFade { 0.0f };    // 0..1 alpha for the step number
 
     // Cached rate parameter pointer to avoid repeated dynamic_cast in timer
     juce::AudioParameterChoice* rateParam { nullptr };

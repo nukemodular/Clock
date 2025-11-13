@@ -352,7 +352,7 @@ void ClockSyncAudioProcessorEditor::resized()
     ringArea = juce::Rectangle<int>(90, 90, 160, 160);
 
     // Trigger circle in bottom-right corner, 6px margin
-    triggerRect = juce::Rectangle<int>(getWidth() - 80, getHeight() / 2 - 10, 70, 70);
+    triggerRect = juce::Rectangle<int>(240, 70, 70, 70);
 }
 
 void ClockSyncAudioProcessorEditor::timerCallback()
@@ -408,18 +408,12 @@ void ClockSyncAudioProcessorEditor::timerCallback()
         needTrigger = true;
     }
 
-    // Step number fade tied to 16th-note updates
+    // Step number update tied to 16th-note changes (no fade)
     {
         const int stepNow = juce::jlimit(1, 16, processor.getUiStep16());
         if (stepNow != stepNumberCached)
         {
             stepNumberCached = stepNow;
-            stepNumberFade = 1.0f;
-            needTrigger = true;
-        }
-        else if (stepNumberFade > 0.01f)
-        {
-            stepNumberFade *= 0.90f;
             needTrigger = true;
         }
     }
@@ -528,10 +522,9 @@ void ClockSyncAudioProcessorEditor::drawTrigger(juce::Graphics& g)
     g.setColour(fill); g.fillEllipse(rf);
     g.setColour(kBase); //g.drawEllipse(rf, 1.5f);
     g.fillEllipse(rf.reduced(12.0f));
-    // Cyan step number (1-16) with fade-out, centred inside triggerRect
+    // Cyan step number (1-16), centred inside triggerRect
     const int stepNow = juce::jlimit(1, 16, stepNumberCached > 0 ? stepNumberCached : processor.getUiStep16());
-    const float alpha = juce::jlimit(0.0f, 1.0f, stepNumberFade);
-    g.setColour(kCyan.withAlpha(alpha));
+    g.setColour(kCyan);
     g.setFont(juce::Font(juce::FontOptions("Arial", 33.0f, juce::Font::bold)));
     g.drawFittedText(juce::String(stepNow), triggerRect, juce::Justification::centred, 1);
    
