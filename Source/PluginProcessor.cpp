@@ -541,24 +541,24 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
     const bool haveStart = pendingStart;
     const bool haveBarRestart = pendingBarRestart.load(std::memory_order_relaxed);
 
-    // Compute signed offset around the bar: steps 2..8 -> +later; steps 9..16 -> -earlier.
+    // Compute the next occurrence of the selected step (1..16) at or after 'now'.
+    // If the selected step lies ahead in the current bar, use it; otherwise target the same step in the next bar.
     int offsetStep = 1;
     if (auto* pi = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramResyncOffsetStep)))
         offsetStep = juce::jlimit(1, 16, pi->get());
     else if (auto* p = parameters.getParameter(paramResyncOffsetStep))
         offsetStep = juce::jlimit(1, 16, (int) juce::roundToInt(p->getValue() * 15.0f + 1.0f));
-    const int signedSteps = ((offsetStep - 1 + 8) % 16) - 8; // -8..+7, e.g. 3->+2, 15->-2, 16->-1
-    const double offsetQ = (double) signedSteps * (barLenQ / 16.0);
+    const int stepIndex0 = offsetStep - 1; // 0..15
+    const double stepQWithinBar = (barLenQ / 16.0) * (double) stepIndex0;
 
-    // For any pending restart/change, schedule at next bar shifted by signed offset.
     if (haveStart || haveBarRestart || haveRateChange)
     {
-        double totalQ = remainQ + offsetQ; // relative to next bar
-        if (totalQ < 0.0)
-            totalQ += barLenQ; // ensure future time (wrap to subsequent bar)
-        sampleOffset = fastRoundPositive(totalQ * samplesPerQuarter);
-        // If we are exactly at the bar and offset is zero, land on this block's start
-        if (posInBar <= kBarEps && signedSteps == 0)
+        double deltaQ = stepQWithinBar - posInBar; // target within current bar minus current position
+        if (deltaQ < -kBarEps)
+            deltaQ += barLenQ; // move to the same step in the next bar if it's already passed
+        // If we're effectively on the bar and step is 1, keep at sample 0
+        sampleOffset = fastRoundPositive(deltaQ * samplesPerQuarter);
+        if (posInBar <= kBarEps && stepIndex0 == 0)
             sampleOffset = 0;
     }
 
