@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_gui_extra/juce_gui_extra.h>
 #include "PluginProcessor.h"
+#include "StepOffsetButton.h"
 
 class ClockSyncAudioProcessorEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
@@ -36,6 +37,7 @@ private:
     juce::Label resolutionLabel { {}, {} };
     juce::Label deviceLabel { {}, {} };
     juce::Label clickLevelLabel { {}, {} };
+    AnimatedStepOffsetButton stepOffsetButton;
 
     // Attachments
     // Attachments

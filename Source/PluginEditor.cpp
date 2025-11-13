@@ -186,6 +186,8 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     clickLevelSlider.setRange(-12.0, 0.0, 0.1);
     addAndMakeVisible(clickLevelSlider);
 
+    // Step offset selector (animated button) - configured after APVTS reference below
+
     auto& apvts = processor.getAPVTS();
     // Rate buttons manually control choice param
     // Attachments
@@ -193,6 +195,35 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     clickLevelAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(apvts, ClockSyncAudioProcessor::paramClickLevelDb, clickLevelSlider);
     runAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(apvts, ClockSyncAudioProcessor::paramRun, runToggle);
     keepClockAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(apvts, ClockSyncAudioProcessor::paramClockWhileStopped, keepClockButton);
+
+    // Step offset selector (animated button)
+    addAndMakeVisible(stepOffsetButton);
+    stepOffsetButton.setColours(kAccent, kBase, kCyan);
+    {
+        int initialStep = 1;
+        if (auto* pi = dynamic_cast<juce::AudioParameterInt*>(apvts.getParameter(ClockSyncAudioProcessor::paramResyncOffsetStep)))
+            initialStep = pi->get();
+        stepOffsetButton.setStep(initialStep);
+    }
+    stepOffsetButton.onStepChanged = [this](int step)
+    {
+        if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramResyncOffsetStep))
+        {
+            if (auto* pi = dynamic_cast<juce::AudioParameterInt*>(p))
+            {
+                pi->beginChangeGesture();
+                // AudioParameterInt::setValueNotifyingHost expects raw value for ints in JUCE 7
+                pi->setValueNotifyingHost((float) juce::jlimit(1, 16, step));
+                pi->endChangeGesture();
+            }
+            else
+            {
+                const auto& range = p->getNormalisableRange();
+                const float norm = range.convertTo0to1((float) juce::jlimit(1, 16, step));
+                p->setValueNotifyingHost(norm);
+            }
+        }
+    };
 
     // Hide the run toggle in favour of ring click
     runToggle.setVisible(false);
@@ -348,6 +379,10 @@ void ClockSyncAudioProcessorEditor::resized()
     clickButton.setBounds(250, 30, 40, 16);
     clickLevelSlider.setBounds(302, 30, 40, 100);
 
+    // Step offset button area (allows room for animated options)
+    // Place on right side below trigger; component is larger than base (for animation), base remains centred inside
+    stepOffsetButton.setBounds(230, 180, 100, 100);
+
     // Step ring area (centered region for 160x160 ring + labels margin)
     ringArea = juce::Rectangle<int>(90, 90, 160, 160);
 
@@ -415,6 +450,18 @@ void ClockSyncAudioProcessorEditor::timerCallback()
         {
             stepNumberCached = stepNow;
             needTrigger = true;
+        }
+    }
+
+    // Sync step offset button with parameter (automation support)
+    {
+        int paramStep = -1;
+        if (auto* pi = dynamic_cast<juce::AudioParameterInt*>(processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramResyncOffsetStep)))
+            paramStep = juce::jlimit(1, 16, pi->get());
+        if (paramStep > 0 && paramStep != stepOffsetButton.getStep())
+        {
+            stepOffsetButton.setStep(paramStep);
+            // no repaint flag needed; component repaints itself
         }
     }
 

@@ -65,6 +65,7 @@ public:
     static inline const juce::String paramClickLevelDb    { "clickLevelDb" }; // -12..0 dB
     static inline const juce::String paramRun             { "run" };            // true=running, false=stopped
     static inline const juce::String paramClockWhileStopped { "clockWhileStopped" }; // keep sending F8 while run==false
+    static inline const juce::String paramResyncOffsetStep { "resyncOffsetStep" }; // 1..16, step within bar where (re)start happens
 
 private:
     //==============================================================================
