@@ -97,7 +97,7 @@ public:
     void mouseMove(const juce::MouseEvent& e) override
     {
         if (! menuOpen || openAmount <= 0.01f) return;
-        const int idx = hitTestOption(e.position);
+        const int idx = hitTestOptionHover(e.position);
         if (idx != hoverIndex)
         {
             hoverIndex = idx;
@@ -243,20 +243,49 @@ private:
             const float cy = center.y + radius * std::sin(ang);
             const float dx = pos.x - cx;
             const float dy = pos.y - cy;
-            // Use the same ripple scale for hit testing to match visuals
-            float sc = 1.0f;
-            if (hoverIndex >= 1)
-            {
-                const int a = i + 1;
-                const int b = hoverIndex;
-                int d = std::abs(a - b);
-                d = juce::jmin(d, 16 - d);
-                sc = (d == 0 ? s0 : d == 1 ? s1 : d == 2 ? s2 : d == 3 ? s3 : 1.0f);
-            }
-            const float rr = (itemR * sc);
+            const float rr = itemR; // strict click area equals base circle
             if ((dx*dx + dy*dy) <= (rr * rr))
                 return i + 1;
         }
         return -1;
+    }
+
+    // Hover detection: expanded radius and choose the nearest circle among candidates
+    int hitTestOptionHover(juce::Point<float> pos) const
+    {
+        if (openAmount <= 0.01f) return -1;
+        const int count = 16;
+        const float itemD = 22.0f;
+        const float itemR = itemD * 0.5f;
+        const float extra = 8.0f; // expand hover radius by 8px for easier targeting
+        const auto r = getLocalBounds().toFloat();
+        const auto center = r.getCentre();
+        const float baseD = 60.0f;
+        const float minRadius = baseD * 0.5f + 4.0f;
+        // Allow enough headroom for hover scaling in layout
+        const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - (itemR * 1.6f) - 2.0f;
+        const float radius = juce::jlimit(minRadius, juce::jmax(minRadius, maxRadius), minRadius + (maxRadius - minRadius) * openAmount);
+        const float startAt12 = -juce::MathConstants<float>::halfPi;
+        const float step = juce::MathConstants<float>::twoPi / (float) count;
+
+        int bestIndex = -1;
+        float bestDist2 = std::numeric_limits<float>::max();
+        const float rr = itemR + extra;
+        const float rr2 = rr * rr;
+        for (int i = 0; i < count; ++i)
+        {
+            const float ang = startAt12 + step * (float) i;
+            const float cx = center.x + radius * std::cos(ang);
+            const float cy = center.y + radius * std::sin(ang);
+            const float dx = pos.x - cx;
+            const float dy = pos.y - cy;
+            const float d2 = dx*dx + dy*dy;
+            if (d2 <= rr2 && d2 < bestDist2)
+            {
+                bestDist2 = d2;
+                bestIndex = i + 1;
+            }
+        }
+        return bestIndex;
     }
 };
