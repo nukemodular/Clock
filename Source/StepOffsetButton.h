@@ -92,6 +92,26 @@ public:
         }
     }
 
+    void mouseMove(const juce::MouseEvent& e) override
+    {
+        if (! menuOpen || openAmount <= 0.01f) return;
+        const int idx = hitTestOption(e.position);
+        if (idx != hoverIndex)
+        {
+            hoverIndex = idx;
+            repaint();
+        }
+    }
+
+    void mouseExit(const juce::MouseEvent&) override
+    {
+        if (hoverIndex != -1)
+        {
+            hoverIndex = -1;
+            repaint();
+        }
+    }
+
     void resized() override { }
 
 private:
@@ -102,6 +122,7 @@ private:
     float openAmount { 0.0f }; // 0..1
 
     int selectedStep { 1 };
+    int hoverIndex   { -1 }; // 1..16 when hovering, else -1
 
     // Local theme colours (defaults match PluginEditor)
     juce::Colour kAccent { juce::Colour::fromRGB(0xFF, 0x4E, 0x5B) };
@@ -129,7 +150,7 @@ private:
     {
         // Arrange 16 small rings around the button, radius grows by openAmount
         const int count = 16;
-        const float itemD = 20.0f; // bigger; may touch
+        const float itemD = 22.0f; // larger; can touch easily
         const float itemR = itemD * 0.5f;
         const float minRadius = baseD * 0.5f + 4.0f; // closer to base so items can touch easily
         const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - itemR - 2.0f;
@@ -138,18 +159,36 @@ private:
         g.addTransform(juce::AffineTransform());
         const float startAt12 = -juce::MathConstants<float>::halfPi;
         const float step = juce::MathConstants<float>::twoPi / (float) count;
-
-        g.setFont(juce::Font(juce::FontOptions("Arial", 14.0f, juce::Font::bold)));
+        // Draw non-hovered items first
         for (int i = 0; i < count; ++i)
         {
+            if (i + 1 == hoverIndex) continue;
             const float ang = startAt12 + step * (float) i;
             const float cx = center.x + radius * std::cos(ang);
             const float cy = center.y + radius * std::sin(ang);
             juce::Rectangle<float> ring(cx - itemR, cy - itemR, itemD, itemD);
-            // Solid accent circle (no inner circle)
             g.setColour(kAccent); g.fillEllipse(ring);
-            // Number (1..16) in Base colour
             g.setColour(kBase);
+            g.setFont(juce::Font(juce::FontOptions("Arial", 15.0f, juce::Font::bold)));
+            g.drawFittedText(juce::String(i + 1), ring.toNearestInt(), juce::Justification::centred, 1);
+        }
+        // Draw hovered last, scaled and on top
+        if (hoverIndex >= 1 && hoverIndex <= count)
+        {
+            const int i = hoverIndex - 1;
+            const float ang = startAt12 + step * (float) i;
+            const float cx = center.x + radius * std::cos(ang);
+            const float cy = center.y + radius * std::sin(ang);
+            const float scale = 1.3f;
+            const float d = itemD * scale;
+            const float r = d * 0.5f;
+            juce::Rectangle<float> ring(cx - r, cy - r, d, d);
+            // Optional subtle shadow to emphasize front
+            g.setColour(juce::Colours::black.withAlpha(0.25f));
+            g.fillEllipse(ring.translated(0.0f, 1.5f));
+            g.setColour(kAccent); g.fillEllipse(ring);
+            g.setColour(kBase);
+            g.setFont(juce::Font(juce::FontOptions("Arial", 17.0f, juce::Font::bold)));
             g.drawFittedText(juce::String(i + 1), ring.toNearestInt(), juce::Justification::centred, 1);
         }
     }
@@ -158,7 +197,7 @@ private:
     {
         if (openAmount <= 0.01f) return -1;
         const int count = 16;
-        const float itemD = 20.0f;
+        const float itemD = 22.0f;
         const float itemR = itemD * 0.5f;
         const auto r = getLocalBounds().toFloat();
         const auto center = r.getCentre();
