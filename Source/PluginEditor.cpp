@@ -371,9 +371,9 @@ void ClockSyncAudioProcessorEditor::resized()
     clickButton.setBounds(250, 30, 40, 16);
     clickLevelSlider.setBounds(302, 30, 40, 100);
 
-    // Step offset button area (allows room for animated options)
-    // Place on right side below trigger; component is larger than base (for animation), base remains centred inside
-    stepOffsetButton.setBounds(230, 180, 100, 100);
+    // Step offset button area (expanded to avoid hover scaling clipping)
+    // Place on right side, below ring and left of slider, with ample space for enlarged option circles
+        stepOffsetButton.setBounds(220, 160, 140, 140);
 
     // Step ring area (centered region for 160x160 ring + labels margin)
     ringArea = juce::Rectangle<int>(90, 90, 160, 160);

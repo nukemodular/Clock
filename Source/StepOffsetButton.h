@@ -154,24 +154,48 @@ private:
         const int count = 16;
         const float itemD = 22.0f; // unified with hit-test; can touch easily
         const float itemR = itemD * 0.5f;
+        // Hover scaling ripple factors
+        const float s0 = 1.6f, s1 = 1.4f, s2 = 1.2f, s3 = 1.1f;
+        const float maxScaleR = itemR * s0; // ensure no clipping when fully open
         const float minRadius = baseD * 0.5f + 4.0f; // closer to base so items can touch easily
-        const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - itemR - 2.0f;
+        const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - maxScaleR - 2.0f;
         const float radius = juce::jlimit(minRadius, juce::jmax(minRadius, maxRadius), minRadius + (maxRadius - minRadius) * openAmount);
 
         g.addTransform(juce::AffineTransform());
         const float startAt12 = -juce::MathConstants<float>::halfPi;
         const float step = juce::MathConstants<float>::twoPi / (float) count;
-        // Draw non-hovered items first
+        auto scaleFor = [this, s0, s1, s2, s3](int idx)->float
+        {
+            if (hoverIndex < 1) return 1.0f;
+            // idx is 0-based; hoverIndex is 1-based
+            const int a = idx + 1;
+            const int b = hoverIndex;
+            int d = std::abs(a - b);
+            d = juce::jmin(d, 16 - d); // circular distance
+            switch (d)
+            {
+                case 0: return s0;
+                case 1: return s1;
+                case 2: return s2;
+                case 3: return s3;
+                default: return 1.0f;
+            }
+        };
+
+        // Draw non-hovered items first (with ripple scaling)
         for (int i = 0; i < count; ++i)
         {
             if (i + 1 == hoverIndex) continue;
             const float ang = startAt12 + step * (float) i;
             const float cx = center.x + radius * std::cos(ang);
             const float cy = center.y + radius * std::sin(ang);
-            juce::Rectangle<float> ring(cx - itemR, cy - itemR, itemD, itemD);
+            const float sc = scaleFor(i);
+            const float d = itemD * sc;
+            const float r = d * 0.5f;
+            juce::Rectangle<float> ring(cx - r, cy - r, d, d);
             g.setColour(kAccent); g.fillEllipse(ring);
             g.setColour(kBase);
-            g.setFont(juce::Font(juce::FontOptions("Arial", 15.0f, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions("Arial", 15.0f * sc, juce::Font::bold)));
             g.drawFittedText(juce::String(i + 1), ring.toNearestInt(), juce::Justification::centred, 1);
         }
         // Draw hovered last, scaled and on top
@@ -181,7 +205,7 @@ private:
             const float ang = startAt12 + step * (float) i;
             const float cx = center.x + radius * std::cos(ang);
             const float cy = center.y + radius * std::sin(ang);
-            const float scale = 1.5f;
+            const float scale = s0;
             const float d = itemD * scale;
             const float r = d * 0.5f;
             juce::Rectangle<float> ring(cx - r, cy - r, d, d);
@@ -190,7 +214,7 @@ private:
             g.fillEllipse(ring.translated(0.0f, 1.5f));
             g.setColour(kCyan); g.fillEllipse(ring);
             g.setColour(kBase);
-            g.setFont(juce::Font(juce::FontOptions("Arial", 17.0f, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions("Arial", 17.0f * scale / s0, juce::Font::bold)));
             g.drawFittedText(juce::String(i + 1), ring.toNearestInt(), juce::Justification::centred, 1);
         }
     }
@@ -204,8 +228,10 @@ private:
         const auto r = getLocalBounds().toFloat();
         const auto center = r.getCentre();
         const float baseD = 60.0f;
+        const float s0 = 1.6f, s1 = 1.4f, s2 = 1.2f, s3 = 1.1f;
+        const float maxScaleR = itemR * s0;
         const float minRadius = baseD * 0.5f + 4.0f;
-        const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - itemR - 2.0f;
+        const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - maxScaleR - 2.0f;
         const float radius = juce::jlimit(minRadius, juce::jmax(minRadius, maxRadius), minRadius + (maxRadius - minRadius) * openAmount);
         const float startAt12 = -juce::MathConstants<float>::halfPi;
         const float step = juce::MathConstants<float>::twoPi / (float) count;
@@ -217,7 +243,18 @@ private:
             const float cy = center.y + radius * std::sin(ang);
             const float dx = pos.x - cx;
             const float dy = pos.y - cy;
-            if ((dx*dx + dy*dy) <= (itemR * itemR))
+            // Use the same ripple scale for hit testing to match visuals
+            float sc = 1.0f;
+            if (hoverIndex >= 1)
+            {
+                const int a = i + 1;
+                const int b = hoverIndex;
+                int d = std::abs(a - b);
+                d = juce::jmin(d, 16 - d);
+                sc = (d == 0 ? s0 : d == 1 ? s1 : d == 2 ? s2 : d == 3 ? s3 : 1.0f);
+            }
+            const float rr = (itemR * sc);
+            if ((dx*dx + dy*dy) <= (rr * rr))
                 return i + 1;
         }
         return -1;
