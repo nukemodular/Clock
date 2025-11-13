@@ -1,0 +1,13 @@
+# Build artifacts
+/build/
+/cmake-build*/
+*.user
+*.DS_Store
+
+# Xcode
+*.xcworkspace/
+*.xcodeproj/
+DerivedData/
+
+# JUCE/Projucer caches (if any)
+**/JuceLibraryCode/
