@@ -129,9 +129,9 @@ private:
     {
         // Arrange 16 small rings around the button, radius grows by openAmount
         const int count = 16;
-        const float itemD = 14.0f;
+        const float itemD = 20.0f; // bigger; may touch
         const float itemR = itemD * 0.5f;
-        const float minRadius = baseD * 0.5f + 8.0f; // just outside base
+        const float minRadius = baseD * 0.5f + 4.0f; // closer to base so items can touch easily
         const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - itemR - 2.0f;
         const float radius = juce::jlimit(minRadius, juce::jmax(minRadius, maxRadius), minRadius + (maxRadius - minRadius) * openAmount);
 
@@ -139,18 +139,17 @@ private:
         const float startAt12 = -juce::MathConstants<float>::halfPi;
         const float step = juce::MathConstants<float>::twoPi / (float) count;
 
-        g.setFont(juce::Font(juce::FontOptions("Arial", 11.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions("Arial", 14.0f, juce::Font::bold)));
         for (int i = 0; i < count; ++i)
         {
             const float ang = startAt12 + step * (float) i;
             const float cx = center.x + radius * std::cos(ang);
             const float cy = center.y + radius * std::sin(ang);
             juce::Rectangle<float> ring(cx - itemR, cy - itemR, itemD, itemD);
-            // Accent ring with inner Base fill (donut look)
+            // Solid accent circle (no inner circle)
             g.setColour(kAccent); g.fillEllipse(ring);
-            g.setColour(kBase);   g.fillEllipse(ring.reduced(3.0f));
-            // Number (1..16)
-            g.setColour(kCyan);
+            // Number (1..16) in Base colour
+            g.setColour(kBase);
             g.drawFittedText(juce::String(i + 1), ring.toNearestInt(), juce::Justification::centred, 1);
         }
     }
@@ -159,12 +158,12 @@ private:
     {
         if (openAmount <= 0.01f) return -1;
         const int count = 16;
-        const float itemD = 14.0f;
+        const float itemD = 20.0f;
         const float itemR = itemD * 0.5f;
         const auto r = getLocalBounds().toFloat();
         const auto center = r.getCentre();
         const float baseD = 60.0f;
-        const float minRadius = baseD * 0.5f + 8.0f;
+        const float minRadius = baseD * 0.5f + 4.0f;
         const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - itemR - 2.0f;
         const float radius = juce::jlimit(minRadius, juce::jmax(minRadius, maxRadius), minRadius + (maxRadius - minRadius) * openAmount);
         const float startAt12 = -juce::MathConstants<float>::halfPi;
