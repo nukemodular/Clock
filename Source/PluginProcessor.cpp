@@ -541,28 +541,25 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
     const bool haveStart = pendingStart;
     const bool haveBarRestart = pendingBarRestart.load(std::memory_order_relaxed);
 
-    // Compute optional offset inside next bar for (re)starts; rate changes remain bar-aligned
+    // Compute signed offset around the bar: steps 2..8 -> +later; steps 9..16 -> -earlier.
     int offsetStep = 1;
-    if (auto* p = parameters.getParameter(paramResyncOffsetStep))
-        offsetStep = juce::jlimit(1, 16, (int) juce::roundToInt(p->getValue() * 15.0f + 1.0f));
-    // Convert normalized to absolute if necessary
     if (auto* pi = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramResyncOffsetStep)))
-        offsetStep = pi->get();
-    const double offsetQ = ((double) (offsetStep - 1) / 16.0) * barLenQ; // 0 when step=1
+        offsetStep = juce::jlimit(1, 16, pi->get());
+    else if (auto* p = parameters.getParameter(paramResyncOffsetStep))
+        offsetStep = juce::jlimit(1, 16, (int) juce::roundToInt(p->getValue() * 15.0f + 1.0f));
+    const int signedSteps = ((offsetStep - 1 + 8) % 16) - 8; // -8..+7, e.g. 3->+2, 15->-2, 16->-1
+    const double offsetQ = (double) signedSteps * (barLenQ / 16.0);
 
-    // If we will (re)start, schedule at next bar + offset; if exactly at bar start, this becomes offset only
-    if (haveStart || haveBarRestart)
+    // For any pending restart/change, schedule at next bar shifted by signed offset.
+    if (haveStart || haveBarRestart || haveRateChange)
     {
-        const double totalQ = remainQ + offsetQ;
+        double totalQ = remainQ + offsetQ; // relative to next bar
+        if (totalQ < 0.0)
+            totalQ += barLenQ; // ensure future time (wrap to subsequent bar)
         sampleOffset = fastRoundPositive(totalQ * samplesPerQuarter);
-        // If we are effectively on the bar and offset is 0, then sampleOffset should be 0
-        if (posInBar <= kBarEps && offsetQ <= kBarEps)
+        // If we are exactly at the bar and offset is zero, land on this block's start
+        if (posInBar <= kBarEps && signedSteps == 0)
             sampleOffset = 0;
-    }
-    else if ((haveRateChange) && posInBar <= kBarEps)
-    {
-        // Rate change only: still align exactly to bar start when already on boundary
-        sampleOffset = 0;
     }
 
     if (sampleOffset <= numSamples - 1 && (haveRateChange || haveStart || haveBarRestart))
@@ -582,11 +579,8 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
         const auto startMsg = juce::MidiMessage::midiStart();
         midi.addEvent(startMsg, sampleOffset);
         extBuffer.addEvent(startMsg, sampleOffset);
-        // UI step is 1 at the bar start; if offset > 0, set step accordingly
-        if (offsetQ <= kBarEps)
-            uiStep16.store(1, std::memory_order_relaxed);
-        else
-            uiStep16.store(juce::jlimit(1, 16, offsetStep), std::memory_order_relaxed);
+        // Reflect selected step in UI at restart
+        uiStep16.store(juce::jlimit(1, 16, offsetStep), std::memory_order_relaxed);
 
         if (haveRateChange)
         {

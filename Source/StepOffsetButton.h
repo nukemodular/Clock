@@ -46,13 +46,15 @@ public:
         juce::Rectangle<float> outer(center.x - outerD * 0.5f, center.y - outerD * 0.5f, outerD, outerD);
         juce::Rectangle<float> inner = outer.reduced(innerReduce);
 
+        // Base button
+        g.setColour(kAccent); g.fillEllipse(outer);
+        g.setColour(kBase);   g.fillEllipse(inner);
+
         // Draw options if open
         if (openAmount > 0.01f)
             drawOptions(g, center, outerD);
 
-        // Base button
-        g.setColour(kAccent); g.fillEllipse(outer);
-        g.setColour(kBase);   g.fillEllipse(inner);
+
         // Number
         g.setColour(kCyan);
         g.setFont(juce::Font(juce::FontOptions("Arial", 22.0f, juce::Font::bold)));
@@ -150,7 +152,7 @@ private:
     {
         // Arrange 16 small rings around the button, radius grows by openAmount
         const int count = 16;
-        const float itemD = 22.0f; // larger; can touch easily
+        const float itemD = 18.0f; // larger; can touch easily
         const float itemR = itemD * 0.5f;
         const float minRadius = baseD * 0.5f + 4.0f; // closer to base so items can touch easily
         const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - itemR - 2.0f;
@@ -179,14 +181,14 @@ private:
             const float ang = startAt12 + step * (float) i;
             const float cx = center.x + radius * std::cos(ang);
             const float cy = center.y + radius * std::sin(ang);
-            const float scale = 1.3f;
+            const float scale = 1.5f;
             const float d = itemD * scale;
             const float r = d * 0.5f;
             juce::Rectangle<float> ring(cx - r, cy - r, d, d);
             // Optional subtle shadow to emphasize front
             g.setColour(juce::Colours::black.withAlpha(0.25f));
             g.fillEllipse(ring.translated(0.0f, 1.5f));
-            g.setColour(kAccent); g.fillEllipse(ring);
+            g.setColour(kCyan); g.fillEllipse(ring);
             g.setColour(kBase);
             g.setFont(juce::Font(juce::FontOptions("Arial", 17.0f, juce::Font::bold)));
             g.drawFittedText(juce::String(i + 1), ring.toNearestInt(), juce::Justification::centred, 1);
