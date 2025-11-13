@@ -196,8 +196,9 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     // Initialise cached param states for first paint
     if (auto* rp = apvts.getRawParameterValue(ClockSyncAudioProcessor::paramRun))
         runParamCached = rp->load() > 0.5f;
-    if (auto* cp = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(ClockSyncAudioProcessor::paramClockRateIndex)))
-        rateIndexCached = cp->getIndex();
+    rateParam = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(ClockSyncAudioProcessor::paramClockRateIndex));
+    if (rateParam != nullptr)
+        rateIndexCached = rateParam->getIndex();
     auto setRateIndex = [this](int idx)
     {
         if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramClockRateIndex))
@@ -280,8 +281,8 @@ void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
     const float ledRadius = 6.0f;
     const auto ledCenter = juce::Point<float>(getWidth() - 18.0f, header.getCentreY());
     const float a = juce::jlimit(0.0f, 1.0f, ledLevel);
-    juce::Colour ledOn = kCyan.withAlpha(0.95f);
-    juce::Colour ledOff = kCyan.withAlpha(0.20f);
+    juce::Colour ledOn = kCyan.withAlpha(0.97f);
+    juce::Colour ledOff = kCyan.withAlpha(0.10f);
     auto ledColour = ledOff.interpolatedWith(ledOn, a);
     g.setColour(juce::Colours::black.withAlpha(0.5f));
     g.fillEllipse(ledCenter.x - ledRadius - 1.5f, ledCenter.y - ledRadius + 1.5f, ledRadius * 2.0f, ledRadius * 2.0f);
@@ -291,86 +292,9 @@ void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
     g.drawEllipse(ledCenter.x - ledRadius, ledCenter.y - ledRadius, ledRadius * 2.0f, ledRadius * 2.0f, 1.0f);
     // No 'CLK' label per request
 
-    // Step ring visualisation (16 slices), centered in ringArea
-    if (! ringArea.isEmpty())
-    {
-        const int outerD = 160;
-        const int innerD = 120;
-        const int cx = ringArea.getCentreX();
-        const int cy = ringArea.getCentreY();
+    drawRing(g);
 
-        juce::Rectangle<float> outer((float) (cx - outerD / 2), (float) (cy - outerD / 2), (float) outerD, (float) outerD);
-        juce::Rectangle<float> inner((float) (cx - innerD / 2), (float) (cy - innerD / 2), (float) innerD, (float) innerD);
-
-        // Base ring: red outer, black inner
-        g.setColour(kAccent);
-        g.fillEllipse(outer);
-        g.setColour(kBase);
-        g.fillEllipse(inner);
-        // Add a thin red frame around the inner circle to hide seam with outer ring
-        g.setColour(kAccent);
-        g.drawEllipse(inner, 2.0f);
-
-        // Stop indicator: diagonal red bar when stopped
-        if (! runParamCached)
-        {
-            juce::Graphics::ScopedSaveState ss(g);
-            // Clip to inner circle
-            juce::Path clip; clip.addEllipse(inner);
-            g.reduceClipRegion(clip);
-            // Draw a wider bar through the centre, rotated 135 degrees (turned 90 degrees from prior)
-            const float barW = 28.0f;
-            juce::Rectangle<float> bar((float)cx - barW * 0.5f, (float)cy - (float)innerD, barW, (float)innerD * 2.0f);
-            g.addTransform(juce::AffineTransform::rotation(juce::MathConstants<float>::pi * 0.75f, (float)cx, (float)cy));
-            g.setColour(kAccent);
-            g.fillRect(bar);
-        }
-
-        // Active slice (1..16), 12 o'clock is slice 1
-        const int active = juce::jlimit(1, 16, processor.getUiStep16());
-        const float sliceAngle = juce::MathConstants<float>::twoPi / 16.0f;
-        const float startAt12 = -juce::MathConstants<float>::halfPi; // 12 o'clock baseline
-        // Apply a +4-slice rotation to correct observed -4-slice offset (move 9 o'clock -> 12 o'clock)
-        const int rotSlices = 4; // clockwise rotation by 90 degrees
-        const float startAngle = startAt12 + (float) ((active - 1 + rotSlices) % 16) * sliceAngle;
-        const float endAngle   = startAngle + sliceAngle;
-
-        juce::Path wedge;
-        // innerCircleProportion = innerRadius / outerRadius = 60/80 = 0.75
-        wedge.addPieSegment(outer, startAngle, endAngle, 0.75f);
-        g.setColour(runParamCached ? kCyan : kCyan.withAlpha(0.5f));
-        g.fillPath(wedge);
-
-        // Numbers 1..16 around the ring
-        g.setColour(kAccent);
-        g.setFont(juce::Font(juce::FontOptions("Arial", 11.0f, juce::Font::bold)));
-        const float numRadius = (float) outerD * 0.5f + 10.0f; // a little outside the ring
-        for (int i = 0; i < 16; ++i)
-        {
-            const int label = i + 1;
-            // Place label 1 exactly at 12 o'clock, then 2,3,... clockwise on slice boundaries
-            const float angMid = startAt12 + (float) i * sliceAngle;
-            const float tx = (float) cx + numRadius * std::cos(angMid);
-            const float ty = (float) cy + numRadius * std::sin(angMid);
-            juce::Rectangle<int> tb((int) tx - 10, (int) ty - 7, 20, 14);
-            g.drawFittedText(juce::String(label), tb, juce::Justification::centred, 1);
-        }
-    }
-
-    // Trigger circle (50x50): red -> blue on click, then fades back to red
-    if (! triggerRect.isEmpty())
-    {
-        juce::Colour base = kAccent; // red
-        juce::Colour active = kCyan; // blue
-        juce::Colour fill = base.interpolatedWith(active, juce::jlimit(0.0f, 1.0f, triggerFade));
-        auto rf = triggerRect.toFloat();
-        g.setColour(juce::Colours::black.withAlpha(0.5f));
-        g.fillEllipse(rf.withX(rf.getX() - 1.5f).withY(rf.getY() + 1.5f));
-        g.setColour(fill);
-        g.fillEllipse(rf);
-        g.setColour(kBase);
-        g.drawEllipse(rf, 1.5f);
-    }
+    drawTrigger(g);
 }
 
 void ClockSyncAudioProcessorEditor::resized()
@@ -422,34 +346,39 @@ void ClockSyncAudioProcessorEditor::resized()
 
 void ClockSyncAudioProcessorEditor::timerCallback()
 {
+    bool needAll = false;
+    bool needRing = false;
+    bool needTrigger = false;
+
+    // LED update
     const auto counter = processor.getUiClockCounter();
     if (counter != lastSeenClockCounter)
     {
         lastSeenClockCounter = counter;
         ledLevel = 1.0f;
-        repaint();
+        needAll = true; // header LED small; simplest to repaint all
     }
     else if (ledLevel > 0.01f)
     {
-        ledLevel *= 0.90f; // decay
-        repaint();
+        ledLevel *= 0.90f;
+        needAll = true;
     }
 
-    // Poll Run param for bar visibility (hide immediately on arm), and engine flags for status text
+    // Run param / engine flags / pending start
     if (auto* rp = processor.getAPVTS().getRawParameterValue(ClockSyncAudioProcessor::paramRun))
     {
         const bool runNow = rp->load() > 0.5f;
-        if (runNow != runParamCached) { runParamCached = runNow; repaint(ringArea); }
+        if (runNow != runParamCached) { runParamCached = runNow; needRing = true; }
     }
+    const bool running = processor.getUiIsRunning();
+    if (running != engineRunningCached) { engineRunningCached = running; needAll = true; }
+    const bool armed = processor.getUiPendingStart();
+    if (armed != pendingStartCached) { pendingStartCached = armed; needAll = true; }
+
+    // Rate choice
+    if (rateParam)
     {
-        const bool running = processor.getUiIsRunning();
-        if (running != engineRunningCached) { engineRunningCached = running; repaint(); }
-        const bool armed = processor.getUiPendingStart();
-        if (armed != pendingStartCached) { pendingStartCached = armed; repaint(); }
-    }
-    if (auto* cp = dynamic_cast<juce::AudioParameterChoice*>(processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramClockRateIndex)))
-    {
-        const int idx = cp->getIndex();
+        const int idx = rateParam->getIndex();
         if (idx != rateIndexCached)
         {
             rateIndexCached = idx;
@@ -457,16 +386,21 @@ void ClockSyncAudioProcessorEditor::timerCallback()
             rateBtn16.setToggleState(idx == 1, juce::dontSendNotification);
             rateBtn8.setToggleState (idx == 2, juce::dontSendNotification);
             rateBtn4.setToggleState (idx == 3, juce::dontSendNotification);
-            repaint();
+            needRing = true;
         }
     }
 
-    // Fade the trigger back to red
+    // Trigger fade
     if (triggerFade > 0.01f)
     {
         triggerFade *= 0.92f;
-        repaint(triggerRect);
+        needTrigger = true;
     }
+
+    // Dispatch minimal repaints
+    if (needAll) { repaint(); return; }
+    if (needRing) repaint(ringArea);
+    if (needTrigger) repaint(triggerRect);
 }
 
 ClockSyncAudioProcessorEditor::~ClockSyncAudioProcessorEditor()
@@ -514,6 +448,67 @@ void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
         repaint(triggerRect);
         processor.requestTriggerOnce();
     }
+}
+
+// Helpers
+void ClockSyncAudioProcessorEditor::drawRing(juce::Graphics& g)
+{
+    if (ringArea.isEmpty()) return;
+    const int cx = ringArea.getCentreX();
+    const int cy = ringArea.getCentreY();
+    juce::Rectangle<float> outer((float) (cx - kRingOuterD / 2), (float) (cy - kRingOuterD / 2), (float) kRingOuterD, (float) kRingOuterD);
+    juce::Rectangle<float> inner((float) (cx - kRingInnerD / 2), (float) (cy - kRingInnerD / 2), (float) kRingInnerD, (float) kRingInnerD);
+
+    // Base ring
+    g.setColour(kAccent); g.fillEllipse(outer);
+    g.setColour(kBase);   g.fillEllipse(inner);
+    g.setColour(kAccent); g.drawEllipse(inner, 2.0f);
+
+    // Stop indicator
+    if (! runParamCached)
+    {
+        juce::Graphics::ScopedSaveState ss(g);
+        juce::Path clip; clip.addEllipse(inner); g.reduceClipRegion(clip);
+        const float barW = 28.0f;
+        juce::Rectangle<float> bar((float)cx - barW * 0.5f, (float)cy - (float)kRingInnerD, barW, (float)kRingInnerD * 2.0f);
+        g.addTransform(juce::AffineTransform::rotation(juce::MathConstants<float>::pi * 0.75f, (float)cx, (float)cy));
+        g.setColour(kAccent); g.fillRect(bar);
+    }
+
+    const int active = juce::jlimit(1, 16, processor.getUiStep16());
+    const float sliceAngle = juce::MathConstants<float>::twoPi / 16.0f;
+    const float startAt12 = -juce::MathConstants<float>::halfPi;
+    const int rotSlices = 4;
+    const float startAngle = startAt12 + (float) ((active - 1 + rotSlices) % 16) * sliceAngle;
+    const float endAngle   = startAngle + sliceAngle;
+    juce::Path wedge; wedge.addPieSegment(outer, startAngle, endAngle, (float) kRingInnerD / (float) kRingOuterD);
+    g.setColour(runParamCached ? kCyan : kCyan.withAlpha(0.5f)); g.fillPath(wedge);
+
+    // Numbers
+    g.setColour(kAccent);
+    g.setFont(juce::Font(juce::FontOptions("Arial", 11.0f, juce::Font::bold)));
+    const float numRadius = (float) kRingOuterD * 0.5f + 10.0f;
+    for (int i = 0; i < 16; ++i)
+    {
+        const float angMid = startAt12 + (float) i * sliceAngle;
+        const float tx = (float) cx + numRadius * std::cos(angMid);
+        const float ty = (float) cy + numRadius * std::sin(angMid);
+        juce::Rectangle<int> tb((int) tx - 10, (int) ty - 7, 20, 14);
+        g.drawFittedText(juce::String(i + 1), tb, juce::Justification::centred, 1);
+    }
+}
+
+void ClockSyncAudioProcessorEditor::drawTrigger(juce::Graphics& g)
+{
+    if (triggerRect.isEmpty()) return;
+    juce::Colour base = kAccent;
+    juce::Colour active = kCyan;
+    juce::Colour fill = base.interpolatedWith(active, juce::jlimit(0.0f, 1.0f, triggerFade));
+    auto rf = triggerRect.toFloat();
+    g.setColour(juce::Colours::black.withAlpha(0.5f));
+    g.fillEllipse(rf.withX(rf.getX() - 1.5f).withY(rf.getY() + 1.5f));
+    g.setColour(fill); g.fillEllipse(rf);
+    g.setColour(kBase); g.drawEllipse(rf, 1.5f);
 }
 
 void ClockSyncAudioProcessorEditor::refreshDeviceList()

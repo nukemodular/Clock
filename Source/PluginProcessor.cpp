@@ -5,6 +5,9 @@ namespace {
     constexpr double kSixteenthQ = 0.25;      // 1/16th in quarter-notes
     constexpr double kBarEps     = 1.0e-6;    // bar-start epsilon
 
+    // Fast rounding for known non-negative values (avoids std::llround overhead)
+    inline int fastRoundPositive(double x) { return (int) (x + 0.5); }
+
     inline void addBoth(juce::MidiBuffer& mainBuf, juce::MidiBuffer& extBuf, const juce::MidiMessage& msg, int sample)
     {
         mainBuf.addEvent(msg, sample);
@@ -27,8 +30,8 @@ ClockSyncAudioProcessor::ClockSyncAudioProcessor()
 
 void ClockSyncAudioProcessor::requestTriggerOnce()
 {
-    // Arm an immediate retrigger at the next 1/16 boundary; a bar restart will follow
-    pendingRetrigger16th.store(true, std::memory_order_relaxed);
+    // Arm a Start at the next 1/16 grid boundary (coincides with that clock tick). Bar restart follows.
+    triggerArmedForNextSixteenth.store(true, std::memory_order_relaxed);
 }
 
 //==============================================================================
@@ -68,7 +71,7 @@ void ClockSyncAudioProcessor::prepareToPlay(double sr, int /*samplesPerBlock*/)
     uiClockCounter.store(0, std::memory_order_relaxed);
     uiIsRunning.store(true, std::memory_order_relaxed);
     uiPendingStart.store(false, std::memory_order_relaxed);
-    pendingRetrigger16th.store(false, std::memory_order_relaxed);
+    triggerArmedForNextSixteenth.store(false, std::memory_order_relaxed);
     pendingBarRestart.store(false, std::memory_order_relaxed);
     updateDerivedParams();
     updateExternalOut();
@@ -368,8 +371,8 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
         int gapStartImmediate = -1, gapEndImmediate = -1;
         int forbiddenClockSample = -1; // do not emit clock on this exact sample (Start sample)
 
-        // Immediate retrigger while running: Start-only at the next 1/16 boundary (no Stop here)
-        if (runActive && pendingRetrigger16th.load(std::memory_order_relaxed))
+        // Latent 1/16 grid Start: we always know next grid boundary; emit Start only if armed
+        if (runActive)
         {
             const double gridQ = kSixteenthQ;
             const double eps = 1.0e-6;
@@ -377,22 +380,26 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
             const bool onGrid = std::fabs(mod) <= eps || std::fabs(mod - gridQ) <= eps;
             const double nextGrid = onGrid ? ppqStart : (std::floor(ppqStart / gridQ) + 1.0) * gridQ;
             const double deltaQ = juce::jmax(0.0, nextGrid - ppqStart);
-            const int retrigOffset = juce::jlimit(0, numSamples - 1, (int) std::llround(deltaQ * samplesPerQuarter));
-            if (retrigOffset <= numSamples - 1)
+            const int nextGridOffset = fastRoundPositive(deltaQ * samplesPerQuarter);
+            if (triggerArmedForNextSixteenth.load(std::memory_order_relaxed))
             {
-                // Place Start exactly on the computed 1/16 grid sample, so it aligns with the clock tick grid
-                const int startOffset = retrigOffset;
-                const auto startMsg = juce::MidiMessage::midiStart();
-                addBoth(midi, extClock, startMsg, startOffset);
-
-                // Clear immediate flag and arm a bar restart
-                pendingRetrigger16th.store(false, std::memory_order_relaxed);
-                pendingBarRestart.store(true, std::memory_order_relaxed);
-                // Do NOT forbid the clock at Start; we want Start to coincide with the grid clock
+                if (nextGridOffset >= 0 && nextGridOffset < numSamples)
+                {
+                    const auto startMsg = juce::MidiMessage::midiStart();
+                    addBoth(midi, extClock, startMsg, nextGridOffset);
+                    // Consume arm and schedule bar restart sequence
+                    triggerArmedForNextSixteenth.store(false, std::memory_order_relaxed);
+                    pendingBarRestart.store(true, std::memory_order_relaxed);
+                    // Allow clock at same frame (no suppression)
+                }
+                // If offset beyond block, keep armed until next block (no change)
             }
         }
 
-        handleBarAlignedChanges(pos, numSamples, midi, extClock, gapStart, gapEnd, startSampleAtBoundary);
+        auto barWindow = handleBarAlignedChanges(pos, numSamples, midi, extClock);
+        gapStart = barWindow.gapStart;
+        gapEnd = barWindow.gapEnd;
+        startSampleAtBoundary = barWindow.startSample;
 
         // If host just started this block (sample 0), mark the boundary at sample 0
         if (startSampleAtBoundary < 0 && hostStartSampleThisBlock >= 0)
@@ -425,7 +432,7 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
             {
                 const double tickPPQ = (double) t / (double) resolutionBefore;
                 const double deltaQuarter = tickPPQ - ppqStart;
-                const int sampleOffset = juce::jlimit(0, numSamples - 1, (int) std::llround(deltaQuarter * samplesPerQuarter));
+                const int sampleOffset = juce::jlimit(0, numSamples - 1, fastRoundPositive(deltaQuarter * samplesPerQuarter));
                 const bool inGapBar = (gapStart >= 0 && sampleOffset >= gapStart && sampleOffset < gapEnd);
                 const bool inGapImmediate = (gapStartImmediate >= 0 && sampleOffset >= gapStartImmediate && sampleOffset < gapEndImmediate);
                 const bool onForbidden = (forbiddenClockSample >= 0 && sampleOffset == forbiddenClockSample);
@@ -466,7 +473,7 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
             {
                 const double tickPPQ = (double) t / (double) resolutionAfter;
                 const double deltaQuarter = tickPPQ - ppqStart;
-                const int sampleOffset = juce::jlimit(0, numSamples - 1, (int) std::llround(deltaQuarter * samplesPerQuarter));
+                const int sampleOffset = juce::jlimit(0, numSamples - 1, fastRoundPositive(deltaQuarter * samplesPerQuarter));
                 // Past boundary; optionally suppress clock on the exact Start frame to avoid double clocks with Start
                 if (!(forbiddenClockSample >= 0 && sampleOffset == forbiddenClockSample))
                 {
@@ -506,100 +513,73 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
     lastWasPlaying = isPlaying;
 }
 
-void ClockSyncAudioProcessor::handleBarAlignedChanges(const juce::AudioPlayHead::CurrentPositionInfo& pos,
-                                                      int numSamples,
-                                                      juce::MidiBuffer& midi,
-                                                      juce::MidiBuffer& extBuffer,
-                                                      int& gapStartSample,
-                                                      int& gapEndSample,
-                                                      int& startSampleOut)
+ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlignedChanges(const juce::AudioPlayHead::CurrentPositionInfo& pos,
+                                                                                           int numSamples,
+                                                                                           juce::MidiBuffer& midi,
+                                                                                           juce::MidiBuffer& extBuffer)
 {
-    const bool runWasActive = runActive; // capture current running state
-    gapStartSample = -1;
-    gapEndSample = -1;
-    startSampleOut = -1;
-    // Compute current position within bar and the sample offset to the next bar boundary
+    BarRestartWindow window;
+    const bool runWasActive = runActive;
+
     const double lastBar = pos.ppqPositionOfLastBarStart;
     const double barLenQ = (pos.timeSigNumerator > 0 && pos.timeSigDenominator > 0)
         ? (4.0 * (double) pos.timeSigNumerator / (double) pos.timeSigDenominator)
         : 4.0;
     const double ppqStart = pos.ppqPosition;
-    const double ppqSpan = (double) (numSamples - 1) / samplesPerQuarter;
     const double posInBar = juce::jlimit(0.0, barLenQ, ppqStart - lastBar);
     double remainQ = barLenQ - posInBar;
-    if (remainQ < 0.0) remainQ += barLenQ; // safety
-    int sampleOffset = (int) std::llround(remainQ * samplesPerQuarter);
+    if (remainQ < 0.0) remainQ += barLenQ;
+    int sampleOffset = fastRoundPositive(remainQ * samplesPerQuarter);
     if (sampleOffset < 0) sampleOffset = 0;
 
-    // Determine if a rate change, a plugin-initiated start, or a bar-restart is scheduled
     const bool haveRateChange = (pendingRateIndex >= 0);
     const bool haveStart = pendingStart;
     const bool haveBarRestart = pendingBarRestart.load(std::memory_order_relaxed);
-    const double barEps = kBarEps;
-    // Special case: if we're exactly at a bar start and either a Start or a rate-change is pending,
-    // fire at sample 0. This covers the case where the boundary fell exactly at the end of the previous block.
-    if ((haveStart || haveRateChange || haveBarRestart) && posInBar <= barEps)
+    if ((haveStart || haveRateChange || haveBarRestart) && posInBar <= kBarEps)
         sampleOffset = 0;
 
-    if (sampleOffset <= numSamples - 1)
+    if (sampleOffset <= numSamples - 1 && (haveRateChange || haveStart || haveBarRestart))
     {
-        // haveRateChange and haveStart already captured above
+        const int gapSamples = juce::jmax(1, fastRoundPositive(kSixteenthQ * samplesPerQuarter) - 1);
+        int stopOffset = juce::jmax(0, sampleOffset - gapSamples);
+        if (stopOffset >= sampleOffset)
+            stopOffset = juce::jmax(0, sampleOffset - 1);
 
-        // If either event is pending, schedule a small gap and stop/start sequence
-        if (haveRateChange || haveStart || haveBarRestart)
+        if (stopOffset < sampleOffset)
         {
-            // Define a musical gap: nearly 1/16th note before the bar boundary
-            // 1/16 note = 0.25 quarter-notes. Subtract 1 sample to avoid rounding to same sample.
-            const double gapPPQ = kSixteenthQ; // 1/16th note in quarters
-            const int gapSamples = juce::jmax(1, (int) std::llround(gapPPQ * samplesPerQuarter) - 1);
-            // sampleOffset already computed as the boundary sample within this block
-            int stopOffset = juce::jmax(0, sampleOffset - gapSamples);
-            // If rounding collapses stop/start to same sample, ensure separation
-            if (stopOffset >= sampleOffset)
-                stopOffset = juce::jmax(0, sampleOffset - 1);
-
-            // Send Stop at the beginning of the gap if it precedes Start within this block
-            if (stopOffset < sampleOffset)
-            {
-                const auto stopMsg = juce::MidiMessage::midiStop();
-                midi.addEvent(stopMsg, stopOffset);
-                extBuffer.addEvent(stopMsg, stopOffset);
-            }
-
-            // At the boundary, send Start (never Continue)
-            const auto startMsg = juce::MidiMessage::midiStart();
-            midi.addEvent(startMsg, sampleOffset);
-            extBuffer.addEvent(startMsg, sampleOffset);
-            // Force UI step ring to show step 1 when we start at the bar boundary
-            uiStep16.store(1, std::memory_order_relaxed);
-
-            // Apply pending changes at the boundary
-            if (haveRateChange)
-            {
-                currentRateIndex = pendingRateIndex;
-                pendingRateIndex = -1;
-            }
-            if (haveStart || haveBarRestart)
-            {
-                runActive = true;
-                pendingStart = false;
-                if (haveBarRestart)
-                    pendingBarRestart.store(false, std::memory_order_relaxed);
-                uiIsRunning.store(true, std::memory_order_relaxed);
-                uiPendingStart.store(false, std::memory_order_relaxed);
-            }
-
-            // Communicate gap window to suppress clocks (up to the Start sample)
-            gapStartSample = stopOffset;
-            gapEndSample = sampleOffset;
-            startSampleOut = sampleOffset;
-
-            // If this was a direct Run-param Start while already running, we may suppress boundary clock.
-            // Do NOT suppress for bar-restart or rate-change: we want Start+Clock on the same frame.
-            if (runWasActive && haveStart && ! haveBarRestart && ! haveRateChange)
-                suppressClockAtBoundaryOnce = true;
+            const auto stopMsg = juce::MidiMessage::midiStop();
+            midi.addEvent(stopMsg, stopOffset);
+            extBuffer.addEvent(stopMsg, stopOffset);
         }
+
+        const auto startMsg = juce::MidiMessage::midiStart();
+        midi.addEvent(startMsg, sampleOffset);
+        extBuffer.addEvent(startMsg, sampleOffset);
+        uiStep16.store(1, std::memory_order_relaxed);
+
+        if (haveRateChange)
+        {
+            currentRateIndex = pendingRateIndex;
+            pendingRateIndex = -1;
+        }
+        if (haveStart || haveBarRestart)
+        {
+            runActive = true;
+            pendingStart = false;
+            if (haveBarRestart)
+                pendingBarRestart.store(false, std::memory_order_relaxed);
+            uiIsRunning.store(true, std::memory_order_relaxed);
+            uiPendingStart.store(false, std::memory_order_relaxed);
+        }
+
+        window.gapStart = stopOffset;
+        window.gapEnd = sampleOffset;
+        window.startSample = sampleOffset;
+
+        if (runWasActive && haveStart && ! haveBarRestart && ! haveRateChange)
+            suppressClockAtBoundaryOnce = true;
     }
+    return window;
 }
 
 //==============================================================================

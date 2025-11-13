@@ -69,5 +69,17 @@ private:
     juce::Rectangle<int> triggerRect; // 50x50 trigger circle in bottom-right
     float triggerFade { 0.0f };       // 0..1, blue -> red fade after click
 
+    // Cached rate parameter pointer to avoid repeated dynamic_cast in timer
+    juce::AudioParameterChoice* rateParam { nullptr };
+
+    // Drawing helpers
+    void drawRing(juce::Graphics& g);
+    void drawTrigger(juce::Graphics& g);
+
+    // Constants
+    static constexpr int kRingOuterD = 160;
+    static constexpr int kRingInnerD = 120;
+    static constexpr int kTriggerSize = 50;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ClockSyncAudioProcessorEditor)
 };

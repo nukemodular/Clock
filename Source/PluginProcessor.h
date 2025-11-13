@@ -83,7 +83,7 @@ private:
     bool pendingStart { false };
     int lastRunParam { 1 }; // 1=true, 0=false
     // Trigger and restart flags
-    std::atomic<bool> pendingRetrigger16th { false }; // schedule immediate retrigger on next 1/16 boundary
+    std::atomic<bool> triggerArmedForNextSixteenth { false }; // when true, send a Start at next 1/16 grid boundary
     std::atomic<bool> pendingBarRestart { false };    // after retrigger, also restart at next bar
     bool suppressClockAtBoundaryOnce { false };       // when true, skip sending clock on the exact Start frame once
 
@@ -108,13 +108,11 @@ private:
     void updateDerivedParams();
     void generateClockAndClick(const juce::AudioPlayHead::CurrentPositionInfo& pos,
                                juce::AudioBuffer<float>&, juce::MidiBuffer&);
-    void handleBarAlignedChanges(const juce::AudioPlayHead::CurrentPositionInfo& pos,
-                                 int numSamples,
-                                 juce::MidiBuffer& midi,
-                                 juce::MidiBuffer& extBuffer,
-                                 int& gapStartSample,
-                                 int& gapEndSample,
-                                 int& startSampleOut);
+    struct BarRestartWindow { int gapStart{-1}; int gapEnd{-1}; int startSample{-1}; bool hasBoundary() const { return startSample >= 0; } };
+    BarRestartWindow handleBarAlignedChanges(const juce::AudioPlayHead::CurrentPositionInfo& pos,
+                                             int numSamples,
+                                             juce::MidiBuffer& midi,
+                                             juce::MidiBuffer& extBuffer);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ClockSyncAudioProcessor)
 };
