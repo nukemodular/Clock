@@ -60,6 +60,8 @@ private:
     EllipseToggleButton triggerModeToggle;
     // New: idle clock toggle (32x32) near top-left
     EllipseToggleButton idleClockToggle;
+    // New: shuffle scale toggle at (65,195) size 40x40
+    EllipseToggleButton shuffleScaleToggle;
     ArcSizeButtons arcSizeButtons; // 7 arc-arranged size-gradient buttons 1..7
 
     // Attachments

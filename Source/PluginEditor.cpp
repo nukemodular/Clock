@@ -51,7 +51,7 @@ public:
         // Angle for needle
         // Rotate the dial by -45 degrees
         const float angle = (rotaryStartAngle + sliderPosProportional * (rotaryEndAngle - rotaryStartAngle))
-                - (juce::MathConstants<float>::pi * 0.25f);
+                - (juce::MathConstants<float>::pi * 0.75f);
         const float needleLen = radius - innerReduce * 0.5f - 2.0f;
         const float nx = centre.x + needleLen * std::cos(angle);
         const float ny = centre.y + needleLen * std::sin(angle);
@@ -230,6 +230,10 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         idleClockToggle.setClickingTogglesState(true);
         // Keep this toggle visually behind others
         idleClockToggle.toBack();
+    // Shuffle scale toggle
+    addAndMakeVisible(shuffleScaleToggle);
+    shuffleScaleToggle.setColours(kAccent, kBase, kCyan);
+    shuffleScaleToggle.setClickingTogglesState(true);
     // Step offset selector (animated button)
     addAndMakeVisible(stepOffsetButton);
     stepOffsetButton.setColours(kAccent, kBase, kCyan);
@@ -409,11 +413,11 @@ void ClockSyncAudioProcessorEditor::resized()
 
     // Click toggle centered within rotary slider
     // Move rotary slider 200px left (x: 300 -> 100) and scale size 1.5x (40 -> 60)
-    clickLevelSlider.setBounds(78, 80, 45, 45); // rotary position
+    clickLevelSlider.setBounds(78, 80, 46, 46); // rotary position
     {
         auto sb = clickLevelSlider.getBounds();
         auto c = sb.getCentre();
-        clickButton.setBounds(c.x - 5, c.y - 5, 10, 10);
+        clickButton.setBounds(c.x - 6, c.y - 6, 12, 12);
     }
     // Step ring area (centered region for 160x160 ring + labels margin)
     ringArea = juce::Rectangle<int>(90, 90, 160, 160);
@@ -421,9 +425,11 @@ void ClockSyncAudioProcessorEditor::resized()
     // Place on right side, below ring and left of slider, with ample space for enlarged option circles
     // Move toggle down so it doesn't overlap triggerRect area
     triggerModeToggle.setBounds(247, 136, 40, 40);
-    stepOffsetButton.setBounds(215, 150, 100 , 100);
+    stepOffsetButton.setBounds(220, 150, 100 , 100);
         // Idle clock toggle near top-left
         idleClockToggle.setBounds(110, 60, 40, 40);
+        // Shuffle scale toggle at requested position
+        shuffleScaleToggle.setBounds(65, 195, 40, 40);
     // Declare click-through holes in stepOffsetButton so controls behind remain clickable when its menu is closed
     {
         auto holeToggle = stepOffsetButton.getLocalArea(&triggerModeToggle, triggerModeToggle.getLocalBounds());
@@ -591,7 +597,7 @@ void ClockSyncAudioProcessorEditor::drawRing(juce::Graphics& g)
         // Expand clip by one device pixel so the bar can overlap the ring a hair, avoiding a dark AA seam
         const float px = 1.0f / getDesktopScaleFactor();
         juce::Path clip; clip.addEllipse(inner.expanded(px)); g.reduceClipRegion(clip);
-        const float barW = 26.0f;
+        const float barW = 22.0f;
         juce::Rectangle<float> bar((float)cx - barW * 0.5f, (float)cy - (float)kRingInnerD, barW, (float)kRingInnerD * 2.0f);
         g.addTransform(juce::AffineTransform::rotation(juce::MathConstants<float>::pi * 0.75f, (float)cx, (float)cy));
         g.setColour(kAccent); g.fillRect(bar);
