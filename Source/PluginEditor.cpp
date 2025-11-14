@@ -48,13 +48,15 @@ public:
         g.fillEllipse(bounds.reduced(ringThickness));
 
         // Angle for needle
-        const float angle = rotaryStartAngle + sliderPosProportional * (rotaryEndAngle - rotaryStartAngle);
+        // Rotate the dial by -90 degrees (subtract halfPi)
+        const float angle = (rotaryStartAngle + sliderPosProportional * (rotaryEndAngle - rotaryStartAngle))
+                    - juce::MathConstants<float>::halfPi;
         const float needleLen = radius - ringThickness * 0.5f - 2.0f;
         const float nx = centre.x + needleLen * std::cos(angle);
         const float ny = centre.y + needleLen * std::sin(angle);
 
-        // Fade cyan -> accent as value approaches top (sliderPosProportional -> 1)
-        juce::Colour needleCol = kCyan.interpolatedWith(kAccent, sliderPosProportional);
+        // Reverse colouring: accent -> cyan as value increases
+        juce::Colour needleCol = kAccent.interpolatedWith(kCyan, sliderPosProportional);
         g.setColour(needleCol);
         g.drawLine(centre.x, centre.y, nx, ny, 3.0f);
 
