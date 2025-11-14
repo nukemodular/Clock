@@ -39,19 +39,20 @@ public:
         auto bounds = juce::Rectangle<float>(x, y, width, height).reduced(4.0f);
         const float radius = std::min(bounds.getWidth(), bounds.getHeight()) * 0.5f;
         const juce::Point<float> centre(bounds.getCentre());
-        const float ringThickness = 10.0f;
+        const float ringThickness = 10.0f; // nominal ring width
+        const float innerReduce   = ringThickness - 2.5f; // enlarge inner ellipse by ~5px diameter
 
         // Accent ring (outer) with base inner fill
         g.setColour(kAccent);
         g.fillEllipse(bounds);
         g.setColour(kBase);
-        g.fillEllipse(bounds.reduced(ringThickness));
+        g.fillEllipse(bounds.reduced(innerReduce));
 
         // Angle for needle
         // Rotate the dial by -90 degrees (subtract halfPi)
         const float angle = (rotaryStartAngle + sliderPosProportional * (rotaryEndAngle - rotaryStartAngle))
                     - juce::MathConstants<float>::halfPi;
-        const float needleLen = radius - ringThickness * 0.5f - 2.0f;
+        const float needleLen = radius - innerReduce * 0.5f - 2.0f;
         const float nx = centre.x + needleLen * std::cos(angle);
         const float ny = centre.y + needleLen * std::sin(angle);
 
@@ -646,12 +647,12 @@ void ClockSyncAudioProcessorEditor::drawIdleClockCurvedLabel(juce::Graphics& g)
     if (n <= 0) return;
 
     // Ensure Arial Bold as requested
-    juce::Font font(juce::FontOptions("Arial", 10.0f, juce::Font::bold));
+    juce::Font font(juce::FontOptions("Arial", 12.0f, juce::Font::bold));
     g.setColour(kBase);
 
     // Lay out characters along a vertical arc with widened kerning
     const float baseSpan = 1.30f; // radians (~74.5 deg) vertical spread
-    const float kerningMultiplier = 1.25f; // widen spacing between letters
+    const float kerningMultiplier = 1.5f; // widen spacing between letters
     const float totalSpan = baseSpan * kerningMultiplier;
     const float startAngle = -totalSpan * 0.5f; // centered about horizontal axis
     // Apply -90 degree rotation to the entire label layout
