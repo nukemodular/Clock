@@ -175,6 +175,8 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     // Grid scale radial selector (replaces four rate buttons)
     gridScaleButton.setColours(kAccent, kBase, kCyan);
     addAndMakeVisible(gridScaleButton);
+    // Keep grid selector visually behind the main ring
+    gridScaleButton.toBack();
 
     // Arc size buttons (7 positions, slider-like) below the ring
     arcSizeButtons.setColours(kAccent, kBase, kCyan);
@@ -202,6 +204,8 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     clickLevelSlider.setLookAndFeel(clickRotaryLNF.get());
     clickLevelSlider.setRange(-12.0, 0.0, 0.1);
     addAndMakeVisible(clickLevelSlider);
+    // Keep rotary visually behind the main ring
+    clickLevelSlider.toBack();
 
     // Step offset selector (animated button) - configured after APVTS reference below
 
@@ -334,13 +338,14 @@ void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
     g.drawEllipse(ledCenter.x - ledRadius, ledCenter.y - ledRadius, ledRadius * 2.0f, ledRadius * 2.0f, 1.0f);
     // No 'CLK' label per request
 
-    drawRing(g);
-    // No trigger or curved label here; moved to paintOverChildren so trigger ellipse sits above all child components.
+    // No ring, trigger or curved label here; those are drawn in paintOverChildren so the ring sits above child components and the trigger ellipse is top-most.
 }
 
 void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
 {
-    // Curved label first so trigger ellipse can sit visually on top if overlapping.
+    // Draw ring above children
+    drawRing(g);
+    // Curved label next so trigger ellipse can sit visually on top if overlapping.
     drawIdleClockCurvedLabel(g);
     // Draw trigger ellipse last to ensure it is front-most.
     drawTrigger(g);
@@ -626,19 +631,23 @@ void ClockSyncAudioProcessorEditor::drawIdleClockCurvedLabel(juce::Graphics& g)
     const int n = text.length();
     if (n <= 0) return;
 
+    // Ensure Arial Bold as requested
     juce::Font font(juce::FontOptions("Arial", 10.0f, juce::Font::bold));
     g.setColour(kBase);
 
     // Lay out characters along a vertical arc on the right side inside the ring
     const float totalSpan = 1.30f; // radians (~74.5 deg) vertical spread
     const float startAngle = -totalSpan * 0.5f; // centered about horizontal axis
+    // Apply -90 degree rotation to the entire label layout
+    const float rotationOffset = -juce::MathConstants<float>::halfPi; // -90 degrees
     const float delta = n > 1 ? (totalSpan / (float)(n - 1)) : 0.0f;
 
     for (int i = 0; i < n; ++i)
     {
         const float a = startAngle + delta * (float)i;
-        const float gx = c.x + ringMidRadius * std::cos(a);
-        const float gy = c.y + ringMidRadius * std::sin(a);
+        const float aRot = a + rotationOffset;
+        const float gx = c.x + ringMidRadius * std::cos(aRot);
+        const float gy = c.y + ringMidRadius * std::sin(aRot);
 
         juce::String ch = text.substring(i, i + 1);
         juce::GlyphArrangement ga; ga.addLineOfText(font, ch, 0.0f, 0.0f);
@@ -646,7 +655,7 @@ void ClockSyncAudioProcessorEditor::drawIdleClockCurvedLabel(juce::Graphics& g)
         auto pb = p.getBounds();
         p.applyTransform(juce::AffineTransform::translation(-pb.getCentreX(), -pb.getCentreY()));
         // Rotate so baseline is tangent to arc (add 90deg)
-        auto T = juce::AffineTransform::rotation(a + juce::MathConstants<float>::halfPi)
+        auto T = juce::AffineTransform::rotation(aRot + juce::MathConstants<float>::halfPi)
                                      .translated(gx, gy);
         p.applyTransform(T);
         g.fillPath(p);
