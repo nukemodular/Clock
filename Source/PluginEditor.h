@@ -4,6 +4,9 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 #include "PluginProcessor.h"
 #include "StepOffsetButton.h"
+#include "GridScaleButton.h"
+#include "EllipseToggleButton.h"
+#include "ArcSizeButtons.h"
 
 class ClockSyncAudioProcessorEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
@@ -12,6 +15,8 @@ public:
     ~ClockSyncAudioProcessorEditor() override;
 
     void paint(juce::Graphics&) override;
+    // Draw elements that must appear above child components (e.g. trigger ellipse)
+    void paintOverChildren(juce::Graphics&) override;
     void resized() override;
     void mouseUp(const juce::MouseEvent&) override;
     void mouseDown(const juce::MouseEvent&) override;
@@ -24,27 +29,31 @@ private:
 
     // UI components
     // Rate selection: 4 custom text buttons
-    juce::TextButton rateBtn32 { "32" };
-    juce::TextButton rateBtn16 { "16" };
-    juce::TextButton rateBtn8  { "8" };
-    juce::TextButton rateBtn4  { "4" };
+    // Legacy rate buttons removed (replaced by gridScaleButton)
     juce::ComboBox deviceBox;
     juce::TextButton refreshButton { "RESET" };
     juce::TextButton clickButton { "CLICK" };
     juce::ToggleButton runToggle { "Run" };
-    juce::TextButton keepClockButton { "IDLE CLK" };
+    // Replaces keepClockButton with a circular toggle
     juce::Slider clickLevelSlider;
     juce::Label resolutionLabel { {}, {} };
     juce::Label deviceLabel { {}, {} };
     juce::Label clickLevelLabel { {}, {} };
     AnimatedStepOffsetButton stepOffsetButton;
+    // New grid scale radial selector replacing four rate buttons
+    GridScaleButton gridScaleButton; // manages 1/32..1/4 selection
+    // New: toggle to control whether trigger arms a bar-restart (+/- offset)
+    EllipseToggleButton triggerModeToggle;
+    // New: idle clock toggle (32x32) near top-left
+    EllipseToggleButton idleClockToggle;
+    ArcSizeButtons arcSizeButtons; // 7 arc-arranged size-gradient buttons 1..7
 
     // Attachments
     // Attachments
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> runAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> clickEnableAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> clickLevelAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> keepClockAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> idleClockAttachment;
 
     // Helpers
     void refreshDeviceList();
@@ -58,9 +67,9 @@ private:
     bool pendingStartCached { false };
     bool engineRunningCached { true };
 
-    // Custom look for the click level slider
-    class SimpleSliderLNF;
-    std::unique_ptr<SimpleSliderLNF> clickLNF;
+    // Custom rotary look for the click level slider
+    class ClickRotaryLNF;
+    std::unique_ptr<ClickRotaryLNF> clickRotaryLNF;
 
     // Themed LNF for rate buttons, refresh button, and combo
     class ThemeLNF;
@@ -72,13 +81,17 @@ private:
     float triggerFade { 0.0f };       // 0..1, blue -> red fade after click
     // Step number fade shown inside triggerRect, updates each 16th
     int stepNumberCached { 0 };
+    // Selected arc size (1..7) used as shuffleValue
+    int shuffleValue { 4 }; // default middle
 
     // Cached rate parameter pointer to avoid repeated dynamic_cast in timer
     juce::AudioParameterChoice* rateParam { nullptr };
 
     // Drawing helpers
+    void drawIdleClockCurvedLabel(juce::Graphics& g);
     void drawRing(juce::Graphics& g);
     void drawTrigger(juce::Graphics& g);
+   
 
     // Constants
     static constexpr int kRingOuterD = 160;
