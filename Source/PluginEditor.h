@@ -32,7 +32,21 @@ private:
     // Legacy rate buttons removed (replaced by gridScaleButton)
     juce::ComboBox deviceBox;
     juce::TextButton refreshButton { "RESET" };
-    juce::TextButton clickButton { "CLICK" };
+    // Small center-dot toggle used to enable/disable click
+    class SmallDotToggle : public juce::ToggleButton {
+    public:
+        void setColours(juce::Colour offCol, juce::Colour onCol) { off = offCol; on = onCol; repaint(); }
+        void paintButton(juce::Graphics& g, bool, bool) override {
+            auto b = getLocalBounds().toFloat();
+            auto d = std::min(b.getWidth(), b.getHeight());
+            auto r = juce::Rectangle<float>(b.getCentreX() - d * 0.5f, b.getCentreY() - d * 0.5f, d, d);
+            g.setColour(getToggleState() ? on : off);
+            g.fillEllipse(r);
+        }
+    private:
+        juce::Colour off { juce::Colours::red };
+        juce::Colour on  { juce::Colours::cyan };
+    } clickButton;
     juce::ToggleButton runToggle { "Run" };
     // Replaces keepClockButton with a circular toggle
     juce::Slider clickLevelSlider;

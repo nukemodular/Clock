@@ -39,7 +39,7 @@ public:
         auto bounds = juce::Rectangle<float>(x, y, width, height).reduced(4.0f);
         const float radius = std::min(bounds.getWidth(), bounds.getHeight()) * 0.5f;
         const juce::Point<float> centre(bounds.getCentre());
-        const float ringThickness = 10.0f; // nominal ring width
+        const float ringThickness = 8.0f; // nominal ring width
         const float innerReduce   = ringThickness ;//- 2.5f; // enlarge inner ellipse by ~5px diameter
 
         // Accent ring (outer) with base inner fill
@@ -49,9 +49,9 @@ public:
         g.fillEllipse(bounds.reduced(innerReduce));
 
         // Angle for needle
-        // Rotate the dial by -90 degrees (subtract halfPi)
+        // Rotate the dial by -45 degrees
         const float angle = (rotaryStartAngle + sliderPosProportional * (rotaryEndAngle - rotaryStartAngle))
-                    - juce::MathConstants<float>::halfPi;
+                - (juce::MathConstants<float>::pi * 0.25f);
         const float needleLen = radius - innerReduce * 0.5f - 2.0f;
         const float nx = centre.x + needleLen * std::cos(angle);
         const float ny = centre.y + needleLen * std::sin(angle);
@@ -173,6 +173,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
 {
     setResizable(false, false);
     setSize(340, 300);
+    //setOpaque(false); // component is non-opaque, was incorrectly attempted via Graphics
     startTimerHz(60); // smooth enough for LED/animations
 
     // Grid scale radial selector (replaces four rate buttons)
@@ -195,7 +196,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     addAndMakeVisible(deviceBox);
     addAndMakeVisible(refreshButton);
 
-    // Click button (replaces label), styled and toggling
+    // Click toggle: small 10x10 ellipse in centre of rotary
     addAndMakeVisible(clickButton);
     // Run toggle is replaced by clicking the ring; keepClockButton removed
     // addAndMakeVisible(runToggle);
@@ -205,7 +206,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     clickLevelSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
     clickRotaryLNF = std::make_unique<ClickRotaryLNF>();
     clickLevelSlider.setLookAndFeel(clickRotaryLNF.get());
-    clickLevelSlider.setRange(-12.0, 0.0, 0.1);
+    clickLevelSlider.setRange(-18.0, 0.0, 0.1);
     addAndMakeVisible(clickLevelSlider);
     // Keep rotary visually behind the main ring
     clickLevelSlider.toBack();
@@ -273,8 +274,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     // Legacy individual rate buttons removed; radial control supersedes them
     // Style other themed buttons
     refreshButton.setLookAndFeel(themeLNF.get());
-    clickButton.setLookAndFeel(themeLNF.get());
-    clickButton.setClickingTogglesState(true);
+    clickButton.setColours(kAccent, kCyan);
     // Reflect initial selection
     gridScaleButton.setIndex(rateIndexCached); // reflect initial selection
     gridScaleButton.onGridChanged = [setRateIndex](int idx){ setRateIndex(idx); };
@@ -304,7 +304,6 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     // Initial device list
     refreshDeviceList();
 }
-
 void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat();
@@ -312,7 +311,9 @@ void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
     juce::ColourGradient bgGrad(kBase, bounds.getTopLeft(), kBaseLo, bounds.getBottomLeft(), false);
     g.setGradientFill(bgGrad);
     g.fillRect(bounds);
+    // Removed invalid g.setOpaque(false); (Graphics has no such method)
 
+    // Header bar
     // Header bar
     auto header = getLocalBounds().removeFromTop(28).reduced(8, 4).toFloat();
     juce::Path headerPath; headerPath.addRoundedRectangle(header, 6.0f);
@@ -358,6 +359,15 @@ void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
         stepOffsetButton.paintEntireComponent(g, true);
         g.setOrigin(0, 0);
     }
+    // Repaint the small click toggle above the ring as well
+    {
+        juce::Graphics::ScopedSaveState ss(g);
+        auto r = clickButton.getBounds().toFloat();
+        g.reduceClipRegion(r.toNearestInt());
+        g.setOrigin(clickButton.getPosition());
+        clickButton.paintEntireComponent(g, true);
+        g.setOrigin(0, 0);
+    }
     // Curved label next so trigger ellipse can sit visually on top if overlapping.
     drawIdleClockCurvedLabel(g);
     // Draw trigger ellipse last to ensure it is front-most.
@@ -397,19 +407,23 @@ void ClockSyncAudioProcessorEditor::resized()
 
     // Keep-clock button removed; curved label will be drawn around idleClockToggle
 
-    // Click button above slider and slider on right
-    clickButton.setBounds(250, 30, 40, 16);
+    // Click toggle centered within rotary slider
     // Move rotary slider 200px left (x: 300 -> 100) and scale size 1.5x (40 -> 60)
-    clickLevelSlider.setBounds(100, 45, 60, 60); // moved up by 10px
+    clickLevelSlider.setBounds(78, 80, 45, 45); // rotary position
+    {
+        auto sb = clickLevelSlider.getBounds();
+        auto c = sb.getCentre();
+        clickButton.setBounds(c.x - 5, c.y - 5, 10, 10);
+    }
     // Step ring area (centered region for 160x160 ring + labels margin)
     ringArea = juce::Rectangle<int>(90, 90, 160, 160);
     // Step offset button area (expanded to avoid hover scaling clipping)
     // Place on right side, below ring and left of slider, with ample space for enlarged option circles
     // Move toggle down so it doesn't overlap triggerRect area
-    triggerModeToggle.setBounds(247, 136, 45, 45);
-    stepOffsetButton.setBounds(215, 155, 110 , 110);
+    triggerModeToggle.setBounds(247, 136, 40, 40);
+    stepOffsetButton.setBounds(215, 150, 100 , 100);
         // Idle clock toggle near top-left
-        idleClockToggle.setBounds(55, 75, 60, 60);
+        idleClockToggle.setBounds(110, 60, 40, 40);
     // Declare click-through holes in stepOffsetButton so controls behind remain clickable when its menu is closed
     {
         auto holeToggle = stepOffsetButton.getLocalArea(&triggerModeToggle, triggerModeToggle.getLocalBounds());
@@ -446,7 +460,7 @@ void ClockSyncAudioProcessorEditor::timerCallback()
     }
     else if (ledLevel > 0.01f)
     {
-        ledLevel *= 0.90f;
+        ledLevel *= 0.66f;
         needAll = true;
     }
 
@@ -617,7 +631,7 @@ void ClockSyncAudioProcessorEditor::drawTrigger(juce::Graphics& g)
     // Inner core shrinks proportionally so ring thickness stays visually similar
     g.setColour(kBase);
     // Further reduce by an additional 6px (radial) to make inner circle smaller
-    g.fillEllipse(rfScaled.reduced((12.0f * scale - 2.0f) + 6.0f));
+    g.fillEllipse(rfScaled.reduced((12.0f * scale - 2.0f) + 5.0f));
 
     // Step number centered; don't scale with trigger animation
     const int stepNow = juce::jlimit(1, 16, stepNumberCached > 0 ? stepNumberCached : processor.getUiStep16());
@@ -647,13 +661,13 @@ void ClockSyncAudioProcessorEditor::drawIdleClockCurvedLabel(juce::Graphics& g)
     if (n <= 0) return;
 
     // Ensure Arial Bold and widen kerning using FontOptions
-    juce::FontOptions fontOpts("Arial", 12.0f, juce::Font::bold);
-    fontOpts = fontOpts.withKerningFactor(1.35f); // widen spacing between letters
+    juce::FontOptions fontOpts("Arial", 10.0f, juce::Font::bold);
+    fontOpts = fontOpts.withKerningFactor(4.0f); // widen spacing between letters
     juce::Font font(fontOpts);
     g.setColour(kBase);
 
     // Lay out characters along a vertical arc with widened kerning
-    const float baseSpan = 1.30f; // radians (~74.5 deg) vertical spread
+    const float baseSpan = 4.0f; // radians (~74.5 deg) vertical spread
     const float kerningMultiplier = 1.20f; // mild extra angular spacing
     const float totalSpan = baseSpan * kerningMultiplier;
     const float startAngle = -totalSpan * 0.5f; // centered about horizontal axis
