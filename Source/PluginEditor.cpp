@@ -235,6 +235,8 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
             initialStep = pi->get();
         stepOffsetButton.setStep(initialStep);
     }
+    // Keep step offset control visually on top among child components
+    stepOffsetButton.toFront(true);
     stepOffsetButton.onStepChanged = [this](int step)
     {
         if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramResyncOffsetStep))
@@ -387,7 +389,7 @@ void ClockSyncAudioProcessorEditor::resized()
     // Click button above slider and slider on right
     clickButton.setBounds(250, 30, 40, 16);
     // Move rotary slider 200px left (x: 300 -> 100) and scale size 1.5x (40 -> 60)
-    clickLevelSlider.setBounds(100, 55, 60, 60); // adjusted position and size
+    clickLevelSlider.setBounds(100, 45, 60, 60); // moved up by 10px
     // Step ring area (centered region for 160x160 ring + labels margin)
     ringArea = juce::Rectangle<int>(90, 90, 160, 160);
     // Step offset button area (expanded to avoid hover scaling clipping)
@@ -413,6 +415,8 @@ void ClockSyncAudioProcessorEditor::resized()
     // Use absolute canvas-origin rectangles (kArcButtonRects) instead of algorithmic layout.
     // Width is fixed (editor not resizable); no overflow adjustment needed.
     arcSizeButtons.setManualBounds(kArcButtonRects);
+    // Ensure step offset button is at front among components
+    stepOffsetButton.toFront(true);
 }
 
 void ClockSyncAudioProcessorEditor::timerCallback()
