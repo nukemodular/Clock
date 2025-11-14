@@ -347,16 +347,15 @@ void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
 
 void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
 {
-    // Draw ring above children
-    drawRing(g);
-    // Explicitly repaint stepOffsetButton above the ring to ensure it sits on top
+    // Draw ring above children, but clip out the stepOffsetButton area so it remains visible on top
     {
         juce::Graphics::ScopedSaveState ss(g);
-        auto r = stepOffsetButton.getBounds().toFloat();
-        g.reduceClipRegion(r.toNearestInt());
-        g.setOrigin(stepOffsetButton.getPosition());
-        stepOffsetButton.paintEntireComponent(g, true);
-        g.setOrigin(0, 0);
+        juce::Path clip;
+        clip.addRectangle(getLocalBounds().toFloat());
+        clip.addRectangle(stepOffsetButton.getBounds().toFloat());
+        clip.setUsingNonZeroWinding(false); // even-odd: second rect becomes a hole
+        g.reduceClipRegion(clip);
+        drawRing(g);
     }
     // Curved label next so trigger ellipse can sit visually on top if overlapping.
     drawIdleClockCurvedLabel(g);
@@ -650,8 +649,10 @@ void ClockSyncAudioProcessorEditor::drawIdleClockCurvedLabel(juce::Graphics& g)
     juce::Font font(juce::FontOptions("Arial", 10.0f, juce::Font::bold));
     g.setColour(kBase);
 
-    // Lay out characters along a vertical arc on the right side inside the ring
-    const float totalSpan = 1.30f; // radians (~74.5 deg) vertical spread
+    // Lay out characters along a vertical arc with widened kerning
+    const float baseSpan = 1.30f; // radians (~74.5 deg) vertical spread
+    const float kerningMultiplier = 1.25f; // widen spacing between letters
+    const float totalSpan = baseSpan * kerningMultiplier;
     const float startAngle = -totalSpan * 0.5f; // centered about horizontal axis
     // Apply -90 degree rotation to the entire label layout
     const float rotationOffset = -juce::MathConstants<float>::halfPi; // -90 degrees
