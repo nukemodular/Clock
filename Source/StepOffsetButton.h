@@ -365,6 +365,10 @@ private:
         const float extra = 12.0f; // expanded hover radius for smoother transitions
         const auto r = getLocalBounds().toFloat();
         const auto center = r.getCentre();
+        // Block hover inside inner base ellipse of the central button to avoid jitter
+        const float innerBaseRadius = 20.0f; // matches paint() inner reduced(10) -> 40px diameter
+        if (center.getDistanceFrom(pos) <= innerBaseRadius)
+            return -1;
         const float sCenter = RingConfig::scaleCenter;
         const float baseRadius = RingConfig::computeBaseRadius(openAmount, getWidth(), getHeight(), itemR, sCenter, RingConfig::spreadHover, RingConfig::visualMargin);
         const float startAt12 = -juce::MathConstants<float>::halfPi;

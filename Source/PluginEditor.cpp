@@ -347,20 +347,15 @@ void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
 
 void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
 {
-    // Draw ring above children, but clip out a circular hole matching the stepOffsetButton's base ring
+    // Draw ring above children, then explicitly repaint stepOffsetButton over it to ensure it's in front
+    drawRing(g);
     {
         juce::Graphics::ScopedSaveState ss(g);
-        juce::Path clip;
-        clip.addRectangle(getLocalBounds().toFloat());
-        // Circular hole centered on the stepOffsetButton with ~60px diameter (outer base), add small margin
-        auto sb = stepOffsetButton.getBounds().toFloat();
-        auto sc = sb.getCentre();
-        const float holeD = 64.0f; // 60 + small margin
-        juce::Rectangle<float> hole(sc.x - holeD * 0.5f, sc.y - holeD * 0.5f, holeD, holeD);
-        clip.addEllipse(hole);
-        clip.setUsingNonZeroWinding(false); // even-odd: ellipse becomes a hole
-        g.reduceClipRegion(clip);
-        drawRing(g);
+        auto r = stepOffsetButton.getBounds().toFloat();
+        g.reduceClipRegion(r.toNearestInt());
+        g.setOrigin(stepOffsetButton.getPosition());
+        stepOffsetButton.paintEntireComponent(g, true);
+        g.setOrigin(0, 0);
     }
     // Curved label next so trigger ellipse can sit visually on top if overlapping.
     drawIdleClockCurvedLabel(g);
