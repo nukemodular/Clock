@@ -40,7 +40,7 @@ public:
         const float radius = std::min(bounds.getWidth(), bounds.getHeight()) * 0.5f;
         const juce::Point<float> centre(bounds.getCentre());
         const float ringThickness = 10.0f; // nominal ring width
-        const float innerReduce   = ringThickness - 2.5f; // enlarge inner ellipse by ~5px diameter
+        const float innerReduce   = ringThickness ;//- 2.5f; // enlarge inner ellipse by ~5px diameter
 
         // Accent ring (outer) with base inner fill
         g.setColour(kAccent);
@@ -646,13 +646,15 @@ void ClockSyncAudioProcessorEditor::drawIdleClockCurvedLabel(juce::Graphics& g)
     const int n = text.length();
     if (n <= 0) return;
 
-    // Ensure Arial Bold as requested
-    juce::Font font(juce::FontOptions("Arial", 12.0f, juce::Font::bold));
+    // Ensure Arial Bold and widen kerning using FontOptions
+    juce::FontOptions fontOpts("Arial", 12.0f, juce::Font::bold);
+    fontOpts = fontOpts.withKerningFactor(1.35f); // widen spacing between letters
+    juce::Font font(fontOpts);
     g.setColour(kBase);
 
     // Lay out characters along a vertical arc with widened kerning
     const float baseSpan = 1.30f; // radians (~74.5 deg) vertical spread
-    const float kerningMultiplier = 1.5f; // widen spacing between letters
+    const float kerningMultiplier = 1.20f; // mild extra angular spacing
     const float totalSpan = baseSpan * kerningMultiplier;
     const float startAngle = -totalSpan * 0.5f; // centered about horizontal axis
     // Apply -90 degree rotation to the entire label layout
