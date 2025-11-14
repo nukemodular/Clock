@@ -152,13 +152,13 @@ private:
     {
         // Arrange 16 small rings around the button, radius grows by openAmount
         const int count = 16;
-        const float itemD = 22.0f; // unified with hit-test; can touch easily
+        const float itemD = 18.0f; // unified with hit-test; can touch easily
         const float itemR = itemD * 0.5f;
         // Hover scaling ripple factors
-        const float s0 = 1.6f, s1 = 1.4f, s2 = 1.2f, s3 = 1.1f;
+        const float s0 = 1.66f, s1 = 1.44f, s2 = 1.22f, s3 = 1.05f;
         const float maxScaleR = itemR * s0; // ensure no clipping when fully open
-        const float minRadius = baseD * 0.5f + 4.0f; // closer to base so items can touch easily
-        const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - maxScaleR - 2.0f;
+        const float minRadius = baseD * 0.5f + 2.0f; // bring circles closer together
+        const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - maxScaleR - 3.0f;
         const float radius = juce::jlimit(minRadius, juce::jmax(minRadius, maxRadius), minRadius + (maxRadius - minRadius) * openAmount);
 
         g.addTransform(juce::AffineTransform());
@@ -230,7 +230,7 @@ private:
         const float baseD = 60.0f;
         const float s0 = 1.6f, s1 = 1.4f, s2 = 1.2f, s3 = 1.1f;
         const float maxScaleR = itemR * s0;
-        const float minRadius = baseD * 0.5f + 4.0f;
+        const float minRadius = baseD * 0.5f + 2.0f;
         const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - maxScaleR - 2.0f;
         const float radius = juce::jlimit(minRadius, juce::jmax(minRadius, maxRadius), minRadius + (maxRadius - minRadius) * openAmount);
         const float startAt12 = -juce::MathConstants<float>::halfPi;
@@ -261,7 +261,7 @@ private:
         const auto r = getLocalBounds().toFloat();
         const auto center = r.getCentre();
         const float baseD = 60.0f;
-        const float minRadius = baseD * 0.5f + 4.0f;
+        const float minRadius = baseD * 0.5f + 2.0f;
         // Allow enough headroom for hover scaling in layout
         const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - (itemR * 1.6f) - 2.0f;
         const float radius = juce::jlimit(minRadius, juce::jmax(minRadius, maxRadius), minRadius + (maxRadius - minRadius) * openAmount);
