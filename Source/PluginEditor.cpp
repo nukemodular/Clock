@@ -347,6 +347,15 @@ void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
 {
     // Draw ring above children
     drawRing(g);
+    // Explicitly repaint stepOffsetButton above the ring to ensure it sits on top
+    {
+        juce::Graphics::ScopedSaveState ss(g);
+        auto r = stepOffsetButton.getBounds().toFloat();
+        g.reduceClipRegion(r.toNearestInt());
+        g.setOrigin(stepOffsetButton.getPosition());
+        stepOffsetButton.paintEntireComponent(g, true);
+        g.setOrigin(0, 0);
+    }
     // Curved label next so trigger ellipse can sit visually on top if overlapping.
     drawIdleClockCurvedLabel(g);
     // Draw trigger ellipse last to ensure it is front-most.
