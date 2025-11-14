@@ -347,13 +347,18 @@ void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
 
 void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
 {
-    // Draw ring above children, but clip out the stepOffsetButton area so it remains visible on top
+    // Draw ring above children, but clip out a circular hole matching the stepOffsetButton's base ring
     {
         juce::Graphics::ScopedSaveState ss(g);
         juce::Path clip;
         clip.addRectangle(getLocalBounds().toFloat());
-        clip.addRectangle(stepOffsetButton.getBounds().toFloat());
-        clip.setUsingNonZeroWinding(false); // even-odd: second rect becomes a hole
+        // Circular hole centered on the stepOffsetButton with ~60px diameter (outer base), add small margin
+        auto sb = stepOffsetButton.getBounds().toFloat();
+        auto sc = sb.getCentre();
+        const float holeD = 64.0f; // 60 + small margin
+        juce::Rectangle<float> hole(sc.x - holeD * 0.5f, sc.y - holeD * 0.5f, holeD, holeD);
+        clip.addEllipse(hole);
+        clip.setUsingNonZeroWinding(false); // even-odd: ellipse becomes a hole
         g.reduceClipRegion(clip);
         drawRing(g);
     }
