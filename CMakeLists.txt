@@ -40,6 +40,7 @@ juce_add_binary_data(DancerFrames
         dancer/Dancer_22.svg
         dancer/Dancer_23.svg
         dancer/Dancer_24.svg
+        dancer/dancer_neu_all.svg
 )
 
 juce_add_plugin(ClockSync

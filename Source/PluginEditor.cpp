@@ -2,6 +2,7 @@
 #include "PluginProcessor.h"
 #include "GridScaleButton.h"
 #include "BinaryData.h" // embedded dancer SVG frames
+#include "SvgUtils.h"   // layered SVG extraction
 #include <array>
 
 namespace
@@ -330,7 +331,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
             processor.notifyResyncOffsetChanged();
     };
 
-    // Attempt to load dancer SVG frames (vector, crisp on HiDPI)
+    // Attempt to load dancer animation (prefer single layered SVG, fallback to per-frame set)
     loadDancerFrames();
 }
 void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
@@ -694,9 +695,7 @@ void ClockSyncAudioProcessorEditor::drawDancer(juce::Graphics& g)
     // Stabilised canvas: original animation exported on 355x500 canvas.
     constexpr float dancerCanvasW = 355.0f;
     constexpr float dancerCanvasH = 500.0f;
-    auto shapeBounds = drawable->getDrawableBounds().toFloat();
-    if (shapeBounds.isEmpty()) return;
-    // Scale to fit entire nominal canvas into dest (not each frame's tight bounds).
+    // Scale to fit entire nominal canvas into dest (use root SVG box, not per-layer bounds).
     const float sxFull = dest.getWidth() / dancerCanvasW;
     const float syFull = dest.getHeight() / dancerCanvasH;
     const float scale = std::min(sxFull, syFull);
@@ -705,12 +704,8 @@ void ClockSyncAudioProcessorEditor::drawDancer(juce::Graphics& g)
     const float canvasScaledH = dancerCanvasH * scale;
     const float baseTx = dest.getCentreX() - canvasScaledW * 0.5f;
     const float baseTy = dest.getCentreY() - canvasScaledH * 0.5f;
-    // Frame-specific offset: center shape inside nominal canvas accounting for its own bounds origin.
-    const float shapeLeftMargin = (dancerCanvasW - shapeBounds.getWidth()) * 0.5f - shapeBounds.getX();
-    const float shapeTopMargin  = (dancerCanvasH - shapeBounds.getHeight()) * 0.5f - shapeBounds.getY();
-    const float tx = baseTx + shapeLeftMargin * scale;
-    const float ty = baseTy + shapeTopMargin  * scale;
-    drawable->draw(g, 1.0f, juce::AffineTransform::scale(scale).translated(tx, ty));
+    // Draw using the root canvas origin to prevent lateral jitter (no per-layer bounds alignment).
+    drawable->draw(g, 1.0f, juce::AffineTransform::scale(scale).translated(baseTx, baseTy));
 }
 
 juce::File ClockSyncAudioProcessorEditor::findDancerFolder()
@@ -800,78 +795,114 @@ void ClockSyncAudioProcessorEditor::scrubSvgColours(juce::XmlElement& el, juce::
 void ClockSyncAudioProcessorEditor::loadDancerFrames()
 {
     dancerFrames.clear();
-    // Try embedded binary data first; if any frame fails, fallback to filesystem for remaining.
-    bool usedBinary = false;
-    for (int i = 1; i <= dancerFrameCount; ++i)
+    // 1) Preferred path: load single layered SVG from embedded BinaryData
     {
-        juce::String symbol = juce::String::formatted("Dancer_%02d_svg", i);
-        const char* dataPtr = nullptr;
-        size_t dataSize = 0;
-        // BinaryData symbols are global; use if present.
-        // Access via if/else ladder since no reflection; rely on formatted name.
-        // clang-format off
-        switch (i)
+        const char* ptr = BinaryData::dancer_neu_all_svg;
+        const size_t sz = BinaryData::dancer_neu_all_svgSize;
+        if (ptr != nullptr && sz > 0)
         {
-            case 1:  dataPtr = BinaryData::Dancer_01_svg; dataSize = BinaryData::Dancer_01_svgSize; break;
-            case 2:  dataPtr = BinaryData::Dancer_02_svg; dataSize = BinaryData::Dancer_02_svgSize; break;
-            case 3:  dataPtr = BinaryData::Dancer_03_svg; dataSize = BinaryData::Dancer_03_svgSize; break;
-            case 4:  dataPtr = BinaryData::Dancer_04_svg; dataSize = BinaryData::Dancer_04_svgSize; break;
-            case 5:  dataPtr = BinaryData::Dancer_05_svg; dataSize = BinaryData::Dancer_05_svgSize; break;
-            case 6:  dataPtr = BinaryData::Dancer_06_svg; dataSize = BinaryData::Dancer_06_svgSize; break;
-            case 7:  dataPtr = BinaryData::Dancer_07_svg; dataSize = BinaryData::Dancer_07_svgSize; break;
-            case 8:  dataPtr = BinaryData::Dancer_08_svg; dataSize = BinaryData::Dancer_08_svgSize; break;
-            case 9:  dataPtr = BinaryData::Dancer_09_svg; dataSize = BinaryData::Dancer_09_svgSize; break;
-            case 10: dataPtr = BinaryData::Dancer_10_svg; dataSize = BinaryData::Dancer_10_svgSize; break;
-            case 11: dataPtr = BinaryData::Dancer_11_svg; dataSize = BinaryData::Dancer_11_svgSize; break;
-            case 12: dataPtr = BinaryData::Dancer_12_svg; dataSize = BinaryData::Dancer_12_svgSize; break;
-            case 13: dataPtr = BinaryData::Dancer_13_svg; dataSize = BinaryData::Dancer_13_svgSize; break;
-            case 14: dataPtr = BinaryData::Dancer_14_svg; dataSize = BinaryData::Dancer_14_svgSize; break;
-            case 15: dataPtr = BinaryData::Dancer_15_svg; dataSize = BinaryData::Dancer_15_svgSize; break;
-            case 16: dataPtr = BinaryData::Dancer_16_svg; dataSize = BinaryData::Dancer_16_svgSize; break;
-            case 17: dataPtr = BinaryData::Dancer_17_svg; dataSize = BinaryData::Dancer_17_svgSize; break;
-            case 18: dataPtr = BinaryData::Dancer_18_svg; dataSize = BinaryData::Dancer_18_svgSize; break;
-            case 19: dataPtr = BinaryData::Dancer_19_svg; dataSize = BinaryData::Dancer_19_svgSize; break;
-            case 20: dataPtr = BinaryData::Dancer_20_svg; dataSize = BinaryData::Dancer_20_svgSize; break;
-            case 21: dataPtr = BinaryData::Dancer_21_svg; dataSize = BinaryData::Dancer_21_svgSize; break;
-            case 22: dataPtr = BinaryData::Dancer_22_svg; dataSize = BinaryData::Dancer_22_svgSize; break;
-            case 23: dataPtr = BinaryData::Dancer_23_svg; dataSize = BinaryData::Dancer_23_svgSize; break;
-            case 24: dataPtr = BinaryData::Dancer_24_svg; dataSize = BinaryData::Dancer_24_svgSize; break;
-            default: break;
-        }
-        // clang-format on
-        if (dataPtr != nullptr && dataSize > 0)
-        {
-            usedBinary = true;
-            // Construct XmlDocument from UTF-8 text in binary data
-            juce::String svgText = juce::String::fromUTF8(dataPtr, (int) dataSize);
+            juce::String svgText = juce::String::fromUTF8(ptr, (int) sz);
             juce::XmlDocument doc(svgText);
-            std::unique_ptr<juce::XmlElement> xml(doc.getDocumentElement());
-            if (! xml)
+            if (auto root = std::unique_ptr<juce::XmlElement>(doc.getDocumentElement()))
             {
-                dancerFrames.emplace_back();
+                // Force kAccent colouring on the full document before splitting to layers
+                scrubSvgColours(*root, kAccent);
+                auto layers = SvgUtils::extractLayersAsDrawables(*root);
+                if (! layers.empty())
+                {
+                    dancerFrames.reserve(layers.size());
+                    for (auto& pair : layers)
+                        dancerFrames.push_back(std::move(pair.second));
+                    dancerFrameCount = (int) dancerFrames.size();
+                    return; // success
+                }
+            }
+        }
+    }
+
+    // 2) Fallback path: try layered SVG from filesystem (dev convenience)
+    {
+        juce::File folder = findDancerFolder();
+        juce::File layered = folder.getChildFile("dancer_neu_all.svg");
+        if (layered.existsAsFile())
+        {
+            juce::XmlDocument doc(layered);
+            if (auto root = std::unique_ptr<juce::XmlElement>(doc.getDocumentElement()))
+            {
+                scrubSvgColours(*root, kAccent);
+                auto layers = SvgUtils::extractLayersAsDrawables(*root);
+                if (! layers.empty())
+                {
+                    dancerFrames.reserve(layers.size());
+                    for (auto& pair : layers)
+                        dancerFrames.push_back(std::move(pair.second));
+                    dancerFrameCount = (int) dancerFrames.size();
+                    return; // success
+                }
+            }
+        }
+    }
+
+    // 3) Final fallback: load discrete frames (legacy path)
+    {
+        bool usedBinary = false;
+        for (int i = 1; i <= dancerFrameCount; ++i)
+        {
+            const char* dataPtr = nullptr;
+            size_t dataSize = 0;
+            switch (i)
+            {
+                case 1:  dataPtr = BinaryData::Dancer_01_svg; dataSize = BinaryData::Dancer_01_svgSize; break;
+                case 2:  dataPtr = BinaryData::Dancer_02_svg; dataSize = BinaryData::Dancer_02_svgSize; break;
+                case 3:  dataPtr = BinaryData::Dancer_03_svg; dataSize = BinaryData::Dancer_03_svgSize; break;
+                case 4:  dataPtr = BinaryData::Dancer_04_svg; dataSize = BinaryData::Dancer_04_svgSize; break;
+                case 5:  dataPtr = BinaryData::Dancer_05_svg; dataSize = BinaryData::Dancer_05_svgSize; break;
+                case 6:  dataPtr = BinaryData::Dancer_06_svg; dataSize = BinaryData::Dancer_06_svgSize; break;
+                case 7:  dataPtr = BinaryData::Dancer_07_svg; dataSize = BinaryData::Dancer_07_svgSize; break;
+                case 8:  dataPtr = BinaryData::Dancer_08_svg; dataSize = BinaryData::Dancer_08_svgSize; break;
+                case 9:  dataPtr = BinaryData::Dancer_09_svg; dataSize = BinaryData::Dancer_09_svgSize; break;
+                case 10: dataPtr = BinaryData::Dancer_10_svg; dataSize = BinaryData::Dancer_10_svgSize; break;
+                case 11: dataPtr = BinaryData::Dancer_11_svg; dataSize = BinaryData::Dancer_11_svgSize; break;
+                case 12: dataPtr = BinaryData::Dancer_12_svg; dataSize = BinaryData::Dancer_12_svgSize; break;
+                case 13: dataPtr = BinaryData::Dancer_13_svg; dataSize = BinaryData::Dancer_13_svgSize; break;
+                case 14: dataPtr = BinaryData::Dancer_14_svg; dataSize = BinaryData::Dancer_14_svgSize; break;
+                case 15: dataPtr = BinaryData::Dancer_15_svg; dataSize = BinaryData::Dancer_15_svgSize; break;
+                case 16: dataPtr = BinaryData::Dancer_16_svg; dataSize = BinaryData::Dancer_16_svgSize; break;
+                case 17: dataPtr = BinaryData::Dancer_17_svg; dataSize = BinaryData::Dancer_17_svgSize; break;
+                case 18: dataPtr = BinaryData::Dancer_18_svg; dataSize = BinaryData::Dancer_18_svgSize; break;
+                case 19: dataPtr = BinaryData::Dancer_19_svg; dataSize = BinaryData::Dancer_19_svgSize; break;
+                case 20: dataPtr = BinaryData::Dancer_20_svg; dataSize = BinaryData::Dancer_20_svgSize; break;
+                case 21: dataPtr = BinaryData::Dancer_21_svg; dataSize = BinaryData::Dancer_21_svgSize; break;
+                case 22: dataPtr = BinaryData::Dancer_22_svg; dataSize = BinaryData::Dancer_22_svgSize; break;
+                case 23: dataPtr = BinaryData::Dancer_23_svg; dataSize = BinaryData::Dancer_23_svgSize; break;
+                case 24: dataPtr = BinaryData::Dancer_24_svg; dataSize = BinaryData::Dancer_24_svgSize; break;
+                default: break;
+            }
+            if (dataPtr != nullptr && dataSize > 0)
+            {
+                usedBinary = true;
+                juce::String svgText = juce::String::fromUTF8(dataPtr, (int) dataSize);
+                juce::XmlDocument doc(svgText);
+                std::unique_ptr<juce::XmlElement> xml(doc.getDocumentElement());
+                if (! xml) { dancerFrames.emplace_back(); continue; }
+                scrubSvgColours(*xml, kAccent);
+                std::unique_ptr<juce::Drawable> d(juce::Drawable::createFromSVG(*xml));
+                dancerFrames.push_back(std::move(d));
                 continue;
             }
+            // Filesystem fallback per discrete frame
+            juce::File folder = findDancerFolder();
+            if (! folder.exists()) { dancerFrames.emplace_back(); continue; }
+            juce::String name = juce::String::formatted("Dancer_%02d.svg", i);
+            juce::File f = folder.getChildFile(name);
+            if (! f.existsAsFile()) { dancerFrames.emplace_back(); continue; }
+            std::unique_ptr<juce::XmlElement> xml(juce::XmlDocument(f).getDocumentElement());
+            if (! xml) { dancerFrames.emplace_back(); continue; }
             scrubSvgColours(*xml, kAccent);
             std::unique_ptr<juce::Drawable> d(juce::Drawable::createFromSVG(*xml));
             dancerFrames.push_back(std::move(d));
-            continue;
         }
-        // Fallback to filesystem only if binary data absent for this index
-        juce::File folder = findDancerFolder();
-        if (! folder.exists()) { dancerFrames.emplace_back(); continue; }
-        juce::String name = juce::String::formatted("Dancer_%02d.svg", i);
-        juce::File f = folder.getChildFile(name);
-        if (! f.existsAsFile())
-        {
-            name = juce::String::formatted("dancer_%02d.svg", i);
-            f = folder.getChildFile(name);
-        }
-        if (! f.existsAsFile()) { dancerFrames.emplace_back(); continue; }
-        std::unique_ptr<juce::XmlElement> xml(juce::XmlDocument(f).getDocumentElement());
-        if (! xml) { dancerFrames.emplace_back(); continue; }
-        scrubSvgColours(*xml, kAccent);
-        std::unique_ptr<juce::Drawable> d(juce::Drawable::createFromSVG(*xml));
-        dancerFrames.push_back(std::move(d));
+        juce::ignoreUnused(usedBinary);
     }
 }
 
