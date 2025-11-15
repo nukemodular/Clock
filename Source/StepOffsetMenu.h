@@ -7,10 +7,10 @@
 // - Cyan number centered showing selected step
 // - On click: shows 16 small ring options around, with simple expand/collapse animation
 // - onStepChanged callback invoked when a step is selected
-class AnimatedStepOffsetButton : public juce::Component, private juce::Timer
+class AnimatedStepOffsetMenu : public juce::Component, private juce::Timer
 {
 public:
-    AnimatedStepOffsetButton()
+    AnimatedStepOffsetMenu()
     {
         setInterceptsMouseClicks(true, true);
         startTimerHz(60);
@@ -22,12 +22,12 @@ public:
         kAccent = accent; kBase = base; kCyan = cyan; repaint();
     }
 
-    void setStep(int step)
+    void setStep(int newStep)
     {
-        step = juce::jlimit(1, 16, step);
-        if (selectedStep != step)
+        newStep = juce::jlimit(1, 16, newStep);
+        if (selectedStep != newStep)
         {
-            selectedStep = step;
+            selectedStep = newStep;
             repaint();
         }
     }
@@ -122,12 +122,17 @@ public:
             const float minRadius = baseD * 0.5f - 2.0f;
             const float tighten = 6.0f * s0; // mirror drawOptions tightening
             const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - maxScaleR + 3.0f - tighten;
-            const float radius = juce::jlimit(minRadius, juce::jmax(minRadius, maxRadius), minRadius + (maxRadius - minRadius) * openAmount);
-            const float outerBound = radius + maxScaleR + 6.0f; // small margin beyond largest scaled circle
+            const float radius = juce::jlimit(minRadius, juce::jmax(minRadius, maxRadius),
+                                              minRadius + (maxRadius - minRadius) * openAmount);
+
+            // Allow more travel before collapsing (scaled up for bigger bounds)
+            const float baseRadiusFromCenter = baseD * 0.5f;
+            const float distanceFactor       = 3.5f; // was effectively ~1x
+            const float outerBound           = radius + maxScaleR + distanceFactor * baseRadiusFromCenter;
+
             const float dist = center.getDistanceFrom(e.position);
             if (dist > outerBound)
             {
-                // Trigger closing animation
                 opening = false; closing = true; menuOpen = false; hoverIndex = -1; repaint();
                 return; // don't process hover when closing
             }
@@ -145,10 +150,43 @@ public:
     {
         if (menuOpen)
         {
-            // Initiate closing when cursor leaves component entirely
+            // When menu is open, avoid immediately closing on transient mouseExit events.
+            // Query the current global mouse position and only close if the pointer
+            // is actually outside an expanded interactive area around the ring.
+            auto globalPos = juce::Desktop::getInstance().getMousePosition();
+            auto localPos = getLocalPoint(nullptr, globalPos).toFloat();
+
+            // Recompute the same bounds used in mouseMove to determine an outer interactive radius.
+            auto r = getLocalBounds().toFloat();
+            auto center = r.getCentre();
+            const float baseD = 50.0f;
+            const float itemD = 18.0f; // matches mouseMove's itemD
+            const float itemR = itemD * 0.5f;
+            const float s0 = 1.30f;
+            const float maxScaleR = itemR * s0;
+            const float minRadius = baseD * 0.5f - 2.0f;
+            const float tighten = 6.0f * s0;
+            const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - maxScaleR + 3.0f - tighten;
+            const float radius = juce::jlimit(minRadius, juce::jmax(minRadius, maxRadius),
+                                              minRadius + (maxRadius - minRadius) * openAmount);
+
+            const float baseRadiusFromCenter = baseD * 0.5f;
+            const float distanceFactor = 3.5f;
+            const float outerBound = radius + maxScaleR + distanceFactor * baseRadiusFromCenter;
+
+            const float slack = 6.0f; // allow a small safety margin
+            const float dist = center.getDistanceFrom(localPos);
+            if (dist <= outerBound + slack)
+            {
+                // Pointer still within an expanded interactive region — ignore exit.
+                return;
+            }
+
+            // Otherwise, actually close the menu.
             opening = false; closing = true; menuOpen = false; hoverIndex = -1; repaint();
             return;
         }
+
         if (hoverIndex != -1) { hoverIndex = -1; repaint(); }
     }
 
@@ -214,22 +252,24 @@ private:
     struct RingConfig
     {
         static constexpr int   count            = 16;
-        static constexpr float optionItemD      = 18.0f; // visual ring diameter
-        static constexpr float clickItemD       = 20.0f; // click hit test diameter
-        static constexpr float hoverItemD       = 20.0f; // hover hit test diameter
-        static constexpr float scaleCenter      = 1.30f; // big
-        static constexpr float scaleNear1       = 1.10f; // medium (adjacent)
-        static constexpr float scaleSmall       = 2.0f/3.0f; // normal/small for all others
-        static constexpr float scaleNormalShrink= 2.0f/3.0f; // menu-open shrink when no hover
-        static constexpr float outward0         = 7.0f;  // slight extra push for big
-        static constexpr float outward1         = 3.0f;  // medium push for neighbors
-        static constexpr float outwardSmall     = -2.0f; // pull small ones slightly inward
-        static constexpr float spreadVisual     = 8.0f; // current drawOptions spacing
-        static constexpr float spreadHit        = 8.0f; // click hit test spacing (kept as original)
-        static constexpr float spreadHover      = 8.0f; // hover hit test spacing
-        static constexpr float visualMargin     = 6.0f;
-        static constexpr float inwardShift      = 3.0f; // shift ring inward (requested adjustment)
-        // Helpers
+        static constexpr float optionItemD      = 22.0f;
+        static constexpr float clickItemD       = 25.0f;
+        static constexpr float hoverItemD       = 25.0f;
+        static constexpr float scaleCenter      = 1.5f;
+        static constexpr float scaleNear1       = 1.1f;
+        static constexpr float scaleSmall       = 0.7f;
+        static constexpr float scaleNormalShrink= 0.7f;
+
+        // Pull whole ring inward by 20px (visual and hit/hover)
+        static constexpr float inwardSmallShift = 0.0f;
+        static constexpr float inwardHoverExtra = 0.0f;
+
+        // No additional spread; keep the ring tight
+        static constexpr float spreadVisual     = 0.0f;
+        static constexpr float spreadHit        = 0.0f;
+        static constexpr float spreadHover      = 0.0f;
+        static constexpr float visualMargin     = 20.0f;
+
         static int circularDistance(int a, int b)
         {
             int d = std::abs(a - b);
@@ -243,21 +283,24 @@ private:
             if (d == 1) return scaleNear1;
             return scaleSmall;
         }
-        static float outwardFor(int idx1, int hoverIdx)
+        static float inwardFor(int idx1, int hoverIdx)
         {
-            if (hoverIdx < 1) return 0.0f;
-            const int d = circularDistance(idx1, hoverIdx);
-            if (d == 0) return outward0;
-            if (d == 1) return outward1;
-            return outwardSmall;
+            juce::ignoreUnused(idx1, hoverIdx);
+            // Constant inward shift for all circles
+            return -inwardSmallShift;
         }
-        static float computeBaseRadius(float openAmt, int width, int height, float itemR, float maxScale, float spreadExtra, float margin)
+        static float computeBaseRadius(float openAmt, int width, int height,
+                                       float itemR, float maxScale,
+                                       float spreadExtra, float margin)
         {
-            const float minRadius = 40.0f * 0.5f; // baseD == 40 -> minRadius 20 (from previous code)
-            const float maxRadius = (juce::jmin<float>(width, height) * 0.5f) - (itemR * maxScale) - margin - outward0 - spreadExtra * 0.15f;
-            const float raw      = juce::jlimit(minRadius, juce::jmax(minRadius, maxRadius), minRadius + (maxRadius - minRadius) * openAmt);
-            // Apply inward shift so the open menu sits 3px closer to center
-            return (raw + spreadExtra * openAmt) - inwardShift;
+            juce::ignoreUnused(spreadExtra);
+            const float minRadius = 40.0f * 0.5f;
+            const float maxRadius = (juce::jmin<float>(width, height) * 0.5f)
+                                    - (itemR * maxScale) - margin;
+            const float raw = juce::jlimit(minRadius,
+                                           juce::jmax(minRadius, maxRadius),
+                                           minRadius + (maxRadius - minRadius) * openAmt);
+            return raw; // global radius unchanged; per‑circle inward handles shrink
         }
     };
 
@@ -272,14 +315,14 @@ private:
         const float startAt12 = -juce::MathConstants<float>::halfPi;
         const float step = juce::MathConstants<float>::twoPi / (float) count;
         auto scaleFor   = [this](int idx0){ return RingConfig::scaleFor(idx0 + 1, hoverIndex); };
-        auto outwardFor = [this](int idx0){ return RingConfig::outwardFor(idx0 + 1, hoverIndex); };
+        auto inwardFor  = [this](int idx0){ return RingConfig::inwardFor(idx0 + 1, hoverIndex); };
 
         // Draw non-hovered items first (ripple scaling). Make fully normal items slightly smaller.
         for (int i = 0; i < count; ++i)
         {
             if (i + 1 == hoverIndex) continue;
             const float ang = startAt12 + step * (float) i;
-            const float effRadius = baseRadius + outwardFor(i);
+            const float effRadius = baseRadius + inwardFor(i);
             const float cx = center.x + effRadius * std::cos(ang);
             const float cy = center.y + effRadius * std::sin(ang);
             float sc = scaleFor(i);
@@ -299,7 +342,7 @@ private:
         {
             const int i = hoverIndex - 1;
             const float ang = startAt12 + step * (float) i;
-            const float effRadius = baseRadius + outwardFor(i);
+            const float effRadius = baseRadius + inwardFor(i);
             const float cx = center.x + effRadius * std::cos(ang);
             const float cy = center.y + effRadius * std::sin(ang);
             const float sc = sCenter;
@@ -324,21 +367,23 @@ private:
         const auto r = getLocalBounds().toFloat();
         const auto center = r.getCentre();
         const float sCenter = RingConfig::scaleCenter;
-        const float baseRadius = RingConfig::computeBaseRadius(openAmount, getWidth(), getHeight(), itemR, sCenter, RingConfig::spreadHit, RingConfig::visualMargin);
+        const float baseRadius = RingConfig::computeBaseRadius(
+            openAmount, getWidth(), getHeight(), itemR, sCenter,
+            RingConfig::spreadHit, RingConfig::visualMargin);
         const float startAt12 = -juce::MathConstants<float>::halfPi;
         const float step = juce::MathConstants<float>::twoPi / (float) count;
 
         for (int i = 0; i < count; ++i)
         {
             const float ang = startAt12 + step * (float) i;
-            // Outward ripple offset
-            float outward = RingConfig::outwardFor(i + 1, hoverIndex);
-            const float effRadius = baseRadius + outward;
+            // Use correct 1-based index for inwardFor
+            float inward = RingConfig::inwardFor(i + 1, hoverIndex);
+            const float effRadius = baseRadius + inward;
             const float cx = center.x + effRadius * std::cos(ang);
             const float cy = center.y + effRadius * std::sin(ang);
             const float dx = pos.x - cx;
             const float dy = pos.y - cy;
-            const float rr = itemR; // strict click area equals base circle
+            const float rr = itemR;
             if ((dx*dx + dy*dy) <= (rr * rr))
                 return i + 1;
         }
@@ -355,12 +400,16 @@ private:
         const float extra = 12.0f; // expanded hover radius for smoother transitions
         const auto r = getLocalBounds().toFloat();
         const auto center = r.getCentre();
-        // Block hover inside inner base ellipse of the central button to avoid jitter
-        const float innerBaseRadius = 20.0f; // matches paint() inner reduced(10) -> 40px diameter
+
+        // Block hover inside inner base ellipse of the central button
+        const float innerBaseRadius = 20.0f;
         if (center.getDistanceFrom(pos) <= innerBaseRadius)
             return -1;
+
         const float sCenter = RingConfig::scaleCenter;
-        const float baseRadius = RingConfig::computeBaseRadius(openAmount, getWidth(), getHeight(), itemR, sCenter, RingConfig::spreadHover, RingConfig::visualMargin);
+        const float baseRadius = RingConfig::computeBaseRadius(
+            openAmount, getWidth(), getHeight(), itemR, sCenter,
+            RingConfig::spreadHover, RingConfig::visualMargin);
         const float startAt12 = -juce::MathConstants<float>::halfPi;
         const float step = juce::MathConstants<float>::twoPi / (float) count;
 
@@ -371,8 +420,8 @@ private:
         for (int i = 0; i < count; ++i)
         {
             const float ang = startAt12 + step * (float) i;
-            float outward = RingConfig::outwardFor(i + 1, hoverIndex);
-            const float effRadius = baseRadius + outward;
+            float inward = RingConfig::inwardFor(i + 1, hoverIndex);
+            const float effRadius = baseRadius + inward;
             const float cx = center.x + effRadius * std::cos(ang);
             const float cy = center.y + effRadius * std::sin(ang);
             const float dx = pos.x - cx;

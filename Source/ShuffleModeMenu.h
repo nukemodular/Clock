@@ -9,7 +9,7 @@
 // Numbers (1..7) drawn in kCyan.
 // Order along arc from 7 o'clock to 5 o'clock clockwise: 1..7 (smallest to largest).
 // Callback invoked on click with selected number (1..7).
-class ArcSizeButtons : public juce::Component
+class ShuffleModeMenu : public juce::Component
 {
 public:
     // Callbacks

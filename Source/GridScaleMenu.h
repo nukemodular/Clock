@@ -8,10 +8,10 @@
 // - On click: shows 4 small option circles arranged on an arc from 4 o'clock to 1 o'clock
 // - Auto-closes when pointer leaves outer ring bounds
 // - onGridChanged callback invoked passing choice index 0..3 (0=>1/32,1=>1/16,2=>1/8,3=>1/4)
-class GridScaleButton : public juce::Component, private juce::Timer
+class GridScaleMenu : public juce::Component, private juce::Timer
 {
 public:
-    GridScaleButton()
+    GridScaleMenu()
     {
         setInterceptsMouseClicks(true, true);
         startTimerHz(60);
@@ -39,8 +39,8 @@ public:
     {
         auto r = getLocalBounds().toFloat();
         auto center = r.getCentre();
-        const float outerD = 60.0f;
-        const float innerReduce = 10.0f;
+        const float outerD = 53.0f;
+        const float innerReduce = 9.0f;
         juce::Rectangle<float> outer(center.x - outerD * 0.5f, center.y - outerD * 0.5f, outerD, outerD);
         juce::Rectangle<float> inner = outer.reduced(innerReduce);
 
@@ -61,7 +61,7 @@ public:
     {
         auto r = getLocalBounds().toFloat();
         auto c = r.getCentre();
-        const float outerR = 30.0f;
+        const float outerR = 25.0f;
         if (c.getDistanceFrom(e.position) <= outerR)
         {
             opening = !menuOpen;
@@ -88,13 +88,13 @@ public:
         // Auto-close if pointer leaves outer bounds
         auto r = getLocalBounds().toFloat();
         auto center = r.getCentre();
-        const float baseD = 60.0f;
-        const float itemD = 25.0f;
+        const float baseD = 53.0f;
+        const float itemD = 20.0f;
         const float itemR = itemD * 0.5f;
         const float s0 = 1.5f; // keep in sync with drawOptions
         const float maxScaleR = itemR * s0;
         const float minRadius = baseD * 0.5f - 2.0f;
-        const float tighten = 2.0f; // reduced to allow wider spread
+        const float tighten = 7.0f; // reduced to allow wider spread
         const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - maxScaleR  - tighten;
         const float radius = juce::jlimit(minRadius, juce::jmax(minRadius, maxRadius), minRadius + (maxRadius - minRadius) * openAmount);
         const float outerBound = radius + maxScaleR + 12.0f; // slightly larger margin to avoid accidental collapse at extremes
@@ -136,6 +136,10 @@ private:
     juce::Colour kBase   { juce::Colour::fromRGB(0x26, 0x26, 0x26) };
     juce::Colour kCyan   { juce::Colour::fromRGB(0x00, 0xD7, 0xFF) };
 
+    // Centralised arc degrees for option placement (degrees)
+    static constexpr float kStartDeg = 100.0f; // lower bound of arc
+    static constexpr float kEndDeg   = 210.0f; // upper bound of arc
+
     void timerCallback() override
     {
         const float speed = 0.22f;
@@ -156,22 +160,20 @@ private:
     void drawOptions(juce::Graphics& g, juce::Point<float> center, float baseD)
     {
         const int count = 4;
-        const float itemD = 25.0f;
+        const float itemD = 20.0f;
         const float itemR = itemD * 0.5f;
-        const float s0 = 1.5f, s1 = 1.15f; // hovered, adjacent, normal
+        const float s0 = 1.5f, s1 = 1.1f; // hovered, adjacent, normal
         const float maxScaleR = itemR * s0;
         const float minRadius = baseD * 0.5f - 2.0f;
-        const float tighten = 3.0f;
+        const float tighten = 7.0f;
         const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - maxScaleR  - tighten;
         const float radius = juce::jlimit(minRadius, juce::jmax(minRadius, maxRadius), minRadius + (maxRadius - minRadius) * openAmount);
 
         // Arc option angles (3x wider spread): 60° to 300° covering most of circle, midpoint at 180°
         auto angleForIndex = [](int i)
         {
-            const float startDeg = 110.0f;  // was 140°
-            const float endDeg   = 260.0f; // was 220° -> span 240° (3x original 80°)
-            const float stepDeg  = (endDeg - startDeg) / 3.0f;
-            const float deg = startDeg + stepDeg * (float) i;
+            const float stepDeg  = (kEndDeg - kStartDeg) / 3.0f;
+            const float deg = kStartDeg + stepDeg * (float) i;
             return juce::degreesToRadians(deg);
         };
         static const char* labels[count] = { "32", "16", "8", "4" };
@@ -225,23 +227,21 @@ private:
     {
         if (openAmount <= 0.01f) return -1;
         const int count = 4;
-        const float itemD = 25.0f;
+        const float itemD = 20.0f;
         const float itemR = itemD * 0.5f;
         auto r = getLocalBounds().toFloat();
         auto center = r.getCentre();
-        const float baseD = 60.0f;
+        const float baseD = 53.0f;
         const float s0 = 1.5f; // unify with drawOptions
         const float maxScaleR = itemR * s0;
         const float minRadius = baseD * 0.5f - 2.0f;
-        const float tighten = 3.0f;
+        const float tighten = 7.0f;
         const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - maxScaleR  - tighten;
         const float radius = juce::jlimit(minRadius, juce::jmax(minRadius, maxRadius), minRadius + (maxRadius - minRadius) * openAmount);
         auto angleForIndex = [](int i)
         {
-            const float startDeg = 110.0f;  // widened
-            const float endDeg   = 260.0f; // widened
-            const float stepDeg  = (endDeg - startDeg) / 3.0f;
-            const float deg = startDeg + stepDeg * (float) i;
+            const float stepDeg  = (kEndDeg - kStartDeg) / 3.0f;
+            const float deg = kStartDeg + stepDeg * (float) i;
             return juce::degreesToRadians(deg);
         };
 
@@ -263,24 +263,22 @@ private:
     {
         if (openAmount <= 0.01f) return -1;
         const int count = 4;
-        const float itemD = 25.0f;
+        const float itemD = 20.0f;
         const float itemR = itemD * 0.5f;
         const float extra = 10.0f; // expand hover radius for stability, especially at index 0/3
         auto r = getLocalBounds().toFloat();
         auto center = r.getCentre();
-        const float baseD = 60.0f;
+        const float baseD = 53.0f;
         const float s0 = 1.5f; // unify with drawOptions
         const float maxScaleR = itemR * s0;
         const float minRadius = baseD * 0.5f - 2.0f;
-        const float tighten = 3.0f;
+        const float tighten = 7.0f;
         const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - maxScaleR  - tighten;
         const float radius = juce::jlimit(minRadius, juce::jmax(minRadius, maxRadius), minRadius + (maxRadius - minRadius) * openAmount);
         auto angleForIndex = [](int i)
         {
-            const float startDeg = 110.0f;
-            const float endDeg   = 260.0f;
-            const float stepDeg  = (endDeg - startDeg) / 3.0f;
-            const float deg = startDeg + stepDeg * (float) i;
+            const float stepDeg  = (kEndDeg - kStartDeg) / 3.0f;
+            const float deg = kStartDeg + stepDeg * (float) i;
             return juce::degreesToRadians(deg);
         };
 

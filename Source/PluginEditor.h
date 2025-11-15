@@ -2,11 +2,13 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_gui_extra/juce_gui_extra.h>
+#include <juce_animation/juce_animation.h>
 #include "PluginProcessor.h"
-#include "StepOffsetButton.h"
-#include "GridScaleButton.h"
-#include "EllipseToggleButton.h"
-#include "ArcSizeButtons.h"
+#include "StepOffsetMenu.h"
+#include "GridScaleMenu.h"
+#include "RingToggle.h"
+#include "ShuffleModeMenu.h"
+#include "LookAndFeels.h" // Centralised LookAndFeel & theme colours
 
 class ClockSyncAudioProcessorEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
@@ -29,7 +31,7 @@ private:
 
     // UI components
     // Rate selection: 4 custom text buttons
-    // Legacy rate buttons removed (replaced by gridScaleButton)
+    // Legacy rate buttons removed (replaced by gridScaleMenu)
     juce::ComboBox deviceBox;
     juce::TextButton refreshButton { "RESET" };
     // Small center-dot toggle used to enable/disable click
@@ -49,16 +51,16 @@ private:
     } clickButton;
     // Replaces keepClockButton with a circular toggle
     juce::Slider clickLevelSlider;
-    AnimatedStepOffsetButton stepOffsetButton;
+    AnimatedStepOffsetMenu stepOffsetMenu;
     // New grid scale radial selector replacing four rate buttons
-    GridScaleButton gridScaleButton; // manages 1/32..1/4 selection
+    GridScaleMenu gridScaleMenu; // manages 1/32..1/4 selection
     // New: toggle to control whether trigger arms a bar-restart (+/- offset)
-    EllipseToggleButton triggerModeToggle;
+    RingToggle triggerModeToggle;
     // New: idle clock toggle (32x32) near top-left
-    EllipseToggleButton idleClockToggle;
+    RingToggle idleClockToggle;
     // New: shuffle scale toggle at (65,195) size 40x40
-    EllipseToggleButton shuffleScaleToggle;
-    ArcSizeButtons arcSizeButtons; // 7 arc-arranged size-gradient buttons 1..7
+    RingToggle shuffleScaleToggle;
+    ShuffleModeMenu shuffleModeMenu; // 7 arc-arranged size-gradient buttons 1..7
 
     // Attachments
     // Attachments
@@ -79,12 +81,8 @@ private:
     bool pendingStartCached { false };
     bool engineRunningCached { true };
 
-    // Custom rotary look for the click level slider
-    class ClickRotaryLNF;
+    // Custom rotary & button LookAndFeels (now using global definitions from LookAndFeels.h)
     std::unique_ptr<ClickRotaryLNF> clickRotaryLNF;
-
-    // Themed LNF for rate buttons, refresh button, and combo
-    class ThemeLNF;
     std::unique_ptr<ThemeLNF> themeLNF;
 
     // Layout cache for ring visualisation
@@ -105,6 +103,7 @@ private:
     void drawTrigger(juce::Graphics& g);
     void drawDancer(juce::Graphics& g);
     void loadDancerFrames();
+    void startAsyncDancerLoad();
     static juce::File findDancerFolder();
     static void scrubSvgColours(juce::XmlElement& el, juce::Colour accent);
    
@@ -118,5 +117,25 @@ private:
 
     // Dancer animation
     std::vector<std::unique_ptr<juce::Drawable>> dancerFrames;
-    int dancerFrameCount { 24 }; // Dancer_01..Dancer_24
+    int dancerFrameCount { 0 }; // Populated from layers in dancer_all.svg
+    // Cached last dancer frame (freeze when stopped)
+    int dancerLastFrame { 0 };
+    std::atomic<bool> dancerLoading { false }; // true while background thread parsing SVG
+    double dancerLoadStartMs { 0.0 }; // start timestamp for async load
+    // Last clock counter value actually used to advance the dancer.
+    // This lets us cheaply skip animation math & SVG transforms when no new
+    // clock pulse has arrived (or when stopped), further ensuring that GUI
+    // work never competes with MIDI clock timing. All animation is strictly
+    // on the message thread and never touches audio thread resources.
+    unsigned long long dancerLastDrawnClockCounter { std::numeric_limits<unsigned long long>::max() };
+
+    // Trigger fade animator (JUCE animation module). Replaces manual exponential decay.
+    juce::Animator triggerFadeAnimator { juce::ValueAnimatorBuilder{}
+        .withDurationMs(240.0)
+        .withValueChangedCallback([this](float progress){
+            // progress 0..1 => fade from 1 -> 0
+            triggerFade = 1.0f - juce::jlimit(0.0f, 1.0f, progress);
+            repaint(triggerRect);
+        })
+        .build() };
 };

@@ -13,34 +13,35 @@ endif()
 
 add_subdirectory(JUCE)
 
-# Embed dancer SVG frames into binary for distribution (no runtime filesystem dependency)
+# Embed consolidated dancer SVG (layered file) only; individual per-frame assets removed.
 juce_add_binary_data(DancerFrames
-    SOURCES
-        dancer/Dancer_01.svg
-        dancer/Dancer_02.svg
-        dancer/Dancer_03.svg
-        dancer/Dancer_04.svg
-        dancer/Dancer_05.svg
-        dancer/Dancer_06.svg
-        dancer/Dancer_07.svg
-        dancer/Dancer_08.svg
-        dancer/Dancer_09.svg
-        dancer/Dancer_10.svg
-        dancer/Dancer_11.svg
-        dancer/Dancer_12.svg
-        dancer/Dancer_13.svg
-        dancer/Dancer_14.svg
-        dancer/Dancer_15.svg
-        dancer/Dancer_16.svg
-        dancer/Dancer_17.svg
-        dancer/Dancer_18.svg
-        dancer/Dancer_19.svg
-        dancer/Dancer_20.svg
-        dancer/Dancer_21.svg
-        dancer/Dancer_22.svg
-        dancer/Dancer_23.svg
-        dancer/Dancer_24.svg
-        dancer/dancer_neu_all.svg
+  NAMESPACE BinaryData
+  SOURCES
+    dancer/dancer_all.svg
+    dancer/png/dancer_0.png
+    dancer/png/dancer_1.png
+    dancer/png/dancer_2.png
+    dancer/png/dancer_3.png
+    dancer/png/dancer_4.png
+    dancer/png/dancer_5.png
+    dancer/png/dancer_6.png
+    dancer/png/dancer_7.png
+    dancer/png/dancer_8.png
+    dancer/png/dancer_9.png
+    dancer/png/dancer_10.png
+    dancer/png/dancer_11.png
+    dancer/png/dancer_12.png
+    dancer/png/dancer_13.png
+    dancer/png/dancer_14.png
+    dancer/png/dancer_15.png
+    dancer/png/dancer_16.png
+    dancer/png/dancer_17.png
+    dancer/png/dancer_18.png
+    dancer/png/dancer_19.png
+    dancer/png/dancer_20.png
+    dancer/png/dancer_21.png
+    dancer/png/dancer_22.png
+    dancer/png/dancer_23.png
 )
 
 juce_add_plugin(ClockSync
@@ -81,6 +82,7 @@ target_link_libraries(ClockSync
         juce::juce_audio_processors
         juce::juce_dsp
         juce::juce_gui_extra
+        juce::juce_animation
         juce::juce_core
     DancerFrames
 )

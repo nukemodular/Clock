@@ -7,10 +7,10 @@
 // - Middle: inner ellipse reduced(8.0f) in kBase
 // - When ON: draw additional ellipse reduced(12.0f) in kCyan; when OFF: hide this cyan ellipse
 // Usage: set size to at least 30x30; you can place larger, it will center a 30x30 disk
-class EllipseToggleButton : public juce::ToggleButton
+class RingToggle : public juce::ToggleButton
 {
 public:
-    EllipseToggleButton() = default;
+    RingToggle() = default;
 
     void setColours(juce::Colour accent, juce::Colour base, juce::Colour cyan)
     {
