@@ -99,6 +99,7 @@ private:
 
     // Drawing helpers
     void drawIdleClockCurvedLabel(juce::Graphics& g);
+    void openCurvedLabelEditor();
     void drawRing(juce::Graphics& g);
     void drawTrigger(juce::Graphics& g);
     void drawDancer(juce::Graphics& g);
@@ -111,6 +112,9 @@ private:
     // Constants
     static constexpr int kRingOuterD = 160;
     static constexpr int kRingInnerD = 120;
+
+    // Editable curved label text drawn along the decorative bezier
+    juce::String curvedLabelText { "TB-303" };
     
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ClockSyncAudioProcessorEditor)

@@ -37,7 +37,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     : juce::AudioProcessorEditor(&p), processor(p)
 {
     setResizable(false, false);
-    setSize(320, 260);
+    setSize(320, 240);
     startTimerHz(60);
 
     // Component setup (colour, style, add, z-order)
@@ -406,6 +406,61 @@ void ClockSyncAudioProcessorEditor::mouseUp(const juce::MouseEvent& e)
             }
         }
     }
+
+    // If click wasn't inside ring inner circle, check for label click along the bezier
+    // Quadratic bezier control points used for the decorative curve (must match drawing)
+    {
+        const juce::Point<float> p0 (82.0f, 85.0f);
+        const juce::Point<float> p1 (127.0f, 22.0f);
+        const juce::Point<float> p2 (198.0f, 52.0f);
+        const auto posf = juce::Point<float>((float)e.x, (float)e.y);
+        // Quick bbox reject (inflated)
+        float minx = std::min(std::min(p0.getX(), p1.getX()), p2.getX()) - 20.0f;
+        float maxx = std::max(std::max(p0.getX(), p1.getX()), p2.getX()) + 20.0f;
+        float miny = std::min(std::min(p0.getY(), p1.getY()), p2.getY()) - 20.0f;
+        float maxy = std::max(std::max(p0.getY(), p1.getY()), p2.getY()) + 20.0f;
+        if (posf.getX() >= minx && posf.getX() <= maxx && posf.getY() >= miny && posf.getY() <= maxy)
+        {
+            // sample bezier and find nearest distance
+            const int samples = 40;
+            float bestDist2 = std::numeric_limits<float>::max();
+            for (int i = 0; i <= samples; ++i)
+            {
+                const float t = (float) i / (float) samples;
+                const float mt = 1.0f - t;
+                const juce::Point<float> sample = mt*mt * p0 + 2.0f * mt * t * p1 + t*t * p2;
+                const float d2 = (sample.getX() - posf.getX())*(sample.getX() - posf.getX()) + (sample.getY() - posf.getY())*(sample.getY() - posf.getY());
+                bestDist2 = std::min(bestDist2, d2);
+            }
+            const float thresh = 20.0f * 20.0f; // squared threshold
+            if (bestDist2 <= thresh)
+            {
+                openCurvedLabelEditor();
+                return;
+            }
+        }
+    }
+}
+
+void ClockSyncAudioProcessorEditor::openCurvedLabelEditor()
+{
+    // Create an AlertWindow with a TextEditor for inline editing
+    juce::AlertWindow w ("Edit label", "Enter new curved label text:", juce::AlertWindow::NoIcon);
+    w.addTextEditor("labelEditor", curvedLabelText, "");
+    w.addButton("OK", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    w.addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    w.enterModalState(true, nullptr, true);
+
+    // Run modal loop on message thread (blocking) to simplify behaviour
+    if (w.runModalLoop())
+    {
+        auto* te = w.findEditor("labelEditor");
+        if (te)
+        {
+            curvedLabelText = te->getText();
+            repaint();
+        }
+    }
 }
 
 void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
@@ -604,9 +659,9 @@ void ClockSyncAudioProcessorEditor::drawIdleClockCurvedLabel(juce::Graphics& g)
     //     g.setColour(UiThemeColours::accent());
     //     g.strokePath(curve, juce::PathStrokeType(3.0f));
     // }
-    // Draw label following the same quadratic curve: "TB-303"
+    // Draw label following the same quadratic curve
     {
-        const juce::String text = "TB-303";
+        const juce::String text = curvedLabelText;
         // Quadratic bezier control points (match the curve drawn above)
         const juce::Point<float> p0 (90.0f, 70.0f);
         const juce::Point<float> p1 (145.0f, 20.0f);
