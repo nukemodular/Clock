@@ -18,12 +18,12 @@ public:
     }
 
     // Preferred size helper
-    static constexpr int preferredSize = 40; // 40x40
-
+    static constexpr int preferredSize = 30; // 30x30
+    static constexpr int reducedSize = preferredSize * 0.25f; // 25% reduction for inner ellipse
     void paintButton(juce::Graphics& g, bool /*isMouseOverButton*/, bool /*isButtonDown*/) override
     {
         auto lb = getLocalBounds();
-        // Constrain to a centered square of up to 40x40 (or smaller if component is smaller)
+        // Constrain to a centered square of up to 30x30 (or smaller if component is smaller)
         const int d = std::max(preferredSize, std::min(lb.getWidth(), lb.getHeight()));
         juce::Rectangle<int> square(lb.getCentreX() - d / 2, lb.getCentreY() - d / 2, d, d);
         auto rf = square.toFloat();
@@ -33,12 +33,12 @@ public:
         g.fillEllipse(rf);
         // Middle base disk (reduced by 8px overall => 4px per side)
         g.setColour(kBase);
-        g.fillEllipse(rf.reduced(10.0f));
+        g.fillEllipse(rf.reduced(reducedSize));
         // ON state cyan disk (reduced by 12px overall => 6px per side)
         if (getToggleState())
         {
             g.setColour(kCyan);
-            g.fillEllipse(rf.reduced(16.0f));
+            g.fillEllipse(rf.reduced(reducedSize * 1.5f));
         }
     }
 

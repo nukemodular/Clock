@@ -49,7 +49,7 @@ public:
         auto center = r.getCentre();
 
         // Base button at center: 60x60 outer, inner reduced by 10
-        const float outerD = 60.0f;
+        const float outerD = 50.0f;
         const float innerReduce = 10.0f;
         juce::Rectangle<float> outer(center.x - outerD * 0.5f, center.y - outerD * 0.5f, outerD, outerD);
         juce::Rectangle<float> inner = outer.reduced(innerReduce);
@@ -61,7 +61,7 @@ public:
 
         // Draw options if open
         if (openAmount > 0.01f) {
-            g.setColour(juce::Colours::black.withAlpha(0.33f));
+            g.setColour(juce::Colours::black.withAlpha(0.2f));
             g.fillEllipse(outer);
             drawOptions(g, center, outerD - 20.0f);
 
@@ -114,10 +114,10 @@ public:
         {
             auto r = getLocalBounds().toFloat();
             auto center = r.getCentre();
-            const float baseD = 60.0f;
+            const float baseD = 50.0f;
             const float itemD = 18.0f; // matches drawOptions
             const float itemR = itemD * 0.5f;
-            const float s0 = 1.5f;    // max scale (hover)
+            const float s0 = 1.30f;    // max scale (hover) — slightly bigger
             const float maxScaleR = itemR * s0;
             const float minRadius = baseD * 0.5f - 2.0f;
             const float tighten = 6.0f * s0; // mirror drawOptions tightening
@@ -217,15 +217,13 @@ private:
         static constexpr float optionItemD      = 18.0f; // visual ring diameter
         static constexpr float clickItemD       = 20.0f; // click hit test diameter
         static constexpr float hoverItemD       = 20.0f; // hover hit test diameter
-        static constexpr float scaleCenter      = 1.50f;
-        static constexpr float scaleNear1       = 1.30f;
-        static constexpr float scaleNear2       = 1.10f;
-        static constexpr float scaleNear3       = 0.85f;
-        static constexpr float scaleNormalShrink= 0.7f;
-        static constexpr float outward0         = 9.0f;
-        static constexpr float outward1         = 6.0f;
-        static constexpr float outward2         = 3.0f;
-        static constexpr float outward3         = 2.0f;
+        static constexpr float scaleCenter      = 1.30f; // big
+        static constexpr float scaleNear1       = 1.10f; // medium (adjacent)
+        static constexpr float scaleSmall       = 2.0f/3.0f; // normal/small for all others
+        static constexpr float scaleNormalShrink= 2.0f/3.0f; // menu-open shrink when no hover
+        static constexpr float outward0         = 7.0f;  // slight extra push for big
+        static constexpr float outward1         = 3.0f;  // medium push for neighbors
+        static constexpr float outwardSmall     = -2.0f; // pull small ones slightly inward
         static constexpr float spreadVisual     = 8.0f; // current drawOptions spacing
         static constexpr float spreadHit        = 8.0f; // click hit test spacing (kept as original)
         static constexpr float spreadHover      = 8.0f; // hover hit test spacing
@@ -240,26 +238,18 @@ private:
         static float scaleFor(int idx1, int hoverIdx)
         {
             if (hoverIdx < 1) return 1.0f;
-            switch (circularDistance(idx1, hoverIdx))
-            {
-                case 0: return scaleCenter;
-                case 1: return scaleNear1;
-                case 2: return scaleNear2;
-                case 3: return scaleNear3;
-                default: return 1.0f;
-            }
+            const int d = circularDistance(idx1, hoverIdx);
+            if (d == 0) return scaleCenter;
+            if (d == 1) return scaleNear1;
+            return scaleSmall;
         }
         static float outwardFor(int idx1, int hoverIdx)
         {
             if (hoverIdx < 1) return 0.0f;
-            switch (circularDistance(idx1, hoverIdx))
-            {
-                case 0: return outward0;
-                case 1: return outward1;
-                case 2: return outward2;
-                case 3: return outward3;
-                default: return 0.0f;
-            }
+            const int d = circularDistance(idx1, hoverIdx);
+            if (d == 0) return outward0;
+            if (d == 1) return outward1;
+            return outwardSmall;
         }
         static float computeBaseRadius(float openAmt, int width, int height, float itemR, float maxScale, float spreadExtra, float margin)
         {
@@ -298,7 +288,7 @@ private:
             const float r = d * 0.5f;
             juce::Rectangle<float> ring(cx - r, cy - r, d, d);
             g.setColour(juce::Colours::black.withAlpha(0.33f));
-            g.fillEllipse(ring.translated(2.0f, 2.0f));
+            g.fillEllipse(ring.translated(2.33f, 2.33f));
             g.setColour(kAccent); g.fillEllipse(ring);
             g.setColour(kBase);
             g.setFont(juce::Font(juce::FontOptions("Arial", 14.0f * sc, juce::Font::bold)));
@@ -317,7 +307,7 @@ private:
             const float r = d * 0.5f;
             juce::Rectangle<float> ring(cx - r, cy - r, d, d);
             g.setColour(juce::Colours::black.withAlpha(0.33f));
-            g.fillEllipse(ring.translated(2.0f, 2.0f));
+            g.fillEllipse(ring.translated(2.33f, 2.33f));
             g.setColour(kCyan); g.fillEllipse(ring);
             g.setColour(kBase);
             g.setFont(juce::Font(juce::FontOptions("Arial", 18.0f, juce::Font::bold)));

@@ -23,6 +23,8 @@ Setup:
 git submodule update --init --recursive
 cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug
 cmake --build build/debug --config Debug
+
+cmake --build  --config Release
 ```
 
 The resulting plugin (VST3 bundle) will be copied into the build output directory (and optionally to the system VST3 dir if configured by JUCE).
@@ -50,6 +52,21 @@ DAW routing caveats:
 - Clock pulses per quarter note (PPQ) can be 24 (classic), 48, or 96. Higher PPQ provides finer timing resolution but hosts may quantize timestamping per audio block.
 - Start (FA) is sent when playback begins from the start; Continue (FB) is sent on resume from a non-zero position; Stop (FC) when playback stops.
 - Song Position Pointer (F2) is not emitted by default, but can be added if needed.
+
+## Swing / Shuffle
+
+- Shuffle intensity has 7 discrete steps. Step 1 = straight; Step 7 = maximum.
+- At normal MIDI clock rate (24 PPQN), each 1/8 note contains 12 pulses. Swing redistributes these pulses:
+	- First 16th length = 0.25 + shiftQ
+	- Second 16th length = 0.25 − shiftQ
+	- For step `n` in [1..7], `shiftQ = (n - 1) * (1/48)` quarter-notes, so step 7 shifts the second half start from 0.25 to 0.375 PPQ.
+- Changing shuffle while running is applied safely at the next straight 1/8 boundary; no restart or clock loss.
+
+## Roadmap / TODO
+
+- Curved swing response for steps 2–6 (perceptual mapping while keeping step 1/7 anchors).
+- Classic swing mode that delays even 16ths (TR-style) without pulse redistribution.
+- Option to offer constant 24 PPQN with pulse downsampling for alternate rates.
 
 ## License
 

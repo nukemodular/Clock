@@ -1,6 +1,7 @@
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
 #include "GridScaleButton.h"
+#include "BinaryData.h" // embedded dancer SVG frames
 #include <array>
 
 namespace
@@ -9,8 +10,6 @@ namespace
     const juce::Colour kAccent  = juce::Colour::fromRGB(0xFF, 0x4E, 0x5B); // FF4E5B
     const juce::Colour kBase    = juce::Colour::fromRGB(0x26, 0x26, 0x26); // 262626
     const juce::Colour kCyan    = juce::Colour::fromRGB(0x00, 0xD7, 0xFF); // 00D7FF
-    const juce::Colour kCyan2   = juce::Colour(0xAA00D7FF); // 00D7FF with alpha
-    const juce::Colour kBaseHi  = juce::Colour::fromRGB(0x33, 0x33, 0x33);
     const juce::Colour kBaseLo  = juce::Colour::fromRGB(0x1e, 0x1e, 0x1e);
 
     // Arc size button definitions (absolute positions from canvas origin)
@@ -18,14 +17,18 @@ namespace
     // Each rect: {x, y, w, h}. Derived from former layout: sizes {22,25,28,31,34,37,40} and y-offsets {0,16,22,26,28,26,16} added to baseY=215.
     // Visual shallow arc preserved. Adjust these directly as needed.
     // juce::Rectangle isn't a literal type; use static const (not constexpr)
+    // Global offset for non-excluded components (exclude: reset/refreshButton, deviceBox, header, LED, status text)
+    const int offX = -5;
+    const int offY = -30;
+
     static const std::array<juce::Rectangle<int>, 7> kArcButtonRects = {
-        juce::Rectangle<int>( 93, 221, 22, 22),
-        juce::Rectangle<int>(107, 234, 25, 25),
-        juce::Rectangle<int>(120, 242, 28, 28),
-        juce::Rectangle<int>(138, 248, 31, 31),
-        juce::Rectangle<int>(161, 249, 34, 34),
-        juce::Rectangle<int>(182, 244, 37, 37),
-        juce::Rectangle<int>(209, 230, 40, 40)
+        juce::Rectangle<int>( 89 + offX, 216 + offY, 22, 22),
+        juce::Rectangle<int>(102 + offX, 230 + offY, 25, 25),
+        juce::Rectangle<int>(120 + offX, 242 + offY, 28, 28),
+        juce::Rectangle<int>(138 + offX, 248 + offY, 31, 31),
+        juce::Rectangle<int>(161 + offX, 249 + offY, 34, 34),
+        juce::Rectangle<int>(182 + offX, 244 + offY, 37, 37),
+        juce::Rectangle<int>(209 + offX, 230 + offY, 40, 40)
     };
 }
 
@@ -172,7 +175,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     : juce::AudioProcessorEditor(&p), processor(p)
 {
     setResizable(false, false);
-    setSize(340, 300);
+    setSize(320, 260);
     //setOpaque(false); // component is non-opaque, was incorrectly attempted via Graphics
     startTimerHz(60); // smooth enough for LED/animations
 
@@ -185,11 +188,20 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     // Arc size buttons (7 positions, slider-like) below the ring
     arcSizeButtons.setColours(kAccent, kBase, kCyan);
     addAndMakeVisible(arcSizeButtons);
+    // Shuffle arc buttons map 1..7 to processor paramShuffleStep
     arcSizeButtons.setValue(shuffleValue);
     arcSizeButtons.onValueChanged = [this](int v)
     {
-        shuffleValue = juce::jlimit(1, 7, v);
-        // TODO: hook to processor parameter if needed
+        const int clamped = juce::jlimit(1, 7, v);
+        shuffleValue = clamped;
+        if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramShuffleStep))
+        {
+            const auto& range = p->getNormalisableRange();
+            // Convert discrete 1..7 into 0..1 using underlying int param (min=1 max=7)
+            p->beginChangeGesture();
+            p->setValueNotifyingHost(range.convertTo0to1((float) clamped));
+            p->endChangeGesture();
+        }
     };
 
     // Device selection UI
@@ -198,8 +210,6 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
 
     // Click toggle: small 10x10 ellipse in centre of rotary
     addAndMakeVisible(clickButton);
-    // Run toggle is replaced by clicking the ring; keepClockButton removed
-    // addAndMakeVisible(runToggle);
 
     // Click level: rotary slider with accent ring and cyan->accent fading needle
     clickLevelSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
@@ -218,11 +228,16 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     // Attachments
     clickEnableAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(apvts, ClockSyncAudioProcessor::paramClickEnable, clickButton);
     clickLevelAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(apvts, ClockSyncAudioProcessor::paramClickLevelDb, clickLevelSlider);
-    runAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(apvts, ClockSyncAudioProcessor::paramRun, runToggle);
+    // No hidden run toggle attachment; ring click toggles the Run parameter directly
     idleClockAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(apvts, ClockSyncAudioProcessor::paramClockWhileStopped, idleClockToggle);
+    // Bind trigger mode toggle to APVTS
+    triggerModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(apvts, ClockSyncAudioProcessor::paramTriggerModeEnabled, triggerModeToggle);
 
     addAndMakeVisible(triggerModeToggle);
-        // Ensure triggerModeToggle is on top of stepOffsetButton for proper click hit-testing when overlapping
+        triggerModeToggle.setColours(kAccent, kBase, kCyan);
+        triggerModeToggle.setClickingTogglesState(true);
+        triggerModeToggle.setToggleState(true, juce::dontSendNotification); // default enabled
+    // Ensure triggerModeToggle is on top of stepOffsetButton for proper click hit-testing when overlapping
    // triggerModeToggle.toFront(true);
         // Idle clock toggle
         addAndMakeVisible(idleClockToggle);
@@ -255,13 +270,13 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
             p->setValueNotifyingHost(norm);
             p->endChangeGesture();
         }
+        processor.notifyResyncOffsetChanged();
     };
     
 
 
 
-    // Hide the run toggle in favour of ring click
-    runToggle.setVisible(false);
+    // No hidden run toggle; ring click handles Run
 
     themeLNF = std::make_unique<ThemeLNF>();
     // Initialise cached param states for first paint
@@ -303,10 +318,20 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     };
     deviceBox.setLookAndFeel(themeLNF.get());
 
-    // runToggle hidden; clicking the ring handles start/stop
+    // Clicking the ring handles start/stop
 
     // Initial device list
     refreshDeviceList();
+    // Optional: when enabling trigger mode, schedule restart recompute
+    triggerModeToggle.onClick = [this]
+    {
+        const bool enabled = triggerModeToggle.getToggleState();
+        if (enabled)
+            processor.notifyResyncOffsetChanged();
+    };
+
+    // Attempt to load dancer SVG frames (vector, crisp on HiDPI)
+    loadDancerFrames();
 }
 void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
 {
@@ -318,7 +343,6 @@ void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
     // Removed invalid g.setOpaque(false); (Graphics has no such method)
 
     // Header bar
-    // Header bar
     auto header = getLocalBounds().removeFromTop(28).reduced(8, 4).toFloat();
     juce::Path headerPath; headerPath.addRoundedRectangle(header, 6.0f);
     g.setColour(kBase);
@@ -328,9 +352,10 @@ void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
     // Small status text near the LED: STOP / ARM / RUN
     const bool isRunning = processor.getUiIsRunning();
     const bool isArmed = processor.getUiPendingStart();
-    juce::String status = isRunning ? "RUN" : (isArmed ? "ARM" : "STOP");
+    const bool hasNext = processor.getUiNextRestartPending();
+    juce::String status = hasNext ? "NEXT" : (isRunning ? "RUN" : (isArmed ? "ARM" : "STOP"));
     g.setFont(juce::Font(juce::FontOptions("Arial", 11.0f, juce::Font::bold)));
-    g.setColour(isRunning ? kCyan : (isArmed ? kAccent : kAccent));
+    g.setColour(hasNext ? kCyan : (isRunning ? kCyan : (isArmed ? kAccent : kAccent)));
     g.drawFittedText(status, juce::Rectangle<int>(getWidth() - 80, (int)header.getY(), 50, (int)header.getHeight()), juce::Justification::centredRight, 1);
 
     // LED indicator (top-right)
@@ -355,6 +380,8 @@ void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
 {
     // Draw ring above children, then explicitly repaint stepOffsetButton over it to ensure it's in front
     drawRing(g);
+    // Draw dancer inside inner circle
+    drawDancer(g);
     {
         juce::Graphics::ScopedSaveState ss(g);
         auto r = stepOffsetButton.getBounds().toFloat();
@@ -383,23 +410,21 @@ void ClockSyncAudioProcessorEditor::resized()
     // Static absolute positions for fixed 300x300 canvas
     // Header area is painted, no components there (top 28px)
 
-    // Rate buttons arranged vertically to match slider height (160px)
-    // Grid scale radial button positioned on left side
-    gridScaleButton.setBounds(5, 110, 120, 120);
+    
 
     // Top toggles
-    // runToggle hidden
+    // Ring handles run toggling
 
     // Device combo + refresh button now inside header bar
     {
         const int headerH = 28;
-        const int marginX = 8;
-        const int marginY = 4;
+        const int marginX = 5;
+        const int marginY = 3;
         const int contentH = headerH - marginY * 2; // 20px
         const int buttonW = 40; // compact refresh button
-        const int gap = 6; // retained gap but refresh stays at left
+        const int gap = 3; // retained gap but refresh stays at left
         const int fullComboOriginal = getWidth() - marginX * 2 - buttonW - gap; // previous wide combo width
-        int comboW = fullComboOriginal - 60; // reduce width by 60 as requested
+        int comboW = fullComboOriginal - 80; // reduce width by 60 as requested
         comboW = std::max(100, comboW); // safety minimum (use std::max to avoid template deduction issues)
         const int centerX = getWidth() / 2;
         const int comboX = centerX - comboW / 2;
@@ -409,27 +434,29 @@ void ClockSyncAudioProcessorEditor::resized()
         deviceBox.setBounds(comboX, marginY + 2, comboW, contentH - 4);
     }
 
+
+
     // Keep-clock button removed; curved label will be drawn around idleClockToggle
 
     // Click toggle centered within rotary slider
     // Move rotary slider 200px left (x: 300 -> 100) and scale size 1.5x (40 -> 60)
-    clickLevelSlider.setBounds(78, 80, 46, 46); // rotary position
+    clickLevelSlider.setBounds(78 + offX, 80 + offY, 46, 46); // rotary position (offset)
     {
         auto sb = clickLevelSlider.getBounds();
         auto c = sb.getCentre();
         clickButton.setBounds(c.x - 6, c.y - 6, 12, 12);
     }
     // Step ring area (centered region for 160x160 ring + labels margin)
-    ringArea = juce::Rectangle<int>(90, 90, 160, 160);
+    ringArea = juce::Rectangle<int>(90 + offX, 90 + offY, 160, 160);
     // Step offset button area (expanded to avoid hover scaling clipping)
     // Place on right side, below ring and left of slider, with ample space for enlarged option circles
     // Move toggle down so it doesn't overlap triggerRect area
-    triggerModeToggle.setBounds(247, 136, 40, 40);
-    stepOffsetButton.setBounds(220, 150, 100 , 100);
-        // Idle clock toggle near top-left
-        idleClockToggle.setBounds(110, 60, 40, 40);
-        // Shuffle scale toggle at requested position
-        shuffleScaleToggle.setBounds(65, 195, 40, 40);
+    triggerModeToggle.setBounds(247 + offX, 136 + offY, 30, 30);
+    stepOffsetButton.setBounds(223 + offX, 139 + offY, 100 , 100);
+        // Idle clock toggle near top-left (offset)
+        idleClockToggle.setBounds(114 + offX, 70 + offY, 30, 30);
+        // Shuffle scale toggle at requested position (offset)
+        shuffleScaleToggle.setBounds(69 + offX, 193 + offY, 30, 30);
     // Declare click-through holes in stepOffsetButton so controls behind remain clickable when its menu is closed
     {
         auto holeToggle = stepOffsetButton.getLocalArea(&triggerModeToggle, triggerModeToggle.getLocalBounds());
@@ -437,12 +464,15 @@ void ClockSyncAudioProcessorEditor::resized()
         auto combined   = holeToggle.getUnion(holeArcRow);
         stepOffsetButton.setClickThroughRect(combined);
     }
+    // Rate buttons arranged vertically to match slider height (160px)
+    // Grid scale radial button positioned on left side
+    gridScaleButton.setBounds(2 + offX, 110 + offY, 120, 120);
     // Trigger circle in bottom-right corner, 6px margin
-    triggerRect = juce::Rectangle<int>(220, 60, 85, 85);
+    triggerRect = juce::Rectangle<int>(220 + offX, 60 + offY, 85, 85);
     // Arc buttons area placed below ring area; allocate extra height to reduce overlap.
     // hitTest only captures inside circles, so it's safe if it overlaps other regions visually.
     // Arc size buttons: switch to manual absolute placement (fixed Y with subtle arc offsets)
-    arcSizeButtons.setBounds(90, 215, 160, 80);
+    arcSizeButtons.setBounds(88 + offX, 215 + offY, 166, 80);
     // Use absolute canvas-origin rectangles (kArcButtonRects) instead of algorithmic layout.
     // Width is fixed (editor not resizable); no overflow adjustment needed.
     arcSizeButtons.setManualBounds(kArcButtonRects);
@@ -466,7 +496,7 @@ void ClockSyncAudioProcessorEditor::timerCallback()
     }
     else if (ledLevel > 0.01f)
     {
-        ledLevel *= 0.66f;
+        ledLevel *= 0.5f;
         needAll = true;
     }
 
@@ -522,6 +552,18 @@ void ClockSyncAudioProcessorEditor::timerCallback()
         }
     }
 
+    // Sync shuffle arc buttons with parameter (automation support & external automation)
+    {
+        int shuffleParam = -1;
+        if (auto* si = dynamic_cast<juce::AudioParameterInt*>(processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramShuffleStep)))
+            shuffleParam = juce::jlimit(1, 7, si->get());
+        if (shuffleParam > 0 && shuffleParam != shuffleValue)
+        {
+            shuffleValue = shuffleParam;
+            arcSizeButtons.setValue(shuffleValue);
+        }
+    }
+
     // Dispatch minimal repaints
     if (needAll) { repaint(); return; }
     if (needRing) repaint(ringArea);
@@ -570,9 +612,8 @@ void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
     {
         triggerFade = 1.0f; // turn blue immediately
         repaint(triggerRect);
-        // Respect trigger mode: only arm restart when toggle is ON
-        if (triggerModeToggle.getToggleState())
-            processor.requestTriggerOnce();
+        // Always request trigger; processor decides bar restart based on trigger mode
+        processor.requestTriggerOnce();
     }
 }
 
@@ -613,6 +654,225 @@ void ClockSyncAudioProcessorEditor::drawRing(juce::Graphics& g)
     g.setColour(runParamCached ? kCyan : kCyan.withAlpha(0.5f)); g.fillPath(wedge);
 
     // Numbers hidden per request
+}
+
+static int mapRateIndexToPPQ(int idx)
+{
+    switch (idx)
+    {
+        case 0: return 48; // 1/32
+        case 1: return 24; // 1/16
+        case 2: return 12; // 1/8
+        case 3: return 6;  // 1/4
+        default: return 24;
+    }
+}
+
+void ClockSyncAudioProcessorEditor::drawDancer(juce::Graphics& g)
+{
+    if (dancerFrames.empty() || ringArea.isEmpty()) return;
+
+    // Compute frame index from clock counter, scaled to 2 beats cycle length irrespective of PPQ
+    const auto pulses = processor.getUiClockCounter();
+    const int ppq = mapRateIndexToPPQ(rateIndexCached);
+    const int pulsesPerTwoBeats = ppq * 2; // 2 quarters
+    const int frames = dancerFrameCount;
+    if (pulsesPerTwoBeats <= 0 || frames <= 0) return;
+    const int pInCycle = (int) (pulses % (unsigned long long) pulsesPerTwoBeats);
+    const int frameIdx = (pInCycle * frames) / pulsesPerTwoBeats; // integer scaling
+    jassert(frameIdx >= 0 && frameIdx < frames);
+
+    auto* drawable = dancerFrames[(size_t) frameIdx].get();
+    if (drawable == nullptr) return;
+
+    // Destination inner circle area minus margin
+    juce::Rectangle<float> inner((float) (ringArea.getCentreX() - kRingInnerD / 2),
+                                 (float) (ringArea.getCentreY() - kRingInnerD / 2),
+                                 (float) kRingInnerD, (float) kRingInnerD);
+    auto dest = inner.reduced(6.0f);
+
+    // Stabilised canvas: original animation exported on 355x500 canvas.
+    constexpr float dancerCanvasW = 355.0f;
+    constexpr float dancerCanvasH = 500.0f;
+    auto shapeBounds = drawable->getDrawableBounds().toFloat();
+    if (shapeBounds.isEmpty()) return;
+    // Scale to fit entire nominal canvas into dest (not each frame's tight bounds).
+    const float sxFull = dest.getWidth() / dancerCanvasW;
+    const float syFull = dest.getHeight() / dancerCanvasH;
+    const float scale = std::min(sxFull, syFull);
+    // Base translation to center full canvas.
+    const float canvasScaledW = dancerCanvasW * scale;
+    const float canvasScaledH = dancerCanvasH * scale;
+    const float baseTx = dest.getCentreX() - canvasScaledW * 0.5f;
+    const float baseTy = dest.getCentreY() - canvasScaledH * 0.5f;
+    // Frame-specific offset: center shape inside nominal canvas accounting for its own bounds origin.
+    const float shapeLeftMargin = (dancerCanvasW - shapeBounds.getWidth()) * 0.5f - shapeBounds.getX();
+    const float shapeTopMargin  = (dancerCanvasH - shapeBounds.getHeight()) * 0.5f - shapeBounds.getY();
+    const float tx = baseTx + shapeLeftMargin * scale;
+    const float ty = baseTy + shapeTopMargin  * scale;
+    drawable->draw(g, 1.0f, juce::AffineTransform::scale(scale).translated(tx, ty));
+}
+
+juce::File ClockSyncAudioProcessorEditor::findDancerFolder()
+{
+    // Start from the plugin binary folder and walk up looking for a child named "dancer"
+    juce::File here = juce::File::getSpecialLocation(juce::File::currentApplicationFile);
+    juce::File dir = here.getParentDirectory();
+    for (int i = 0; i < 8; ++i)
+    {
+        juce::File candidate = dir.getChildFile("dancer");
+        if (candidate.isDirectory() && candidate.getChildFile("Dancer_01.svg").existsAsFile())
+            return candidate;
+        // also accept lowercase names
+        if (candidate.exists() == false)
+        {
+            juce::File candidate2 = dir.getChildFile("Dancer_01.svg");
+            if (candidate2.existsAsFile())
+                return dir; // frames directly in this folder
+        }
+        dir = dir.getParentDirectory();
+        if (! dir.exists()) break;
+    }
+    // Fallback: project root relative during development
+    juce::File cwd = juce::File::getCurrentWorkingDirectory();
+    juce::File fallback = cwd.getChildFile("dancer");
+    if (fallback.isDirectory()) return fallback;
+    return {};
+}
+
+void ClockSyncAudioProcessorEditor::scrubSvgColours(juce::XmlElement& el, juce::Colour accent)
+{
+    const juce::String hex = accent.toDisplayString(false);
+    // Replace fill/stroke attributes if present
+    if (el.hasAttribute("fill"))
+    {
+        auto v = el.getStringAttribute("fill");
+        if (v.isNotEmpty() && v.compareIgnoreCase("none") != 0)
+            el.setAttribute("fill", hex);
+        else if (v.compareIgnoreCase("none") == 0)
+            el.setAttribute("fill", hex); // force accent even if 'none'
+    }
+    else
+    {
+        // If no fill attribute, add one for drawable shape tags
+        if (el.hasTagName("path") || el.hasTagName("rect") || el.hasTagName("circle") || el.hasTagName("ellipse") || el.hasTagName("polygon") || el.hasTagName("polyline"))
+            el.setAttribute("fill", hex);
+    }
+    // Always set stroke if absent or not none
+    if (el.hasAttribute("stroke"))
+    {
+        auto sv = el.getStringAttribute("stroke");
+        if (sv.isNotEmpty() && sv.compareIgnoreCase("none") != 0)
+            el.setAttribute("stroke", hex);
+    }
+    else
+    {
+        el.setAttribute("stroke", hex);
+    }
+    if (el.hasAttribute("style"))
+    {
+        auto style = el.getStringAttribute("style");
+        if (style.isNotEmpty())
+        {
+            auto replaceEntry = [](juce::String s, const juce::String& key, const juce::String& val) -> juce::String
+            {
+                auto lower = s.toLowerCase();
+                juce::String k = key.toLowerCase() + ":";
+                int pos = lower.indexOf(k);
+                if (pos < 0) return s;
+                int end = s.indexOfChar(pos, ';');
+                if (end < 0) end = s.length();
+                juce::String replacement = key + ":" + val;
+                // Keep trailing ';' if it existed
+                if (end < s.length() && s[end] == ';')
+                    replacement << ";";
+                return s.replaceSection(pos, end - pos, replacement);
+            };
+            style = replaceEntry(style, "fill", hex);
+            style = replaceEntry(style, "stroke", hex);
+            el.setAttribute("style", style);
+        }
+    }
+    forEachXmlChildElement(el, child)
+        scrubSvgColours(*child, accent);
+}
+
+void ClockSyncAudioProcessorEditor::loadDancerFrames()
+{
+    dancerFrames.clear();
+    // Try embedded binary data first; if any frame fails, fallback to filesystem for remaining.
+    bool usedBinary = false;
+    for (int i = 1; i <= dancerFrameCount; ++i)
+    {
+        juce::String symbol = juce::String::formatted("Dancer_%02d_svg", i);
+        const char* dataPtr = nullptr;
+        size_t dataSize = 0;
+        // BinaryData symbols are global; use if present.
+        // Access via if/else ladder since no reflection; rely on formatted name.
+        // clang-format off
+        switch (i)
+        {
+            case 1:  dataPtr = BinaryData::Dancer_01_svg; dataSize = BinaryData::Dancer_01_svgSize; break;
+            case 2:  dataPtr = BinaryData::Dancer_02_svg; dataSize = BinaryData::Dancer_02_svgSize; break;
+            case 3:  dataPtr = BinaryData::Dancer_03_svg; dataSize = BinaryData::Dancer_03_svgSize; break;
+            case 4:  dataPtr = BinaryData::Dancer_04_svg; dataSize = BinaryData::Dancer_04_svgSize; break;
+            case 5:  dataPtr = BinaryData::Dancer_05_svg; dataSize = BinaryData::Dancer_05_svgSize; break;
+            case 6:  dataPtr = BinaryData::Dancer_06_svg; dataSize = BinaryData::Dancer_06_svgSize; break;
+            case 7:  dataPtr = BinaryData::Dancer_07_svg; dataSize = BinaryData::Dancer_07_svgSize; break;
+            case 8:  dataPtr = BinaryData::Dancer_08_svg; dataSize = BinaryData::Dancer_08_svgSize; break;
+            case 9:  dataPtr = BinaryData::Dancer_09_svg; dataSize = BinaryData::Dancer_09_svgSize; break;
+            case 10: dataPtr = BinaryData::Dancer_10_svg; dataSize = BinaryData::Dancer_10_svgSize; break;
+            case 11: dataPtr = BinaryData::Dancer_11_svg; dataSize = BinaryData::Dancer_11_svgSize; break;
+            case 12: dataPtr = BinaryData::Dancer_12_svg; dataSize = BinaryData::Dancer_12_svgSize; break;
+            case 13: dataPtr = BinaryData::Dancer_13_svg; dataSize = BinaryData::Dancer_13_svgSize; break;
+            case 14: dataPtr = BinaryData::Dancer_14_svg; dataSize = BinaryData::Dancer_14_svgSize; break;
+            case 15: dataPtr = BinaryData::Dancer_15_svg; dataSize = BinaryData::Dancer_15_svgSize; break;
+            case 16: dataPtr = BinaryData::Dancer_16_svg; dataSize = BinaryData::Dancer_16_svgSize; break;
+            case 17: dataPtr = BinaryData::Dancer_17_svg; dataSize = BinaryData::Dancer_17_svgSize; break;
+            case 18: dataPtr = BinaryData::Dancer_18_svg; dataSize = BinaryData::Dancer_18_svgSize; break;
+            case 19: dataPtr = BinaryData::Dancer_19_svg; dataSize = BinaryData::Dancer_19_svgSize; break;
+            case 20: dataPtr = BinaryData::Dancer_20_svg; dataSize = BinaryData::Dancer_20_svgSize; break;
+            case 21: dataPtr = BinaryData::Dancer_21_svg; dataSize = BinaryData::Dancer_21_svgSize; break;
+            case 22: dataPtr = BinaryData::Dancer_22_svg; dataSize = BinaryData::Dancer_22_svgSize; break;
+            case 23: dataPtr = BinaryData::Dancer_23_svg; dataSize = BinaryData::Dancer_23_svgSize; break;
+            case 24: dataPtr = BinaryData::Dancer_24_svg; dataSize = BinaryData::Dancer_24_svgSize; break;
+            default: break;
+        }
+        // clang-format on
+        if (dataPtr != nullptr && dataSize > 0)
+        {
+            usedBinary = true;
+            // Construct XmlDocument from UTF-8 text in binary data
+            juce::String svgText = juce::String::fromUTF8(dataPtr, (int) dataSize);
+            juce::XmlDocument doc(svgText);
+            std::unique_ptr<juce::XmlElement> xml(doc.getDocumentElement());
+            if (! xml)
+            {
+                dancerFrames.emplace_back();
+                continue;
+            }
+            scrubSvgColours(*xml, kAccent);
+            std::unique_ptr<juce::Drawable> d(juce::Drawable::createFromSVG(*xml));
+            dancerFrames.push_back(std::move(d));
+            continue;
+        }
+        // Fallback to filesystem only if binary data absent for this index
+        juce::File folder = findDancerFolder();
+        if (! folder.exists()) { dancerFrames.emplace_back(); continue; }
+        juce::String name = juce::String::formatted("Dancer_%02d.svg", i);
+        juce::File f = folder.getChildFile(name);
+        if (! f.existsAsFile())
+        {
+            name = juce::String::formatted("dancer_%02d.svg", i);
+            f = folder.getChildFile(name);
+        }
+        if (! f.existsAsFile()) { dancerFrames.emplace_back(); continue; }
+        std::unique_ptr<juce::XmlElement> xml(juce::XmlDocument(f).getDocumentElement());
+        if (! xml) { dancerFrames.emplace_back(); continue; }
+        scrubSvgColours(*xml, kAccent);
+        std::unique_ptr<juce::Drawable> d(juce::Drawable::createFromSVG(*xml));
+        dancerFrames.push_back(std::move(d));
+    }
 }
 
 void ClockSyncAudioProcessorEditor::drawTrigger(juce::Graphics& g)
@@ -660,20 +920,20 @@ void ClockSyncAudioProcessorEditor::drawIdleClockCurvedLabel(juce::Graphics& g)
     const float d = std::min(r.getWidth(), r.getHeight());
     const juce::Point<float> c = r.getCentre();
     const float outerRadius = d * 0.5f;
-    const float ringMidRadius = outerRadius - 5.0f; // middle of 10px thick accent ring
+    const float ringMidRadius = outerRadius - 4.0f; // middle of 10px thick accent ring
 
     const juce::String text = "IDLE CLOCK";
     const int n = text.length();
     if (n <= 0) return;
 
     // Ensure Arial Bold and widen kerning using FontOptions
-    juce::FontOptions fontOpts("Arial", 10.0f, juce::Font::bold);
-    fontOpts = fontOpts.withKerningFactor(4.0f); // widen spacing between letters
+    juce::FontOptions fontOpts("Arial", 8.0f, juce::Font::bold);
+    fontOpts = fontOpts.withKerningFactor(3.3f); // widen spacing between letters
     juce::Font font(fontOpts);
     g.setColour(kBase);
 
     // Lay out characters along a vertical arc with widened kerning
-    const float baseSpan = 4.0f; // radians (~74.5 deg) vertical spread
+    const float baseSpan = 3.3f; // radians (~74.5 deg) vertical spread
     const float kerningMultiplier = 1.20f; // mild extra angular spacing
     const float totalSpan = baseSpan * kerningMultiplier;
     const float startAngle = -totalSpan * 0.5f; // centered about horizontal axis

@@ -13,6 +13,35 @@ endif()
 
 add_subdirectory(JUCE)
 
+# Embed dancer SVG frames into binary for distribution (no runtime filesystem dependency)
+juce_add_binary_data(DancerFrames
+    SOURCES
+        dancer/Dancer_01.svg
+        dancer/Dancer_02.svg
+        dancer/Dancer_03.svg
+        dancer/Dancer_04.svg
+        dancer/Dancer_05.svg
+        dancer/Dancer_06.svg
+        dancer/Dancer_07.svg
+        dancer/Dancer_08.svg
+        dancer/Dancer_09.svg
+        dancer/Dancer_10.svg
+        dancer/Dancer_11.svg
+        dancer/Dancer_12.svg
+        dancer/Dancer_13.svg
+        dancer/Dancer_14.svg
+        dancer/Dancer_15.svg
+        dancer/Dancer_16.svg
+        dancer/Dancer_17.svg
+        dancer/Dancer_18.svg
+        dancer/Dancer_19.svg
+        dancer/Dancer_20.svg
+        dancer/Dancer_21.svg
+        dancer/Dancer_22.svg
+        dancer/Dancer_23.svg
+        dancer/Dancer_24.svg
+)
+
 juce_add_plugin(ClockSync
     COMPANY_NAME "PlugProcess"
     PRODUCT_NAME "ClockSync"
@@ -52,6 +81,7 @@ target_link_libraries(ClockSync
         juce::juce_dsp
         juce::juce_gui_extra
         juce::juce_core
+    DancerFrames
 )
 
 if (APPLE)

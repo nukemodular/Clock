@@ -48,12 +48,15 @@ public:
     
     // One-shot trigger request from the editor: retrigger at next 1/16, then restart at next bar
     void requestTriggerOnce();
+    void setTriggerModeEnabled(bool enabled);
+    void notifyResyncOffsetChanged();
 
     // UI helpers
     unsigned long long getUiClockCounter() const { return uiClockCounter.load(std::memory_order_relaxed); }
     int getUiStep16() const { return uiStep16.load(std::memory_order_relaxed); }
     bool getUiIsRunning() const { return uiIsRunning.load(std::memory_order_relaxed); }
     bool getUiPendingStart() const { return uiPendingStart.load(std::memory_order_relaxed); }
+    bool getUiNextRestartPending() const { return uiNextRestartPending.load(std::memory_order_relaxed); }
 
     // External MIDI device selection API (used by editor)
     void setExternalDeviceId(const juce::String& id);
@@ -65,7 +68,10 @@ public:
     static inline const juce::String paramClickLevelDb    { "clickLevelDb" }; // -12..0 dB
     static inline const juce::String paramRun             { "run" };            // true=running, false=stopped
     static inline const juce::String paramClockWhileStopped { "clockWhileStopped" }; // keep sending F8 while run==false
+    static inline const juce::String paramTriggerModeEnabled { "triggerModeEnabled" }; // follow trigger with bar restart
     static inline const juce::String paramResyncOffsetStep { "resyncOffsetStep" }; // 1..16, step within bar where (re)start happens
+    static inline const juce::String paramShuffleStep { "shuffleStep" }; // 1..7 discrete swing amount (1 none .. 7 heavy)
+    static inline const juce::String paramDiagnostics { "diagnostics" }; // enable brief timing logs
 
 private:
     //==============================================================================
@@ -82,11 +88,24 @@ private:
     int pendingRateIndex { -1 };
     bool runActive { true };
     bool pendingStart { false };
-    int lastRunParam { 1 }; // 1=true, 0=false
     // Trigger and restart flags
     std::atomic<bool> triggerArmedForNextSixteenth { false }; // when true, send a Start at next 1/16 grid boundary
-    std::atomic<bool> pendingBarRestart { false };    // after retrigger, also restart at next bar
+    std::atomic<bool> pendingBarRestart { false };    // restart at selected step
+    std::atomic<bool> triggerModeEnabled { true };    // governs whether bar restart follows trigger
+        bool suppressUntilRestart = false; // suppress clock emission until first scheduled restart boundary
+        bool firstBlock = true;            // distinguish plugin load vs later transport edges
+    int lastOffsetStep { 1 }; // cached offset step
+    int currentShuffleStep { 1 }; // active shuffle step (1..7)
+    int pendingShuffleStep { -1 }; // scheduled shuffle change (apply at next 8th boundary)
+    double applyShuffleAtPPQ { -1.0 }; // unswung PPQ position where pending shuffle becomes active
     bool suppressClockAtBoundaryOnce { false };       // when true, skip sending clock on the exact Start frame once
+
+    // Diagnostics
+    bool diagnosticsEnabled { false };
+    int diagPairsRemaining { 0 };
+    long long diagLastLoggedPair { std::numeric_limits<long long>::min() };
+    int diagLastSample { -1 };
+    void debugLog(const juce::String& s);
 
     // Click generator
     float clickEnv { 0.0f };
@@ -103,6 +122,7 @@ private:
     std::atomic<int> uiStep16 { 1 }; // 1..16 current step in bar
     std::atomic<bool> uiIsRunning { true };
     std::atomic<bool> uiPendingStart { false };
+    std::atomic<bool> uiNextRestartPending { false }; // show "NEXT" when a bar+offset restart is scheduled
 
     // Helpers
     int getClockResolution() const; // returns 48/24/12/6 based on currentRateIndex

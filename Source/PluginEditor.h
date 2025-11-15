@@ -47,12 +47,8 @@ private:
         juce::Colour off { juce::Colours::red };
         juce::Colour on  { juce::Colours::cyan };
     } clickButton;
-    juce::ToggleButton runToggle { "Run" };
     // Replaces keepClockButton with a circular toggle
     juce::Slider clickLevelSlider;
-    juce::Label resolutionLabel { {}, {} };
-    juce::Label deviceLabel { {}, {} };
-    juce::Label clickLevelLabel { {}, {} };
     AnimatedStepOffsetButton stepOffsetButton;
     // New grid scale radial selector replacing four rate buttons
     GridScaleButton gridScaleButton; // manages 1/32..1/4 selection
@@ -66,10 +62,10 @@ private:
 
     // Attachments
     // Attachments
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> runAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> clickEnableAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> clickLevelAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> idleClockAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> triggerModeAttachment;
 
     // Helpers
     void refreshDeviceList();
@@ -107,12 +103,20 @@ private:
     void drawIdleClockCurvedLabel(juce::Graphics& g);
     void drawRing(juce::Graphics& g);
     void drawTrigger(juce::Graphics& g);
+    void drawDancer(juce::Graphics& g);
+    void loadDancerFrames();
+    static juce::File findDancerFolder();
+    static void scrubSvgColours(juce::XmlElement& el, juce::Colour accent);
    
 
     // Constants
     static constexpr int kRingOuterD = 160;
     static constexpr int kRingInnerD = 120;
-    static constexpr int kTriggerSize = 50;
+    
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ClockSyncAudioProcessorEditor)
+
+    // Dancer animation
+    std::vector<std::unique_ptr<juce::Drawable>> dancerFrames;
+    int dancerFrameCount { 24 }; // Dancer_01..Dancer_24
 };

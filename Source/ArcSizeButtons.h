@@ -58,8 +58,8 @@ public:
             const float sz = outer.getWidth();
             const float t = juce::jlimit(0.0f, 1.0f, (sz - 30.0f) / 20.0f); // map 30..50 -> 0..1
             // subtle drop shadow
-            g.setColour(juce::Colours::black.withAlpha(0.35f));
-            g.fillEllipse(outer.translated(2.0f, 2.0f));
+            // g.setColour(juce::Colours::black.withAlpha(0.35f));
+            // g.fillEllipse(outer.translated(2.0f, 2.0f));
             g.setColour(kAccent); g.fillEllipse(outer);
             const float reduce = sz * 0.22f;
             g.setColour(kBase); g.fillEllipse(outer.reduced(reduce));
@@ -104,8 +104,8 @@ public:
         auto outer = buttonBounds[(size_t) i].toFloat();
         const float sz = outer.getWidth();
         const float tt = juce::jlimit(0.0f, 1.0f, (sz - 30.0f) / 20.0f);
-        g.setColour(juce::Colours::black.withAlpha(0.35f));
-        g.fillEllipse(outer.translated(2.0f, 2.0f));
+        // g.setColour(juce::Colours::black.withAlpha(0.33f));
+        // g.fillEllipse(outer.translated(2.33f, 2.33f));
         g.setColour(kAccent); g.fillEllipse(outer);
         const float reduce = sz * 0.22f;
         g.setColour(kBase); g.fillEllipse(outer.reduced(reduce));

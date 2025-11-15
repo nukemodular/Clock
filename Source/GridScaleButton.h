@@ -161,15 +161,15 @@ private:
         const float s0 = 1.5f, s1 = 1.15f; // hovered, adjacent, normal
         const float maxScaleR = itemR * s0;
         const float minRadius = baseD * 0.5f - 2.0f;
-        const float tighten = 2.0f;
+        const float tighten = 3.0f;
         const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - maxScaleR  - tighten;
         const float radius = juce::jlimit(minRadius, juce::jmax(minRadius, maxRadius), minRadius + (maxRadius - minRadius) * openAmount);
 
         // Arc option angles (3x wider spread): 60° to 300° covering most of circle, midpoint at 180°
         auto angleForIndex = [](int i)
         {
-            const float startDeg = 70.0f;  // was 140°
-            const float endDeg   = 270.0f; // was 220° -> span 240° (3x original 80°)
+            const float startDeg = 110.0f;  // was 140°
+            const float endDeg   = 260.0f; // was 220° -> span 240° (3x original 80°)
             const float stepDeg  = (endDeg - startDeg) / 3.0f;
             const float deg = startDeg + stepDeg * (float) i;
             return juce::degreesToRadians(deg);
@@ -233,13 +233,13 @@ private:
         const float s0 = 1.5f; // unify with drawOptions
         const float maxScaleR = itemR * s0;
         const float minRadius = baseD * 0.5f - 2.0f;
-        const float tighten = 2.0f;
+        const float tighten = 3.0f;
         const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - maxScaleR  - tighten;
         const float radius = juce::jlimit(minRadius, juce::jmax(minRadius, maxRadius), minRadius + (maxRadius - minRadius) * openAmount);
         auto angleForIndex = [](int i)
         {
-            const float startDeg = 70.0f;  // widened
-            const float endDeg   = 270.0f; // widened
+            const float startDeg = 110.0f;  // widened
+            const float endDeg   = 260.0f; // widened
             const float stepDeg  = (endDeg - startDeg) / 3.0f;
             const float deg = startDeg + stepDeg * (float) i;
             return juce::degreesToRadians(deg);
@@ -272,13 +272,13 @@ private:
         const float s0 = 1.5f; // unify with drawOptions
         const float maxScaleR = itemR * s0;
         const float minRadius = baseD * 0.5f - 2.0f;
-        const float tighten = 2.0f;
+        const float tighten = 3.0f;
         const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - maxScaleR  - tighten;
         const float radius = juce::jlimit(minRadius, juce::jmax(minRadius, maxRadius), minRadius + (maxRadius - minRadius) * openAmount);
         auto angleForIndex = [](int i)
         {
-            const float startDeg = 70.0f;
-            const float endDeg   = 270.0f;
+            const float startDeg = 110.0f;
+            const float endDeg   = 260.0f;
             const float stepDeg  = (endDeg - startDeg) / 3.0f;
             const float deg = startDeg + stepDeg * (float) i;
             return juce::degreesToRadians(deg);
