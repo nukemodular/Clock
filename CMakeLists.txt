@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(ClockSync VERSION 0.1.0 LANGUAGES C CXX)
+project(ClockV3 VERSION 0.1.0 LANGUAGES C CXX)
+
+# Plugin version available to other CMake logic and the increment script
+set(PLUGIN_VERSION ${PROJECT_VERSION})
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -44,7 +47,7 @@ juce_add_binary_data(DancerFrames
     dancer/png/dancer_23.png
 )
 
-juce_add_plugin(ClockSync
+juce_add_plugin(ClockV3
     COMPANY_NAME "toolBoy"
     PRODUCT_NAME "toolBoy Clock v3"
     BUNDLE_ID com.toolBoy.clockVst3
@@ -62,7 +65,7 @@ juce_add_plugin(ClockSync
 )
 
 
-target_sources(ClockSync
+target_sources(ClockV3
     PRIVATE
         Source/PluginProcessor.cpp
         Source/PluginEditor.cpp
@@ -70,14 +73,14 @@ target_sources(ClockSync
         Source/PluginEditor.h
 )
 
-target_compile_definitions(ClockSync
+target_compile_definitions(ClockV3
     PRIVATE
         JUCE_VST3_CAN_REPLACE_VST2=0
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
 )
 
-target_link_libraries(ClockSync
+target_link_libraries(ClockV3
     PRIVATE
         juce::juce_audio_utils
         juce::juce_audio_processors
@@ -88,9 +91,19 @@ target_link_libraries(ClockSync
         DancerFrames
 )
 
+# Generate and include build info (increments build_number.txt at build time)
+add_custom_target(increment_build ALL
+    COMMAND ${CMAKE_COMMAND} -DPLUGIN_VERSION=${PLUGIN_VERSION} -P ${CMAKE_SOURCE_DIR}/cmake/increment_build.cmake
+    COMMENT "Incrementing build number and generating build_info.h"
+)
+
+# Ensure the plugin target depends on the increment step and can include generated headers
+add_dependencies(ClockV3 increment_build)
+target_include_directories(ClockV3 PRIVATE ${CMAKE_BINARY_DIR}/generated)
+
 if (APPLE)
     # Set macOS bundle properties if needed
-    set_target_properties(ClockSync PROPERTIES
+    set_target_properties(ClockV3 PROPERTIES
         MACOSX_BUNDLE TRUE
         XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "Developer ID Application: Dominik Bohn (3J6FW877T8)"  # Replace with your actual code signing identity
         XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "3J6FW877T8"  # Replace with your actual development team ID
@@ -99,7 +112,7 @@ if (APPLE)
 
     # Optional install rule: allows installing to system VST3 folder via
     #   cmake --install <build-dir> --component ClockSync_VST3 --prefix /Library
-    install(TARGETS ClockSync
+    install(TARGETS ClockV3
         BUNDLE DESTINATION "Audio/Plug-Ins/VST3"
         COMPONENT "toolBoy Clock v3")
 endif()
