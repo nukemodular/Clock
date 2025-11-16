@@ -45,9 +45,9 @@ juce_add_binary_data(DancerFrames
 )
 
 juce_add_plugin(ClockSync
-    COMPANY_NAME "PlugProcess"
-    PRODUCT_NAME "ClockSync"
-    BUNDLE_ID com.plugprocess.clocksync
+    COMPANY_NAME "toolBoy"
+    PRODUCT_NAME "toolBoy Clock v3"
+    BUNDLE_ID com.toolBoy.clockVst3
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT TRUE
@@ -58,8 +58,9 @@ juce_add_plugin(ClockSync
     PLUGIN_CODE CLKS
     FORMATS VST3
     # Include Synth subcategory to improve host discovery under Instruments
-    VST3_CATEGORIES "Instrument Synth"
+    VST3_CATEGORIES "Toolbox;Instrument,MIDIEffect"
 )
+
 
 target_sources(ClockSync
     PRIVATE
@@ -84,19 +85,21 @@ target_link_libraries(ClockSync
         juce::juce_gui_extra
         juce::juce_animation
         juce::juce_core
-    DancerFrames
+        DancerFrames
 )
 
 if (APPLE)
     # Set macOS bundle properties if needed
     set_target_properties(ClockSync PROPERTIES
         MACOSX_BUNDLE TRUE
-        XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY ""
+        XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "Developer ID Application: Dominik Bohn (3J6FW877T8)"  # Replace with your actual code signing identity
+        XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "3J6FW877T8"  # Replace with your actual development team ID
+        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.toolBoy.clockVst3"
     )
 
     # Optional install rule: allows installing to system VST3 folder via
     #   cmake --install <build-dir> --component ClockSync_VST3 --prefix /Library
     install(TARGETS ClockSync
         BUNDLE DESTINATION "Audio/Plug-Ins/VST3"
-        COMPONENT ClockSync_VST3)
+        COMPONENT "toolBoy Clock v3")
 endif()
