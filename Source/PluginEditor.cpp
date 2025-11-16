@@ -1,6 +1,7 @@
 #include <utility>
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
+#include "build_info.h"
 #include "GridScaleMenu.h"
 #include "BinaryData.h"
 #include "LookAndFeels.h" // Use centralised LookAndFeel & theme colours
@@ -54,7 +55,9 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         clickLevelSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
         clickRotaryLNF = std::make_unique<ClickRotaryLNF>();
         clickLevelSlider.setLookAndFeel(clickRotaryLNF.get());
-        clickLevelSlider.setRange(-18.0, 0.0, 0.1);
+        // Repurposed rotary: discrete 0..4 stages for click rate (0=off,1=4th,2=8th,3=16th,4=24ppq)
+        clickLevelSlider.setRange(0, 4, 1);
+        clickLevelSlider.setTooltip("Off / 4th / 8th / 16th / 24ppq");
 
         addAndMakeVisible(gridScaleMenu);
         addAndMakeVisible(shuffleModeMenu);
@@ -75,10 +78,12 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
 
     auto& apvts = processor.getAPVTS();
 
+    // clickButton now toggles click variant (sample spike vs 1ms pulse)
     clickEnableAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
-        apvts, ClockSyncAudioProcessor::paramClickEnable, clickButton);
+        apvts, ClockSyncAudioProcessor::paramClickPulse, clickButton);
+    // clickLevelSlider repurposed to select click rate stages (0..4)
     clickLevelAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        apvts, ClockSyncAudioProcessor::paramClickLevelDb, clickLevelSlider);
+        apvts, ClockSyncAudioProcessor::paramClickRate, clickLevelSlider);
     idleClockAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         apvts, ClockSyncAudioProcessor::paramClockWhileStopped, idleClockToggle);
     triggerModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -252,6 +257,18 @@ void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
     //drawIdleClockCurvedLabel(g);
     // Draw trigger ellipse last to ensure it is front-most.
     drawTrigger(g);
+
+    // Small version/build label at bottom-right
+    {
+        const juce::String ver = PLUGIN_VERSION_WITH_BUILD;
+        const int padding = 6;
+        juce::Font f(juce::FontOptions("Arial", 11.0f, juce::Font::plain));
+        g.setFont(f);
+        g.setColour(juce::Colours::white.withAlpha(0.7f));
+        auto area = getLocalBounds().reduced(padding);
+        auto labelArea = area.removeFromBottom(18).removeFromRight(200);
+        g.drawFittedText(ver, labelArea, juce::Justification::centredRight, 1);
+    }
 }
 
 void ClockSyncAudioProcessorEditor::resized()
@@ -692,10 +709,13 @@ void ClockSyncAudioProcessorEditor::drawIdleClockCurvedLabel(juce::Graphics& g)
             // Compute per-character scale (shrink towards end non-linearly)
             const float s = 1.0f - shrinkFactor * std::sqrt(t);
 
-            // Get glyph size for this character at base font
+            // Get glyph size for this character at base font using GlyphArrangement (replacement for deprecated getStringWidthFloat)
             const juce::String ch = text.substring(i, i+1);
-            const float charW = baseFont.getStringWidthFloat(ch);
-            const float charH = baseFont.getHeight();
+            juce::GlyphArrangement ga;
+            ga.addLineOfText(baseFont, ch, 0.0f, 0.0f);
+            const auto gb = ga.getBoundingBox(0, 1, true);
+            const float charW = gb.getWidth();
+            const float charH = gb.getHeight();
 
             juce::Graphics::ScopedSaveState ss(g);
 
@@ -751,9 +771,8 @@ void ClockSyncAudioProcessorEditor::openCurvedLabelEditor()
     const juce::Point<float> pos = mt*mt * p0 + 2.0f * mt * t * p1 + t*t * p2;
 
     // Create editor and buttons
-    curvedLabelEditor = std::make_unique<juce::TextEditor>("curvedEditor");
     curvedLabelEditor->setText(curvedLabelText);
-    curvedLabelEditor->setFont(juce::Font(36.0f));
+    curvedLabelEditor->setFont(juce::Font(juce::FontOptions("Arial", 36.0f, juce::Font::plain)));
     curvedLabelEditor->setReturnKeyStartsNewLine(false);
     curvedLabelEditor->onReturnKey = [this]() { closeCurvedLabelEditor(true); };
     curvedLabelEditor->onEscapeKey = [this]() { closeCurvedLabelEditor(false); };

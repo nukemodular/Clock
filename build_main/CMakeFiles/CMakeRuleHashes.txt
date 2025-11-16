@@ -1,0 +1,3 @@
+# Hashes of file build rules.
+99cbcd0460fff1910a20a45174783465 ClockSync_artefacts/JuceLibraryCode/ClockSync_VST3/PkgInfo
+c4365036e11a3cdc965ca6ed83a144fc juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData1.cpp

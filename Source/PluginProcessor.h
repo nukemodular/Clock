@@ -64,8 +64,12 @@ public:
 
     // Parameter IDs
     static inline const juce::String paramClockRateIndex { "clockRateIndex" }; // choice index: 0..3 => 1/32,1/16,1/8,1/4
-    static inline const juce::String paramClickEnable     { "clickEnable" };
     static inline const juce::String paramClickLevelDb    { "clickLevelDb" }; // -12..0 dB
+    // New click parameters:
+    //  - paramClickRate: 0..4 discrete stages (0=off,1=4th,2=8th,3=16th,4=24ppq)
+    //  - paramClickPulse: false=sample click (1-sample), true=1ms pulse
+    static inline const juce::String paramClickRate      { "clickRate" };
+    static inline const juce::String paramClickPulse     { "clickPulse" };
     static inline const juce::String paramRun             { "run" };            // true=running, false=stopped
     static inline const juce::String paramClockWhileStopped { "clockWhileStopped" }; // keep sending F8 while run==false
     static inline const juce::String paramTriggerModeEnabled { "triggerModeEnabled" }; // follow trigger with bar restart

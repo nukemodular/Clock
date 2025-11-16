@@ -53,11 +53,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout ClockSyncAudioProcessor::cre
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         paramClockRateIndex, "Clock Rate", juce::StringArray{ "1/32", "1/16", "1/8", "1/4" }, 1));
 
-    params.push_back(std::make_unique<juce::AudioParameterBool>(
-        paramClickEnable, "Enable Audio Click", false));
-
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         paramClickLevelDb, "Click Level (dB)", juce::NormalisableRange<float>(-12.0f, 0.0f), -6.0f));
+
+    // Click rate: discrete stages 0..4 (0 = off)
+    params.push_back(std::make_unique<juce::AudioParameterInt>(
+        paramClickRate, "Click Rate", 0, 4, 1));
+
+    // Click variant: false = 1-sample spike, true = 1ms pulse
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        paramClickPulse, "Click Pulse Variant", false));
 
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         paramRun, "Run", true));
@@ -277,17 +282,8 @@ void ClockSyncAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 
     if (! hasPos)
     {
-        // No transport info; just decay any existing click
-        if (getTotalNumOutputChannels() > 0 && parameters.getRawParameterValue(paramClickEnable)->load() > 0.5f)
-        {
-            for (int i = 0; i < numSamples; ++i)
-            {
-                float s = clickEnv;
-                clickEnv *= 0.995f;
-                for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-                    buffer.addSample(ch, i, s * clickGainLinear);
-            }
-        }
+        // No transport info; nothing to schedule for audio clicks.
+        clickEnv = 0.0f;
         return;
     }
 
@@ -302,7 +298,11 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
 
     // Update derived params (fast, read atomics)
     updateDerivedParams();
-    const bool clickEnabled = parameters.getRawParameterValue(paramClickEnable)->load() > 0.5f;
+    int clickRate = 0;
+    if (auto* cri = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramClickRate)))
+        clickRate = juce::jlimit(0, 4, cri->get());
+    const bool clickEnabled = (clickRate > 0);
+    const bool clickPulse = parameters.getRawParameterValue(paramClickPulse)->load() > 0.5f;
     // Diagnostics toggle (arm a short capture window when enabled)
     if (parameters.getRawParameterValue(paramDiagnostics)->load() > 0.5f)
     {
@@ -335,6 +335,8 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
     // Run control param
     const bool runParam = parameters.getRawParameterValue(paramRun)->load() > 0.5f;
     const bool keepClockStopped = parameters.getRawParameterValue(paramClockWhileStopped)->load() > 0.5f;
+    // Allow MIDI emission when Run is on, or when the user explicitly enabled clock while stopped
+    const bool allowMidiOut = runParam || keepClockStopped;
 
     const double bpm = (pos.bpm > 0.0 ? pos.bpm : 120.0);
     samplesPerQuarter = currentSampleRate * 60.0 / juce::jmax(1e-6, bpm);
@@ -352,14 +354,7 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
             pendingStart = false;
             uiIsRunning.store(false, std::memory_order_relaxed);
             uiPendingStart.store(false, std::memory_order_relaxed);
-            const auto stopMsg = juce::MidiMessage::midiStop();
-            midi.addEvent(stopMsg, 0);
-            if (externalMidiOut)
-            {
-                juce::MidiBuffer ext;
-                ext.addEvent(stopMsg, 0);
-                externalMidiOut->sendBlockOfMessages(ext, juce::Time::getMillisecondCounterHiRes(), currentSampleRate);
-            }
+            // When user has Run==off, suppress sending any MIDI stop messages.
         }
     }
     else // runParam == true
@@ -403,27 +398,41 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
             // Normal Start/Continue emission at transport edge.
             const bool atStart = (ppqStart < 1e-6);
             const auto startMsg = atStart ? juce::MidiMessage::midiStart() : juce::MidiMessage::midiContinue();
-            midi.addEvent(startMsg, 0);
-            haveHostStartMsg = true;
-            hostStartMsg = startMsg;
-            runActive = true;
-            pendingStart = false;
-            uiIsRunning.store(true, std::memory_order_relaxed);
-            uiPendingStart.store(false, std::memory_order_relaxed);
-            hostStartSampleThisBlock = 0;
-            uiStep16.store(1, std::memory_order_relaxed);
+            if (allowMidiOut)
+            {
+                midi.addEvent(startMsg, 0);
+                haveHostStartMsg = true;
+                hostStartMsg = startMsg;
+                runActive = true;
+                pendingStart = false;
+                uiIsRunning.store(true, std::memory_order_relaxed);
+                uiPendingStart.store(false, std::memory_order_relaxed);
+                hostStartSampleThisBlock = 0;
+                uiStep16.store(1, std::memory_order_relaxed);
+            }
+            else
+            {
+                // Run is off, suppress emitting Start/Continue and don't set runActive.
+                runActive = false;
+                pendingStart = false;
+                uiIsRunning.store(false, std::memory_order_relaxed);
+                uiPendingStart.store(false, std::memory_order_relaxed);
+            }
         }
         firstBlock = false;
     }
     else if (! isPlaying && lastWasPlaying)
     {
         const auto stopMsg = juce::MidiMessage::midiStop();
-        midi.addEvent(stopMsg, 0);
-        if (externalMidiOut)
+        if (allowMidiOut)
         {
-            juce::MidiBuffer extStop;
-            extStop.addEvent(stopMsg, 0);
-            externalMidiOut->sendBlockOfMessages(extStop, juce::Time::getMillisecondCounterHiRes(), currentSampleRate);
+            midi.addEvent(stopMsg, 0);
+            if (externalMidiOut)
+            {
+                juce::MidiBuffer extStop;
+                extStop.addEvent(stopMsg, 0);
+                externalMidiOut->sendBlockOfMessages(extStop, juce::Time::getMillisecondCounterHiRes(), currentSampleRate);
+            }
         }
         // When host stops, also clear run-active state
         runActive = false;
@@ -634,11 +643,13 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                 const bool inGap = inGapBar;
                 if (! suppressUntilRestart && ! inGap && ! onForbidden)
                 {
-                    midi.addEvent(clockMsg, sampleOffset);
-                    uiClockCounter.fetch_add(1, std::memory_order_relaxed);
-                    const bool shouldSendExternal = runActive || (! runActive && keepClockStopped);
-                    if (externalMidiOut && shouldSendExternal)
-                        extClock.addEvent(clockMsg, sampleOffset);
+                    if (allowMidiOut)
+                    {
+                        midi.addEvent(clockMsg, sampleOffset);
+                        uiClockCounter.fetch_add(1, std::memory_order_relaxed);
+                        if (externalMidiOut)
+                            extClock.addEvent(clockMsg, sampleOffset);
+                    }
                 }
                 if (diagnosticsEnabled && diagPairsRemaining > 0)
                 {
@@ -658,16 +669,49 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                         debugLog("  pulse sample=" + juce::String(sampleOffset) + " norm=" + juce::String(norm, 6));
                     diagLastSample = sampleOffset;
                 }
-                if (clickEnabled)
-                {
-                    const int sixteenthTickSpan = juce::jmax(1, resolutionBefore / 4); // e.g. 24 -> 6
-                    if ((t % sixteenthTickSpan) == 0)
+                    if (clickEnabled)
                     {
-                        // Accent stronger on quarter boundaries
-                        const bool quarterBoundary = (t % resolutionBefore) == 0;
-                        clickEnv = quarterBoundary ? 1.0f : 0.7f;
+                        int stepSpan = 1;
+                        switch (clickRate)
+                        {
+                            case 1: stepSpan = resolutionBefore; break;                 // quarter note
+                            case 2: stepSpan = juce::jmax(1, resolutionBefore / 2); break; // eighth
+                            case 3: stepSpan = juce::jmax(1, resolutionBefore / 4); break; // sixteenth
+                            case 4: stepSpan = 1; break; // every midi-clock pulse (24ppq)
+                            default: stepSpan = juce::jmax(1, resolutionBefore / 4); break;
+                        }
+                        if ((t % stepSpan) == 0)
+                        {
+                            const bool quarterBoundary = (t % resolutionBefore) == 0;
+                            const float baseLevel = quarterBoundary ? 1.0f : 0.7f;
+                            const float outLevel = baseLevel * clickGainLinear;
+                            const int pulseSamples = (int) juce::jmax(1, (int) std::round(0.001 * currentSampleRate));
+                            if (! clickPulse)
+                            {
+                                // 1-sample spike
+                                if (sampleOffset >= 0 && sampleOffset < numSamples)
+                                {
+                                    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                                        buffer.addSample(ch, sampleOffset, outLevel);
+                                }
+                            }
+                            else
+                            {
+                                // 1ms pulse: distribute a decaying linear pulse across pulseSamples
+                                for (int s = 0; s < pulseSamples; ++s)
+                                {
+                                    const int idx = sampleOffset + s;
+                                    if (idx >= 0 && idx < numSamples)
+                                    {
+                                        const float env = 1.0f - (float) s / (float) pulseSamples;
+                                        const float val = outLevel * env;
+                                        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                                            buffer.addSample(ch, idx, val);
+                                    }
+                                }
+                            }
+                        }
                     }
-                }
                 lastProcessedT = t;
             }
             lastTickIndex = lastProcessedT;
@@ -736,11 +780,13 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                 // Past boundary; optionally suppress clock on the exact Start frame to avoid double clocks with Start
                 if (! suppressUntilRestart && !(forbiddenClockSample >= 0 && sampleOffset == forbiddenClockSample))
                 {
-                    midi.addEvent(clockMsg, sampleOffset);
-                    uiClockCounter.fetch_add(1, std::memory_order_relaxed);
-                    const bool shouldSendExternal = runActive || (! runActive && keepClockStopped);
-                    if (externalMidiOut && shouldSendExternal)
-                        extClock.addEvent(clockMsg, sampleOffset);
+                    if (allowMidiOut)
+                    {
+                        midi.addEvent(clockMsg, sampleOffset);
+                        uiClockCounter.fetch_add(1, std::memory_order_relaxed);
+                        if (externalMidiOut)
+                            extClock.addEvent(clockMsg, sampleOffset);
+                    }
                 }
                 if (diagnosticsEnabled && diagPairsRemaining > 0)
                 {
@@ -760,15 +806,47 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                         debugLog("  pulse sample=" + juce::String(sampleOffset) + " norm=" + juce::String(norm, 6));
                     diagLastSample = sampleOffset;
                 }
-                if (clickEnabled)
-                {
-                    const int sixteenthTickSpan = juce::jmax(1, resolutionAfter / 4);
-                    if ((t % sixteenthTickSpan) == 0)
+                    if (clickEnabled)
                     {
-                        const bool quarterBoundary = (t % resolutionAfter) == 0;
-                        clickEnv = quarterBoundary ? 1.0f : 0.7f;
+                        int stepSpan = 1;
+                        switch (clickRate)
+                        {
+                            case 1: stepSpan = resolutionAfter; break;
+                            case 2: stepSpan = juce::jmax(1, resolutionAfter / 2); break;
+                            case 3: stepSpan = juce::jmax(1, resolutionAfter / 4); break;
+                            case 4: stepSpan = 1; break;
+                            default: stepSpan = juce::jmax(1, resolutionAfter / 4); break;
+                        }
+                        if ((t % stepSpan) == 0)
+                        {
+                            const bool quarterBoundary = (t % resolutionAfter) == 0;
+                            const float baseLevel = quarterBoundary ? 1.0f : 0.7f;
+                            const float outLevel = baseLevel * clickGainLinear;
+                            const int pulseSamples = (int) juce::jmax(1, (int) std::round(0.001 * currentSampleRate));
+                            if (! clickPulse)
+                            {
+                                if (mappedOffset >= 0 && mappedOffset < numSamples)
+                                {
+                                    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                                        buffer.addSample(ch, mappedOffset, outLevel);
+                                }
+                            }
+                            else
+                            {
+                                for (int s = 0; s < pulseSamples; ++s)
+                                {
+                                    const int idx = mappedOffset + s;
+                                    if (idx >= 0 && idx < numSamples)
+                                    {
+                                        const float env = 1.0f - (float) s / (float) pulseSamples;
+                                        const float val = outLevel * env;
+                                        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                                            buffer.addSample(ch, idx, val);
+                                    }
+                                }
+                            }
+                        }
                     }
-                }
                 lastProcessedT = t;
             }
             lastTickIndex = lastProcessedT;
@@ -780,20 +858,7 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
             externalMidiOut->sendBlockOfMessages(extClock, juce::Time::getMillisecondCounterHiRes(), currentSampleRate);
     }
 
-    // Audio click synthesis (simple decaying impulse)
-    if (clickEnabled && getTotalNumOutputChannels() > 0)
-    {
-        for (int i = 0; i < numSamples; ++i)
-        {
-            float s = clickEnv;
-            // Fast exponential decay for a sharp tick
-            clickEnv *= 0.997f;
-
-            s *= clickGainLinear;
-            for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-                buffer.addSample(ch, i, s);
-        }
-    }
+    // Per-tick clicks are written directly into the audio buffer in the scheduling loops above.
 
     lastWasPlaying = isPlaying;
     // Offset step change: schedule restart at the next occurrence of the selected step (modulo bar)
@@ -817,6 +882,10 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
 {
     BarRestartWindow window;
     const bool runWasActive = runActive;
+
+    // Local snapshot: only send MIDI messages for restarts if Run is enabled or ClockWhileStopped is enabled
+    const bool sendMidi = (parameters.getRawParameterValue(paramRun)->load() > 0.5f)
+                          || (parameters.getRawParameterValue(paramClockWhileStopped)->load() > 0.5f);
 
     const double lastBar = pos.ppqPositionOfLastBarStart;
     const double barLenQ = (pos.timeSigNumerator > 0 && pos.timeSigDenominator > 0)
@@ -887,13 +956,19 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
         if (stopOffset < sampleOffset)
         {
             const auto stopMsg = juce::MidiMessage::midiStop();
-            midi.addEvent(stopMsg, stopOffset);
-            extBuffer.addEvent(stopMsg, stopOffset);
+            if (sendMidi)
+            {
+                midi.addEvent(stopMsg, stopOffset);
+                extBuffer.addEvent(stopMsg, stopOffset);
+            }
         }
 
         const auto startMsg = juce::MidiMessage::midiStart();
-        midi.addEvent(startMsg, sampleOffset);
-        extBuffer.addEvent(startMsg, sampleOffset);
+        if (sendMidi)
+        {
+            midi.addEvent(startMsg, sampleOffset);
+            extBuffer.addEvent(startMsg, sampleOffset);
+        }
         // Reflect selected step in UI at restart
         uiStep16.store(juce::jlimit(1, 16, offsetStep), std::memory_order_relaxed);
 

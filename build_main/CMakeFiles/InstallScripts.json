@@ -1,0 +1,11 @@
+{
+	"InstallScripts" : 
+	[
+		"/Users/studio/Documents/PlugProcess/clock_plugin/build_main/cmake_install.cmake",
+		"/Users/studio/Documents/PlugProcess/clock_plugin/build_main/JUCE/cmake_install.cmake",
+		"/Users/studio/Documents/PlugProcess/clock_plugin/build_main/JUCE/modules/cmake_install.cmake",
+		"/Users/studio/Documents/PlugProcess/clock_plugin/build_main/JUCE/extras/Build/cmake_install.cmake",
+		"/Users/studio/Documents/PlugProcess/clock_plugin/build_main/JUCE/extras/Build/juceaide/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
