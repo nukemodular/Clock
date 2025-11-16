@@ -6,6 +6,7 @@
 #include "BinaryData.h"
 #include "LookAndFeels.h" // Use centralised LookAndFeel & theme colours
 #include <array>
+#include <optional>
 
 namespace
 {
@@ -63,6 +64,16 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         addAndMakeVisible(shuffleModeMenu);
         addAndMakeVisible(deviceBox);
         addAndMakeVisible(refreshButton);
+        addAndMakeVisible(nameBox);
+        addAndMakeVisible(nameMidiSwitch);
+        // attach a mouse listener so double-clicking the name combo opens an inline editor
+        struct NameBoxMouseListener : public juce::MouseListener
+        {
+            ClockSyncAudioProcessorEditor* owner;
+            NameBoxMouseListener(ClockSyncAudioProcessorEditor* o) : owner(o) {}
+            void mouseDoubleClick(const juce::MouseEvent&) override { owner->toggleNameEditorOrCommit(); }
+        };
+        nameBox.addMouseListener(new NameBoxMouseListener(this), true);
         addAndMakeVisible(clickButton);
         addAndMakeVisible(clickLevelSlider);
         addAndMakeVisible(triggerModeToggle);
@@ -71,7 +82,9 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         addAndMakeVisible(stepOffsetMenu);
 
         gridScaleMenu.toBack();
-        clickLevelSlider.toBack();
+        // Keep slider and its small click button in front so they are visually prominent
+        clickLevelSlider.toFront(true);
+        clickButton.toFront(true);
         idleClockToggle.toBack();
         stepOffsetMenu.toFront(true);
     }
@@ -88,6 +101,55 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         apvts, ClockSyncAudioProcessor::paramClockWhileStopped, idleClockToggle);
     triggerModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         apvts, ClockSyncAudioProcessor::paramTriggerModeEnabled, triggerModeToggle);
+
+    // Name/Instrument combo setup (look-and-feel assigned after ThemeLNF is created)
+    nameBox.setColour(juce::ComboBox::textColourId, UiThemeColours::cyan());
+    nameBox.setJustificationType(juce::Justification::centred);
+    // hide the arrow for nameBox so clicks are handled by overlay
+    nameBox.setColour(juce::ComboBox::arrowColourId, juce::Colours::transparentBlack);
+    // Ensure the internal text component does not allow editing (prevents extra text widgets)
+    nameBox.setEditableText(false);
+    // Load saved instrument names from state
+    loadInstrumentNamesFromState();
+    populateNameBox();
+
+    // Default: NAME mode off => show deviceBox
+    nameMidiSwitch.setToggleState(false, juce::dontSendNotification);
+    nameMidiSwitch.setButtonText("NAME");
+    nameMidiSwitch.onClick = [this]
+    {
+        const bool isOn = nameMidiSwitch.getToggleState();
+        if (isOn) nameMidiSwitch.setButtonText("MIDI"); else nameMidiSwitch.setButtonText("NAME");
+        // Show only the active combo and ensure z-order to avoid accidental overlap
+        nameBox.setVisible(isOn);
+        deviceBox.setVisible(! isOn);
+        if (isOn)
+        {
+            nameBox.toFront(true);
+            deviceBox.toBack();
+        }
+        else
+        {
+            deviceBox.toFront(true);
+            nameBox.toBack();
+        }
+        // nothing else needed; editing trigger handled by double-click on the combo
+    };
+
+    nameBox.onChange = [this]
+    {
+        const int id = nameBox.getSelectedId();
+        if (id == 1000) // new...
+            showNewNameDialog();
+        else if (id == 1001) // clear all
+        {
+            instrumentNames.clear();
+            saveInstrumentNamesToState();
+            populateNameBox();
+        }
+    };
+
+    // editing/commit handled by double-click listener which calls toggleNameEditorOrCommit()
 
     {
         int initialStep = 1;
@@ -109,7 +171,18 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         processor.notifyResyncOffsetChanged();
     };
 
+
+
     themeLNF = std::make_unique<ThemeLNF>();
+
+    // Ensure controls use our theme look-and-feel instance
+    nameBox.setLookAndFeel(themeLNF.get());
+    nameMidiSwitch.setLookAndFeel(themeLNF.get());
+    // Make the TextButton behave like a toggle
+    nameMidiSwitch.setClickingTogglesState(true);
+    // Flip colouring: when OFF show base; when ON show accent (swapped per request)
+    nameMidiSwitch.setColour(juce::TextButton::textColourOffId, UiThemeColours::accent());
+    nameMidiSwitch.setColour(juce::TextButton::textColourOnId,  UiThemeColours::base());
 
     if (auto* rp = apvts.getRawParameterValue(ClockSyncAudioProcessor::paramRun))
         runParamCached = rp->load() > 0.5f;
@@ -158,9 +231,16 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
             processor.setExternalDeviceId(midiOutputs[(size_t) (selId - 2)].identifier);
     };
     deviceBox.setLookAndFeel(themeLNF.get());
+    deviceBox.setJustificationType(juce::Justification::centred);
+    // hide the arrow so the text isn't shifted by an arrow-area
+    deviceBox.setColour(juce::ComboBox::arrowColourId, juce::Colours::transparentBlack);
+    // Ensure the internal text component does not allow editing (prevents extra text widgets)
+    deviceBox.setEditableText(false);
     // Make the combo box label use the accent colour but darker for contrast
     deviceBox.setColour(juce::ComboBox::textColourId, UiThemeColours::accent().darker(0.5f));
 
+    // Ensure nameBox visibility mirrors switch state initially
+    nameBox.setVisible(nameMidiSwitch.getToggleState());
     triggerModeToggle.onClick = [this]
     {
         if (triggerModeToggle.getToggleState())
@@ -180,23 +260,35 @@ void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
     g.setGradientFill(bgGrad);
     g.fillRect(bounds);
 
-    // Decorative background circles: larger circles use a darker variant
+    // Decorative background circles: larger circles use a darker variant and pulse on beats
     {
         auto centre = bounds.getCentre();
         const std::array<int, 6> sizes = { 420 ,340, 280, 230, 190, 160 };
         for (size_t i = 0; i < sizes.size(); ++i)
         {
-            const float sz = (float) sizes[i];
-            const float darkFactor = 0.11f + 0.66f * (float) i; // bigger -> darker
-            //const float alpha = 0.02f + 0.1f * (float) i;      // subtle alpha increase
-            juce::Colour col = UiThemeColours::accent().darker(darkFactor);//.withAlpha(alpha);
+            const float baseSz = (float) sizes[i];
+            const float darkFactor = 0.1f + 0.75f * (float) i; // bigger -> darker
+
+            // Apply pulse scale (progress goes 1->0) to briefly enlarge the circle on its beat
+            const float progress = backdropPulseProgress[i];
+            const float extraScale = backdropPulseScale[i] * progress; // e.g. 0.02 -> +2%
+            const float sz = baseSz * (1.0f + extraScale);
+
+            // Slight alpha boost on pulse so it looks like a brief flash
+            const float baseAlpha = 1.0f; // fully opaque base colouring
+            const float alphaBoost = 0.45f * progress; // up to +0.45 alpha
+
+            // Original behaviour: use the accent colour darkened per-ring.
+            // No cyan interpolation and no alpha boost applied.
+            juce::Colour col = UiThemeColours::accent().darker(darkFactor);
+
             juce::Rectangle<float> rc(centre.x - sz * 0.5f, centre.y - sz * 0.5f + 10, sz, sz);
             g.setColour(col);
             g.fillEllipse(rc);
         }
     }
 
-    auto header = getLocalBounds().removeFromTop(28).reduced(18, 4).toFloat();
+    auto header = getLocalBounds().removeFromTop(30).reduced(8, 4).toFloat();
     juce::Path headerPath; headerPath.addRoundedRectangle(header, 6.0f);
     g.setColour(UiThemeColours::base());
     g.fillPath(headerPath);
@@ -204,14 +296,24 @@ void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
     const bool isRunning = processor.getUiIsRunning();
     const bool isArmed = processor.getUiPendingStart();
     const bool hasNext = processor.getUiNextRestartPending();
-    juce::String status = hasNext ? "NEXT" : (isRunning ? "RUN" : (isArmed ? "ARM" : "STOP"));
+        juce::String status;
+        if (hasNext)
+            status = "PENDING";
+        else if (isRunning)
+            status = "LOCKED";
+        else if (isArmed)
+            status = "ARMED";
+        else
+            status = idleClockToggle.getToggleState() ? "IDLE" : "STOP";
     g.setFont(juce::Font(juce::FontOptions("Arial", 11.0f, juce::Font::bold)));
     g.setColour(UiThemeColours::cyan());
-    g.drawFittedText(status, juce::Rectangle<int>(getWidth() - 90, (int)header.getY(), 50, (int)header.getHeight()),
-                     juce::Justification::centredRight, 1);
+    // Shift status text slightly right (+4px) per request
+    g.drawFittedText(status, juce::Rectangle<int>(getWidth() - 73, (int)header.getY(), 50, (int)header.getHeight()),
+                     juce::Justification::centred, 1);
 
     const float ledRadius = 6.0f;
-    auto ledCenter = juce::Point<float>(getWidth() - 28.0f, header.getCentreY());
+    // Move LED slightly right (+8px)
+    auto ledCenter = juce::Point<float>(getWidth() - 17.0f, header.getCentreY());
     const float a = juce::jlimit(0.0f, 1.0f, ledLevel);
     auto ledColour = UiThemeColours::cyan().withAlpha(0.10f).interpolatedWith(UiThemeColours::cyan().withAlpha(0.97f), a);
     g.setColour(juce::Colours::black.withAlpha(0.5f));
@@ -253,8 +355,7 @@ void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
         clickButton.paintEntireComponent(g, true);
         g.setOrigin(0, 0);
     }
-    // Curved label next so trigger ellipse can sit visually on top if overlapping.
-    //drawIdleClockCurvedLabel(g);
+    // Curved label feature removed.
     // Draw trigger ellipse last to ensure it is front-most.
     drawTrigger(g);
 
@@ -262,11 +363,11 @@ void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
     {
         const juce::String ver = PLUGIN_VERSION_WITH_BUILD;
         const int padding = 6;
-        juce::Font f(juce::FontOptions("Arial", 11.0f, juce::Font::plain));
+        juce::Font f(juce::FontOptions("Arial", 11.0f, juce::Font::bold));
         g.setFont(f);
-        g.setColour(juce::Colours::white.withAlpha(0.7f));
+        g.setColour(UiThemeColours::cyan());
         auto area = getLocalBounds().reduced(padding);
-        auto labelArea = area.removeFromBottom(18).removeFromRight(200);
+        auto labelArea = area.removeFromBottom(10).removeFromRight(200);
         g.drawFittedText(ver, labelArea, juce::Justification::centredRight, 1);
     }
 }
@@ -277,26 +378,42 @@ void ClockSyncAudioProcessorEditor::resized()
     // Header area is painted, no components there (top 28px)
 
     {
-        const int headerH = 28;
+        const int headerH = 30;
         const int marginX = 5;
         const int marginY = 3;
         const int contentH = headerH - marginY * 2; // 20px
-        const int buttonW = 40; // compact refresh button
-        const int gap = 3; // retained gap but refresh stays at left
-        const int fullComboOriginal = getWidth() - marginX * 2 - buttonW - gap; // previous wide combo width
-        int comboW = fullComboOriginal - 90; // reduce width by 60 as requested
-        comboW = std::max(80, comboW); // safety minimum (use std::max to avoid template deduction issues)
+        const int gap = 4;
+        const int buttonW = std::max(16, contentH - 6); // square-ish refresh button (width ~= height)
+        const int toggleW = 14; // same width for name/midi toggle
+        const int fullComboOriginal = getWidth() - marginX * 2 - buttonW - gap - toggleW - gap; // account for toggle + refresh
+        int comboW = fullComboOriginal - 90; // keep prior shrink
+        // Reduce all combo widths by 10px as requested, but keep a sensible minimum
+        comboW = std::max(60, comboW - 10);
         const int centerX = getWidth() / 2;
         const int comboX = centerX - comboW / 2;
-        refreshButton.setBounds(marginX + 18, marginY + 5, buttonW, contentH - 10);
-        deviceBox.setBounds(comboX, marginY + 2, comboW, contentH - 4);
+        // place refresh button immediately left of the combo
+        refreshButton.setBounds(comboX - (toggleW + 4), marginY + 5, toggleW, contentH - 10);
+        // place NAME/MIDI toggle left of refresh button (moved further left to avoid clipping)
+        const int extraLeft = 17; // nudge left
+        nameMidiSwitch.setBounds(refreshButton.getX() - (toggleW + 13 + extraLeft), marginY + 5, 40, contentH - 10);
+        // comboboxes share same bounds; only one visible at a time
+        deviceBox.setBounds(comboX, marginY + 3, comboW, contentH - 2);
+        nameBox.setBounds(comboX, marginY + 3, comboW, contentH - 2);
+        // nameEdit overlay removed; combo remains interactive (double-click to edit)
+        // make refresh button small single-letter
+        refreshButton.setButtonText("R");
     }
 
-    clickLevelSlider.setBounds(75 + offX, 96 + offY, 46, 46); // rotary position (offset)
+    // Expand slider bounds slightly to increase drag detection area without visibly changing layout
+    const int sliderExtra = 12;
+    clickLevelSlider.setBounds(70 + offX - sliderExtra/2, 96 + offY - sliderExtra/2, 46 + sliderExtra, 46 + sliderExtra); // rotary position (offset)
     {
         auto sb = clickLevelSlider.getBounds();
         auto c = sb.getCentre();
-        clickButton.setBounds(c.x - 6, c.y - 6, 12, 12);
+        clickButton.setBounds(c.x - 8, c.y - 8, 16, 16);
+        // ensure slider and click button remain front-most after layout
+        clickLevelSlider.toFront(true);
+        clickButton.toFront(true);
     }
     // Step ring area (centered region for ring + labels margin)
     ringArea = juce::Rectangle<int>(104 + offX, 104 + offY, 132, 132);
@@ -325,30 +442,110 @@ void ClockSyncAudioProcessorEditor::timerCallback()
     bool needRing = false;
     bool needTrigger = false;
     
-    // LED update
+    // LED update: do NOT set ledLevel on every MIDI clock tick (uiClockCounter)
+    // — that was causing the LED to blink at clock resolution. Instead we
+    // allow the quarter-beat logic below to set `ledLevel` on beat boundaries
+    // (so the LED blinks in step with the backdrop pulses). We still perform
+    // decay each timer tick so the LED falls off between beats.
     const auto counter = processor.getUiClockCounter();
     if (counter != lastSeenClockCounter)
     {
         lastSeenClockCounter = counter;
-        ledLevel = 1.0f;
-        needAll = true; // header LED small; simplest to repaint all
-    }
-    else if (ledLevel > 0.01f)
-    {
-        ledLevel *= 0.33f;
-        needAll = true;
+        // When a new MIDI clock tick arrives, check whether the 1/16 step
+        // has advanced and drive any step-aligned UI updates (LED pulse,
+        // backdrop sequencing) from this branch. This is more robust than
+        // relying on a separate read later in the function where races can
+        // cause missed updates.
+        const int step16_now = juce::jlimit(1, 16, processor.getUiStep16());
+        if (step16_now != stepNumberCached)
+        {
+            stepNumberCached = step16_now;
+            needTrigger = true;
+            const int beatIndex = (step16_now - 1) / 4; // 0..3
+
+            // Decide LED pulse level for this 16th step and start the animator
+            const bool hasNext = processor.getUiNextRestartPending();
+            const bool armed = processor.getUiPendingStart();
+            if (hasNext || armed)
+                ledPulseTarget = 1.0f;
+            else if (! runParamCached && idleClockToggle.getToggleState())
+                ledPulseTarget = 0.5f;
+            else if (runParamCached)
+                ledPulseTarget = 1.0f;
+            else
+                ledPulseTarget = 0.0f;
+
+            if (ledPulseTarget > 0.0f)
+            {
+                // If we're in PENDING/ARMED mode, only pulse once per quarter-note
+                // (beatIndex reflects quarter boundaries). For normal running mode
+                // pulse on every 16th-step.
+                if (hasNext || armed)
+                {
+                    if (beatIndex != lastLedBeatIndex)
+                    {
+                        lastLedBeatIndex = beatIndex;
+                        ledAnimator.start();
+                    }
+                }
+                else
+                {
+                    ledAnimator.start();
+                }
+            }
+
+            // Backdrop pulse sequencing: advance on quarter-note boundaries
+                        if (beatIndex != lastBackdropBeatIndex)
+                        {
+                            lastBackdropBeatIndex = beatIndex;
+                            switch (beatIndex)
+                            {
+                                case 0:
+                                    backdropPulseProgress[0] = 1.0f;
+                                    backdropPulseProgress[4] = 1.0f;
+                                    break;
+                                case 1:
+                                    backdropPulseProgress[1] = 1.0f;
+                                    backdropPulseProgress[5] = 1.0f;
+                                    break;
+                                case 2:
+                                    backdropPulseProgress[2] = 1.0f;
+                                    break;
+                                case 3:
+                                    backdropPulseProgress[3] = 1.0f;
+                                    break;
+                            }
+                            // Backdrop circles occupy the full canvas; request a full repaint.
+                            needAll = true;
+                        }
+        }
     }
 
     // Run param / engine flags / pending start
     if (auto* rp = processor.getAPVTS().getRawParameterValue(ClockSyncAudioProcessor::paramRun))
     {
         const bool runNow = rp->load() > 0.5f;
-        if (runNow != runParamCached) { runParamCached = runNow; needRing = true; }
+        if (runNow != runParamCached) {
+            runParamCached = runNow;
+            needRing = true;
+            // Visual feedback: pulse LED when Run toggles on/off so user sees state change
+            if (runParamCached)
+                ledPulseTarget = 1.0f;
+            else
+                ledPulseTarget = 0.6f; // softer pulse for stop
+            if (ledPulseTarget > 0.0f) ledAnimator.start();
+        }
     }
     const bool running = processor.getUiIsRunning();
     if (running != engineRunningCached) { engineRunningCached = running; needAll = true; }
     const bool armed = processor.getUiPendingStart();
-    if (armed != pendingStartCached) { pendingStartCached = armed; needAll = true; }
+    if (armed != pendingStartCached) {
+        pendingStartCached = armed;
+        needAll = true;
+        // pulse LED when armed status changes
+        ledPulseTarget = armed ? 1.0f : 0.5f;
+        if (ledPulseTarget > 0.0f) ledAnimator.start();
+    }
 
     // Rate choice
     if (rateParam)
@@ -370,13 +567,133 @@ void ClockSyncAudioProcessorEditor::timerCallback()
             needTrigger = true; // ensure region gets repainted if callback missed
     }
 
-    // Step number update tied to 16th-note changes (no fade)
+    // Update LED animator so pulses decay (ledAnimator callbacks repaint header)
+    {
+        const double ts2 = juce::Time::getMillisecondCounterHiRes();
+        auto ledStatus = ledAnimator.update(ts2);
+        if (ledStatus == juce::Animator::Status::inProgress)
+            needAll = true; // ensure header/full repaint if animator is active
+    }
+
+    // (Previously backdrop sequencing and LED start logic ran here based on
+    // reading `getUiStep16()`. That could miss updates due to timing races;
+    // the step-driven logic now lives in the clock-counter branch above.)
+
+    // Fallback: if for any reason the MIDI clock counter didn't advance but
+    // the reported 1/16 `uiStep16` has changed (e.g. host/processor timing),
+    // perform the same step-aligned updates here to avoid missing pulses.
+    {
+        const int step16_now = juce::jlimit(1, 16, processor.getUiStep16());
+        if (step16_now != stepNumberCached)
+        {
+            stepNumberCached = step16_now;
+            needTrigger = true;
+            const int beatIndex = (step16_now - 1) / 4; // 0..3
+
+            const bool hasNext = processor.getUiNextRestartPending();
+            const bool armed = processor.getUiPendingStart();
+            if (hasNext || armed)
+                ledPulseTarget = 1.0f;
+            else if (! runParamCached && idleClockToggle.getToggleState())
+                ledPulseTarget = 0.5f;
+            else if (runParamCached)
+                ledPulseTarget = 1.0f;
+            else
+                ledPulseTarget = 0.0f;
+
+            if (ledPulseTarget > 0.0f)
+            {
+                // If pending/armed, only pulse once per quarter
+                if (hasNext || armed)
+                {
+                    if (beatIndex != lastLedBeatIndex)
+                    {
+                        lastLedBeatIndex = beatIndex;
+                        ledAnimator.start();
+                    }
+                }
+                else
+                {
+                    ledAnimator.start();
+                }
+            }
+
+            if (beatIndex != lastBackdropBeatIndex)
+            {
+                lastBackdropBeatIndex = beatIndex;
+                static int backdropSequencePos = -1;
+                backdropSequencePos = (backdropSequencePos + 1) % 8;
+                if (backdropSequencePos >= 0 && backdropSequencePos < 6)
+                {
+                    backdropPulseProgress[(size_t)backdropSequencePos] = 1.0f;
+                    if (backdropSequencePos == 4)
+                        backdropPulseProgress[0] = 1.0f;
+                    needAll = true;
+                }
+            }
+        }
+    }
+
+    // Decay backdrop pulse progress (frame-based) so pulses scale/fade back over time
+    const float pulseDecay = 0.10f; // per-frame decrement at ~60Hz (~0.12 -> ~8-9 frames)
+    for (size_t i = 0; i < backdropPulseProgress.size(); ++i)
+    {
+        if (backdropPulseProgress[i] > 0.0f)
+        {
+            backdropPulseProgress[i] = juce::jmax(0.0f, backdropPulseProgress[i] - pulseDecay);
+            // Decay affects the full decorative background, repaint whole area.
+            needAll = true;
+        }
+    }
+
+    // Step number update tied to 16th-note changes (no fade).
+    // The numeric step shown in the trigger updates always, but the visual
+    // wedge (`visualStepCached`) only advances when idleClockToggle permits
+    // it (or when the plugin is actively running).
     {
         const int stepNow = juce::jlimit(1, 16, processor.getUiStep16());
         if (stepNow != stepNumberCached)
         {
             stepNumberCached = stepNow;
             needTrigger = true;
+
+            // Decide LED pulse level for this 16th step and start the animator
+            const bool hasNext = processor.getUiNextRestartPending();
+            const bool armed = processor.getUiPendingStart();
+            if (hasNext || armed)
+                ledPulseTarget = 1.0f;
+            else if (! runParamCached && idleClockToggle.getToggleState())
+                ledPulseTarget = 0.5f;
+            else if (runParamCached)
+                ledPulseTarget = 1.0f;
+            else
+                ledPulseTarget = 0.0f;
+
+            if (ledPulseTarget > 0.0f)
+            {
+                // When we reach this 16th-step, determine whether we should
+                // start the LED animator now. For pending/armed, only start
+                // at quarter-note boundaries to achieve a slower beat-rate blink.
+                const int beatIndex = (stepNow - 1) / 4;
+                if (hasNext || armed)
+                {
+                    if (beatIndex != lastLedBeatIndex)
+                    {
+                        lastLedBeatIndex = beatIndex;
+                        ledAnimator.start();
+                    }
+                }
+                else
+                {
+                    ledAnimator.start();
+                }
+            }
+        }
+        // Advance visual wedge only if idleClockToggle allows or the engine is running
+        if ((idleClockToggle.getToggleState() || runParamCached) && stepNow != visualStepCached)
+        {
+            visualStepCached = stepNow;
+            needRing = true; // ring contains the wedge
         }
     }
 
@@ -407,7 +724,13 @@ void ClockSyncAudioProcessorEditor::timerCallback()
     // Dispatch minimal repaints
     if (needAll) { repaint(); return; }
     if (needRing) repaint(ringArea);
-    if (needTrigger) repaint(triggerRect);
+    // Trigger updates can affect the ring drawing (visual slice near trigger). Ensure
+    // we repaint both the trigger rect and the ring area to avoid leftover artefacts.
+    if (needTrigger)
+    {
+        // repaint the union so overlapping pixels are correctly refreshed
+        repaint(triggerRect.getUnion(ringArea));
+    }
 }
 
 ClockSyncAudioProcessorEditor::~ClockSyncAudioProcessorEditor()
@@ -415,6 +738,8 @@ ClockSyncAudioProcessorEditor::~ClockSyncAudioProcessorEditor()
     clickLevelSlider.setLookAndFeel(nullptr);
     deviceBox.setLookAndFeel(nullptr);
     refreshButton.setLookAndFeel(nullptr);
+    nameBox.setLookAndFeel(nullptr);
+    nameMidiSwitch.setLookAndFeel(nullptr);
 }
 
 void ClockSyncAudioProcessorEditor::mouseUp(const juce::MouseEvent& e)
@@ -444,39 +769,7 @@ void ClockSyncAudioProcessorEditor::mouseUp(const juce::MouseEvent& e)
         }
     }
 
-    // If click wasn't inside ring inner circle, check for label click along the bezier
-    // Quadratic bezier control points used for the decorative curve (must match drawing)
-    {
-        const juce::Point<float> p0 (52.0f, 85.0f);
-        const juce::Point<float> p1 (127.0f, 22.0f);
-        const juce::Point<float> p2 (198.0f, 46.0f);
-        const auto posf = juce::Point<float>((float)e.x, (float)e.y);
-        // Quick bbox reject (inflated)
-        float minx = std::min(std::min(p0.getX(), p1.getX()), p2.getX()) - 20.0f;
-        float maxx = std::max(std::max(p0.getX(), p1.getX()), p2.getX()) + 20.0f;
-        float miny = std::min(std::min(p0.getY(), p1.getY()), p2.getY()) - 20.0f;
-        float maxy = std::max(std::max(p0.getY(), p1.getY()), p2.getY()) + 20.0f;
-        if (posf.getX() >= minx && posf.getX() <= maxx && posf.getY() >= miny && posf.getY() <= maxy)
-        {
-            // sample bezier and find nearest distance
-            const int samples = 40;
-            float bestDist2 = std::numeric_limits<float>::max();
-            for (int i = 0; i <= samples; ++i)
-            {
-                const float t = (float) i / (float) samples;
-                const float mt = 1.0f - t;
-                const juce::Point<float> sample = mt*mt * p0 + 2.0f * mt * t * p1 + t*t * p2;
-                const float d2 = (sample.getX() - posf.getX())*(sample.getX() - posf.getX()) + (sample.getY() - posf.getY())*(sample.getY() - posf.getY());
-                bestDist2 = std::min(bestDist2, d2);
-            }
-            const float thresh = 20.0f * 20.0f; // squared threshold
-            if (bestDist2 <= thresh)
-            {
-                openCurvedLabelEditor();
-                return;
-            }
-        }
-    }
+    // Curved-label feature removed: no click handling here.
 }
 
 
@@ -490,7 +783,19 @@ void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
         triggerFade = 1.0f;
         triggerFadeAnimator.start();
         repaint(triggerRect);
-        // Always request trigger; processor decides bar restart based on trigger mode
+        // If Run is currently disabled, enable it so the armed trigger will
+        // actually send a Start at the next grid; this arms/run without sending
+        // a Stop.
+        if (! runParamCached)
+        {
+            if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramRun))
+            {
+                p->setValueNotifyingHost(1.0f);
+                runParamCached = true;
+            }
+        }
+        // Request the one-shot trigger; the processor will only emit the Start
+        // at the next 1/16 if Run is enabled (or if ClockWhileStopped is allowed).
         processor.requestTriggerOnce();
     }
 }
@@ -545,7 +850,10 @@ void ClockSyncAudioProcessorEditor::drawRing(juce::Graphics& g)
         g.setColour(UiThemeColours::accent()); g.fillRect(bar);
     }
 
-    const int active = juce::jlimit(1, 16, processor.getUiStep16());
+    // Use the visualStepCached which is updated only when allowed by the
+    // idleClockToggle or when the plugin is actually running. This allows
+    // the wedge to freeze while background pulses continue.
+    const int active = juce::jlimit(1, 16, visualStepCached);
     const float sliceAngle = juce::MathConstants<float>::twoPi / 16.0f;
     const float startAt12  = -juce::MathConstants<float>::halfPi;
     const int rotSlices    = 4;
@@ -655,87 +963,7 @@ void ClockSyncAudioProcessorEditor::drawTrigger(juce::Graphics& g)
     g.drawFittedText(juce::String(stepNow), rfBase.toNearestInt(), juce::Justification::centred, 1);
 }
 
-void ClockSyncAudioProcessorEditor::drawIdleClockCurvedLabel(juce::Graphics& g)
-{
-    if (ringArea.isEmpty()) return;
-    // Subtle inner halo under the dancer
-    juce::Rectangle<float> inner((float) (ringArea.getCentreX() - kRingInnerD / 2),
-                                 (float) (ringArea.getCentreY() - kRingInnerD / 2),
-                                 (float) kRingInnerD, (float) kRingInnerD);
-    auto r = inner.reduced(18.0f);
-    g.setColour(UiThemeColours::cyan().withAlpha(0.18f));
-    g.fillEllipse(r);
-    g.setColour(UiThemeColours::cyan().withAlpha(0.4f));
-    g.drawEllipse(r, 1.5f);
-
-    // Draw upward-bending decorative curve (start: 83,83  end:197,53)
-    // {
-    //     juce::Path curve;
-    //     curve.startNewSubPath(82.0f, 85.0f);
-    //     // Quadratic control point placed above the endpoints to bend upwards
-    //     curve.quadraticTo(127.0f, 22.0f, 198.0f, 52.0f);
-    //     g.setColour(UiThemeColours::accent());
-    //     g.strokePath(curve, juce::PathStrokeType(3.0f));
-    // }
-    // Draw label following the same quadratic curve
-    {
-        const juce::String text = curvedLabelText;
-        // Quadratic bezier control points (match the curve drawn above)
-        const juce::Point<float> p0 (50.0f, 70.0f);
-        const juce::Point<float> p1 (145.0f, 20.0f);
-        const juce::Point<float> p2 (210.0f, 50.0f);
-
-        juce::Font baseFont(juce::FontOptions("Arial", 40.0f, juce::Font::bold));
-        g.setColour(UiThemeColours::cyan());
-
-        //const float skewX = -0.05f; // shear (skew) in X
-        const float shrinkFactor = 0.18f; // amount to shrink towards end (0..1)
-        const float horizCompress = 0.66f; // horizontal compression (narrower text)
-
-        const int n = (int) text.length();
-        for (int i = 0; i < n; ++i)
-        {
-            // parameter t along curve [0..1], sample slightly offset so chars are distributed along curve
-            const float t = (n == 1) ? 0.5f : (float) i / (float) (n - 1);
-
-            // Quadratic Bezier point
-            const float mt = 1.0f - t;
-            const juce::Point<float> pos = mt*mt * p0 + 2.0f * mt * t * p1 + t*t * p2;
-
-            // Tangent (derivative) to compute rotation
-            const juce::Point<float> tangent = 2.0f * mt * (p1 - p0) + 2.0f * t * (p2 - p1);
-            const float angle = std::atan2(tangent.y, tangent.x);
-
-            // Compute per-character scale (shrink towards end non-linearly)
-            const float s = 1.0f - shrinkFactor * std::sqrt(t);
-
-            // Get glyph size for this character at base font using GlyphArrangement (replacement for deprecated getStringWidthFloat)
-            const juce::String ch = text.substring(i, i+1);
-            juce::GlyphArrangement ga;
-            ga.addLineOfText(baseFont, ch, 0.0f, 0.0f);
-            const auto gb = ga.getBoundingBox(0, 1, true);
-            const float charW = gb.getWidth();
-            const float charH = gb.getHeight();
-
-            juce::Graphics::ScopedSaveState ss(g);
-
-            // Build transform in local character space: horizontal compress, scale, shear, rotate, then translate
-            juce::AffineTransform xf;
-            xf = xf.scaled(s * horizCompress, s);
-            //xf = xf.sheared(skewX, 0.0f);
-            xf = xf.rotated(angle);
-            xf = xf.translated(pos.getX(), pos.getY());
-
-            g.addTransform(xf);
-
-            // Draw the character centered at the origin
-            g.setFont(baseFont);
-            g.drawFittedText(ch, (int) -charW * 0.5f, (int) -charH * 0.5f,
-                             (int) std::ceil(charW), (int) std::ceil(charH),
-                             juce::Justification::centred, 1);
-        }
-    }
-}
+// Curved-label feature removed: no curved-label drawing function.
 
 void ClockSyncAudioProcessorEditor::refreshDeviceList()
 {
@@ -744,7 +972,7 @@ void ClockSyncAudioProcessorEditor::refreshDeviceList()
     for (auto& d : arr) midiOutputs.push_back(d);
     deviceBox.clear(juce::dontSendNotification);
     int idx = 1;
-    deviceBox.addItem("None", idx++);
+    deviceBox.addItem("Select...", idx++);
     int selectionToSet = 1;
     const auto currentId = processor.getExternalDeviceId();
     for (const auto& d : midiOutputs)
@@ -757,54 +985,149 @@ void ClockSyncAudioProcessorEditor::refreshDeviceList()
     deviceBox.setSelectedId(selectionToSet, juce::dontSendNotification);
 }
 
-void ClockSyncAudioProcessorEditor::openCurvedLabelEditor()
+// Instrument name persistence: stored in APVTS state under property "instrumentNames"
+void ClockSyncAudioProcessorEditor::loadInstrumentNamesFromState()
 {
-    if (curvedLabelEditor) return; // already open
-
-    // Quadratic bezier control points (same as used for drawing)
-    const juce::Point<float> p0 (90.0f, 70.0f);
-    const juce::Point<float> p1 (145.0f, 20.0f);
-    const juce::Point<float> p2 (210.0f, 57.0f);
-
-    const float t = 0.5f;
-    const float mt = 1.0f - t;
-    const juce::Point<float> pos = mt*mt * p0 + 2.0f * mt * t * p1 + t*t * p2;
-
-    // Create editor and buttons
-    curvedLabelEditor->setText(curvedLabelText);
-    curvedLabelEditor->setFont(juce::Font(juce::FontOptions("Arial", 36.0f, juce::Font::plain)));
-    curvedLabelEditor->setReturnKeyStartsNewLine(false);
-    curvedLabelEditor->onReturnKey = [this]() { closeCurvedLabelEditor(true); };
-    curvedLabelEditor->onEscapeKey = [this]() { closeCurvedLabelEditor(false); };
-    addAndMakeVisible(*curvedLabelEditor);
-
-    const int editorW = 220;
-    const int editorH = 36;
-    curvedLabelEditor->setBounds((int)pos.getX() - editorW/2, (int)pos.getY() - editorH/2, editorW, editorH);
-    curvedLabelEditor->grabKeyboardFocus();
-
-    curvedLabelOkButton = std::make_unique<juce::TextButton>("OK");
-    curvedLabelOkButton->onClick = [this]() { closeCurvedLabelEditor(true); };
-    addAndMakeVisible(*curvedLabelOkButton);
-    curvedLabelOkButton->setBounds((int)pos.getX() + editorW/2 + 6, (int)pos.getY() - editorH/2, 40, editorH);
-
-    curvedLabelCancelButton = std::make_unique<juce::TextButton>("Cancel");
-    curvedLabelCancelButton->onClick = [this]() { closeCurvedLabelEditor(false); };
-    addAndMakeVisible(*curvedLabelCancelButton);
-    curvedLabelCancelButton->setBounds((int)pos.getX() + editorW/2 + 50, (int)pos.getY() - editorH/2, 60, editorH);
+    instrumentNames.clear();
+    auto& st = processor.getAPVTS().state;
+    juce::var v = st.getProperty("instrumentNames", juce::var());
+    if (v.isString())
+    {
+        juce::String s = v.toString();
+        instrumentNames.addLines(s);
+        instrumentNames.removeEmptyStrings(true);
+    }
 }
 
-void ClockSyncAudioProcessorEditor::closeCurvedLabelEditor(bool commit)
+void ClockSyncAudioProcessorEditor::saveInstrumentNamesToState()
 {
-    if (!curvedLabelEditor) return;
-    if (commit)
-        curvedLabelText = curvedLabelEditor->getText();
-
-    curvedLabelEditor.reset();
-    curvedLabelOkButton.reset();
-    curvedLabelCancelButton.reset();
-    repaint();
+    juce::String s = instrumentNames.joinIntoString("\n");
+    processor.getAPVTS().state.setProperty("instrumentNames", s, nullptr);
 }
+
+void ClockSyncAudioProcessorEditor::populateNameBox()
+{
+    nameBox.clear(juce::dontSendNotification);
+    int id = 1;
+    for (auto& n : instrumentNames)
+        nameBox.addItem(n, id++);
+    // separator and actions
+    nameBox.addSeparator();
+    nameBox.addItem("new...", 1000);
+    nameBox.addItem("clear all", 1001);
+    // preserve selection if possible; when there are no names show placeholder text
+    if (instrumentNames.size() > 0)
+    {
+        nameBox.setSelectedId(1, juce::dontSendNotification);
+        nameBox.setTextWhenNothingSelected(juce::String());
+    }
+    else
+    {
+        // Do not pre-select the 'new...' action (id 1000) because selecting the same id
+        // won't emit onChange. Instead show a placeholder and let the user select 'new...'
+        // which will change the selected id and trigger the onChange handler.
+        nameBox.setSelectedId(0, juce::dontSendNotification);
+        // When there are no saved names show the actionable hint 'new...' so
+        // users know they can add a name via the dropdown item.
+        nameBox.setTextWhenNothingSelected("new...");
+    }
+}
+
+void ClockSyncAudioProcessorEditor::showNewNameDialog()
+{
+    if (nameEntryEditor) return;
+    // open an inline empty editor for new name (commit on Enter, cancel on blur)
+    auto rc = nameBox.getBounds();
+    const int editorH = 22;
+    const int editorW = std::max(160, rc.getWidth());
+    const int x = rc.getX();
+    const int y = rc.getBottom() + 4;
+
+    nameEntryEditor = std::make_unique<juce::TextEditor>();
+    nameEntryEditor->setText(juce::String());
+    nameEntryEditor->setFont(juce::Font(juce::FontOptions("Arial", 14.0f, juce::Font::plain)));
+    nameEntryEditor->setBounds(x, y, editorW, editorH);
+    addAndMakeVisible(*nameEntryEditor);
+    nameEntryEditor->grabKeyboardFocus();
+
+    nameEntryEditor->onReturnKey = [this]()
+    {
+        if (! nameEntryEditor) return;
+        juce::String name = nameEntryEditor->getText().trim();
+        if (name.isNotEmpty())
+        {
+            if (! instrumentNames.contains(name))
+                instrumentNames.add(name);
+            saveInstrumentNamesToState();
+            populateNameBox();
+            nameBox.setSelectedId(instrumentNames.indexOf(name) + 1, juce::dontSendNotification);
+        }
+        nameEntryEditor.reset();
+        repaint();
+    };
+    nameEntryEditor->onEscapeKey = [this]() { nameEntryEditor.reset(); repaint(); };
+    nameEntryEditor->onFocusLost = [this]() { nameEntryEditor.reset(); repaint(); };
+}
+
+// Curved-label editor removed.
+
+void ClockSyncAudioProcessorEditor::toggleNameEditorOrCommit()
+{
+    if (nameEntryEditor)
+    {
+        // commit
+        juce::String name = nameEntryEditor->getText().trim();
+        if (name.isNotEmpty())
+        {
+            if (! instrumentNames.contains(name))
+                instrumentNames.add(name);
+            saveInstrumentNamesToState();
+            populateNameBox();
+            nameBox.setSelectedId(instrumentNames.indexOf(name) + 1, juce::dontSendNotification);
+        }
+        nameEntryEditor.reset();
+        repaint();
+        return;
+    }
+
+    // open editor for current selection
+    const int sel = nameBox.getSelectedId();
+    juce::String cur;
+    if (sel >= 1 && sel <= instrumentNames.size()) cur = instrumentNames[(size_t) (sel - 1)];
+    auto rc = nameBox.getBounds();
+    const int editorH = 22;
+    const int editorW = std::max(160, rc.getWidth());
+    const int x = rc.getX();
+    const int y = rc.getBottom() + 4;
+
+    nameEntryEditor = std::make_unique<juce::TextEditor>();
+    nameEntryEditor->setText(cur);
+    nameEntryEditor->setFont(juce::Font(juce::FontOptions("Arial", 14.0f, juce::Font::plain)));
+    nameEntryEditor->setBounds(x, y, editorW, editorH);
+    addAndMakeVisible(*nameEntryEditor);
+    nameEntryEditor->grabKeyboardFocus();
+
+    // commit on Enter; cancel on focus lost or Escape
+    nameEntryEditor->onReturnKey = [this]()
+    {
+        if (! nameEntryEditor) return;
+        juce::String name = nameEntryEditor->getText().trim();
+        if (name.isNotEmpty())
+        {
+            if (! instrumentNames.contains(name))
+                instrumentNames.add(name);
+            saveInstrumentNamesToState();
+            populateNameBox();
+            nameBox.setSelectedId(instrumentNames.indexOf(name) + 1, juce::dontSendNotification);
+        }
+        nameEntryEditor.reset();
+        repaint();
+    };
+    nameEntryEditor->onEscapeKey = [this]() { nameEntryEditor.reset(); repaint(); };
+    nameEntryEditor->onFocusLost = [this]() { nameEntryEditor.reset(); repaint(); };
+}
+
+// Curved-label editor removal: no-op.
 
 // NOTE: PNG dancer frames are loaded here from BinaryData (dancer_0_png ... dancer_20_png).
 // This function is still used (called in the editor constructor). Only SVG-related helpers were removed.

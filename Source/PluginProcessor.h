@@ -98,6 +98,7 @@ private:
     std::atomic<bool> triggerModeEnabled { true };    // governs whether bar restart follows trigger
         bool suppressUntilRestart = false; // suppress clock emission until first scheduled restart boundary
         bool firstBlock = true;            // distinguish plugin load vs later transport edges
+        bool lastRunParam { false };       // track parameter transitions
     int lastOffsetStep { 1 }; // cached offset step
     int currentShuffleStep { 1 }; // active shuffle step (1..7)
     int pendingShuffleStep { -1 }; // scheduled shuffle change (apply at next 8th boundary)

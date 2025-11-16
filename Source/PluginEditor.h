@@ -32,8 +32,59 @@ private:
     // UI components
     // Rate selection: 4 custom text buttons
     // Legacy rate buttons removed (replaced by gridScaleMenu)
-    juce::ComboBox deviceBox;
+    // ComboBox that paints its text centered across the full control width
+    class FullWidthComboBox : public juce::ComboBox
+    {
+    public:
+        void paint(juce::Graphics& g) override
+        {
+            // Draw background using the active LookAndFeel only. Do not draw text here
+            // — the ComboBox may contain an internal label/editor which we'll stretch
+            // to occupy the full width in `resized()` to prevent arrow-area shifting.
+            getLookAndFeel().drawComboBox(g, getWidth(), getHeight(), false, 0, 0, 0, 0, *this);
+
+            // If nothing is selected, show the placeholder text (e.g. "new...")
+            // because the LookAndFeel's combo drawing path no longer renders text.
+            if (getSelectedId() == 0)
+            {
+                juce::String placeholder = getTextWhenNothingSelected();
+                if (placeholder.isNotEmpty())
+                {
+                    g.setColour(findColour(juce::ComboBox::textColourId));
+                    g.setFont(juce::Font(juce::FontOptions("Arial", 13.0f, juce::Font::bold)));
+                    g.drawFittedText(placeholder, getLocalBounds().reduced(6, 0), juce::Justification::centred, 1);
+                }
+            }
+        }
+
+        void resized() override
+        {
+            // Let base class perform any placement it needs
+            juce::ComboBox::resized();
+
+            // Stretch any internal label or text editor child to the full width so
+            // the displayed text is truly centred across the whole control and not
+            // constrained by a reserved arrow area.
+            for (auto* c : getChildren())
+            {
+                if (auto* te = dynamic_cast<juce::TextEditor*>(c))
+                {
+                    te->setBounds(getLocalBounds().reduced(6, 0));
+                }
+                else if (auto* lb = dynamic_cast<juce::Label*>(c))
+                {
+                    lb->setBounds(getLocalBounds().reduced(6, 0));
+                    lb->setJustificationType(juce::Justification::centred);
+                }
+            }
+        }
+    } deviceBox;
     juce::TextButton refreshButton { "RESET" };
+    // New: instrument name combo + NAME/MIDI toggle
+    FullWidthComboBox nameBox;
+    juce::TextButton nameMidiSwitch { "NAME" };
+    // Name editor helper
+    void toggleNameEditorOrCommit();
     // Small center-dot toggle used to enable/disable click
     class SmallDotToggle : public juce::ToggleButton {
     public:
@@ -71,11 +122,21 @@ private:
 
     // Helpers
     void refreshDeviceList();
+    void loadInstrumentNamesFromState();
+    void saveInstrumentNamesToState();
+    void populateNameBox();
+    void showNewNameDialog();
     std::vector<juce::MidiDeviceInfo> midiOutputs;
+    // Persisted instrument name list (stored in APVTS state as newline-separated string)
+    juce::StringArray instrumentNames;
+    // Inline entry widget for adding/editing a new instrument name
+    std::unique_ptr<juce::TextEditor> nameEntryEditor;
 
     // Simple LED animation based on clock ticks
     unsigned long long lastSeenClockCounter { 0 };
-    float ledLevel { 0.0f }; // 0..1 decays over time
+    float ledLevel { 0.0f }; // 0..1 (driven by ledAnimator)
+    // Animator-driven LED pulse target (set before starting the animator)
+    float ledPulseTarget { 1.0f };
     bool runParamCached { true };
     int rateIndexCached { 1 };
     bool pendingStartCached { false };
@@ -91,6 +152,10 @@ private:
     float triggerFade { 0.0f };       // 0..1, blue -> red fade after click
     // Step number fade shown inside triggerRect, updates each 16th
     int stepNumberCached { 0 };
+    // Visual step used for the outer ring wedge animation. This is gated by
+    // the `idleClockToggle` so the wedge can freeze while the internal clock
+    // and dancer animations continue.
+    int visualStepCached { 1 };
     // Selected arc size (1..7) used as shuffleValue
     int shuffleValue { 4 }; // default middle
 
@@ -98,8 +163,7 @@ private:
     juce::AudioParameterChoice* rateParam { nullptr };
 
     // Drawing helpers
-    void drawIdleClockCurvedLabel(juce::Graphics& g);
-    void openCurvedLabelEditor();
+    
     void drawRing(juce::Graphics& g);
     void drawTrigger(juce::Graphics& g);
     void drawDancer(juce::Graphics& g);
@@ -113,13 +177,13 @@ private:
     static constexpr int kRingOuterD = 160;
     static constexpr int kRingInnerD = 120;
 
-    // Editable curved label text drawn along the decorative bezier
-    juce::String curvedLabelText { "TB-303" };
-    // Inline editor widgets for editing the curved label
-    std::unique_ptr<juce::TextEditor> curvedLabelEditor;
-    std::unique_ptr<juce::TextButton> curvedLabelOkButton;
-    std::unique_ptr<juce::TextButton> curvedLabelCancelButton;
-    void closeCurvedLabelEditor(bool commit);
+    // Backdrop pulse animation: six circles pulse in sequence then two-beat pause.
+    std::array<float, 6> backdropPulseProgress {{ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }}; // 1.0 => full pulse
+    std::array<float, 6> backdropPulseScale {{ 0.02f, 0.03f, 0.04f, 0.05f, 0.06f, 0.07f }}; // scale increments per circle
+    int lastBackdropBeatIndex { -1 };
+    int lastLedBeatIndex { -1 };
+
+    
     
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ClockSyncAudioProcessorEditor)
@@ -145,6 +209,19 @@ private:
             // progress 0..1 => fade from 1 -> 0
             triggerFade = 1.0f - juce::jlimit(0.0f, 1.0f, progress);
             repaint(triggerRect);
+        })
+        .build() };
+
+    // LED pulse animator: on each 16th step we start this animator to produce
+    // a brief pulse. The animator supplies a 0..1 progress; we multiply the
+    // configured `ledPulseTarget` by (1-progress) to create a falling pulse.
+    juce::Animator ledAnimator { juce::ValueAnimatorBuilder{}
+        .withDurationMs(140.0)
+        .withValueChangedCallback([this](float progress){
+            const float p = juce::jlimit(0.0f, 1.0f, progress);
+            ledLevel = ledPulseTarget * (1.0f - p);
+            // repaint header area where LED is drawn (top 28px)
+            repaint(0, 0, getWidth(), 28);
         })
         .build() };
 };

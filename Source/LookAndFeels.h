@@ -29,7 +29,7 @@ public:
         g.fillEllipse(bounds.reduced(innerReduce));
 
         const float angle = (startAng + sliderPos * (endAng - startAng))
-                            - (juce::MathConstants<float>::pi * 0.75f);
+                            - (juce::MathConstants<float>::pi * 0.60f);
         const float needleLen = radius - innerReduce * 0.5f - 2.0f;
         const float nx = centre.x + needleLen * std::cos(angle);
         const float ny = centre.y + needleLen * std::sin(angle);
@@ -69,14 +69,49 @@ public:
         g.drawFittedText(b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, 1);
     }
 
+    void drawToggleButton(juce::Graphics& g, juce::ToggleButton& b, bool isMouseOverButton, bool isButtonDown) override
+    {
+        juce::ignoreUnused(isMouseOverButton, isButtonDown);
+        // Draw same background as regular buttons
+        drawButtonBackground(g, b, juce::Colours::transparentBlack, isMouseOverButton, isButtonDown);
+
+        // Draw the label centred
+        g.setColour(UiThemeColours::base());
+        g.setFont(juce::Font(juce::FontOptions("Arial", 11.0f, juce::Font::bold)));
+        g.drawFittedText(b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, 1);
+    }
+
     void drawComboBox(juce::Graphics& g, int w, int h, bool, int, int, int, int, juce::ComboBox& box) override
     {
         juce::ignoreUnused(w, h);
         auto r = box.getLocalBounds().toFloat();
+        // background
         g.setColour(UiThemeColours::accent());
         g.fillRoundedRectangle(r, 5.0f);
         g.setColour(UiThemeColours::base());
         g.fillRoundedRectangle(r.reduced(2.0f), 4.0f);
+
+        // ComboBox text is drawn by the component's internal text component.
+        // We avoid drawing the text here to prevent double-rendering with that internal label.
+        // The internal label is configured via `ComboBox::setJustificationType` and
+        // the font comes from `getComboBoxFont`.
+
+        // draw a small drop-arrow at the far right (respect arrow colour)
+        juce::Colour arrowCol = box.findColour(juce::ComboBox::arrowColourId);
+        if (arrowCol.isOpaque())
+        {
+            const float aw = 10.0f;
+            const float padding = 6.0f;
+            juce::Path p;
+            const float cx = r.getRight() - padding - aw * 0.5f;
+            const float cy = r.getCentreY();
+            p.startNewSubPath(cx - aw * 0.5f, cy - aw * 0.25f);
+            p.lineTo(cx, cy + aw * 0.5f);
+            p.lineTo(cx + aw * 0.5f, cy - aw * 0.25f);
+            p.closeSubPath();
+            g.setColour(arrowCol);
+            g.fillPath(p);
+        }
     }
 
     juce::Font getPopupMenuFont() override { return juce::Font(juce::FontOptions("Arial", 11.0f, juce::Font::bold)); }

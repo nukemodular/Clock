@@ -338,6 +338,32 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
     // Allow MIDI emission when Run is on, or when the user explicitly enabled clock while stopped
     const bool allowMidiOut = runParam || keepClockStopped;
 
+    // Detect run-param transitions (true -> false) so we can emit an immediate
+    // MIDI Stop to external devices when user turns Run off. This makes the
+    // UI Run toggle reliably stop external drum machines even if host
+    // transport/clock settings would otherwise keep running.
+    if (lastRunParam != runParam)
+    {
+        if (! runParam)
+        {
+            // Send an immediate Stop message at the start of this block.
+            const auto stopMsg = juce::MidiMessage::midiStop();
+            midi.addEvent(stopMsg, 0);
+            if (externalMidiOut)
+            {
+                juce::MidiBuffer extStop;
+                extStop.addEvent(stopMsg, 0);
+                externalMidiOut->sendBlockOfMessages(extStop, juce::Time::getMillisecondCounterHiRes(), currentSampleRate);
+            }
+            // Clear running state
+            runActive = false;
+            pendingStart = false;
+            uiIsRunning.store(false, std::memory_order_relaxed);
+            uiPendingStart.store(false, std::memory_order_relaxed);
+        }
+        lastRunParam = runParam;
+    }
+
     const double bpm = (pos.bpm > 0.0 ? pos.bpm : 120.0);
     samplesPerQuarter = currentSampleRate * 60.0 / juce::jmax(1e-6, bpm);
 
