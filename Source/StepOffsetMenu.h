@@ -61,8 +61,8 @@ public:
 
         // Draw options if open
         if (openAmount > 0.01f) {
-            g.setColour(juce::Colours::black.withAlpha(0.2f));
-            g.fillEllipse(outer);
+            // g.setColour(juce::Colours::black.withAlpha(0.2f));
+            // g.fillEllipse(outer);
             drawOptions(g, center, outerD - 20.0f);
 
         }
@@ -261,14 +261,14 @@ private:
         static constexpr float scaleNormalShrink= 0.7f;
 
         // Pull whole ring inward by 20px (visual and hit/hover)
-        static constexpr float inwardSmallShift = 0.0f;
+        static constexpr float inwardSmallShift = 5.0f;
         static constexpr float inwardHoverExtra = 0.0f;
 
         // No additional spread; keep the ring tight
         static constexpr float spreadVisual     = 0.0f;
         static constexpr float spreadHit        = 0.0f;
         static constexpr float spreadHover      = 0.0f;
-        static constexpr float visualMargin     = 20.0f;
+        static constexpr float visualMargin     = 15.0f;
 
         static int circularDistance(int a, int b)
         {
@@ -334,7 +334,7 @@ private:
             g.fillEllipse(ring.translated(2.33f, 2.33f));
             g.setColour(kAccent); g.fillEllipse(ring);
             g.setColour(kBase);
-            g.setFont(juce::Font(juce::FontOptions("Arial", 14.0f * sc, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions("Arial", 18.0f * sc, juce::Font::bold)));
             g.drawFittedText(juce::String(i + 1), ring.toNearestInt(), juce::Justification::centred, 1);
         }
         // Draw hovered last, scaled and on top

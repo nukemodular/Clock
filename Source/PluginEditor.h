@@ -115,6 +115,11 @@ private:
 
     // Editable curved label text drawn along the decorative bezier
     juce::String curvedLabelText { "TB-303" };
+    // Inline editor widgets for editing the curved label
+    std::unique_ptr<juce::TextEditor> curvedLabelEditor;
+    std::unique_ptr<juce::TextButton> curvedLabelOkButton;
+    std::unique_ptr<juce::TextButton> curvedLabelCancelButton;
+    void closeCurvedLabelEditor(bool commit);
     
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ClockSyncAudioProcessorEditor)

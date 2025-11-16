@@ -1,7 +1,7 @@
 #include <utility>
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
-#include "gridScaleMenu.h"
+#include "GridScaleMenu.h"
 #include "BinaryData.h"
 #include "LookAndFeels.h" // Use centralised LookAndFeel & theme colours
 #include <array>
@@ -18,7 +18,7 @@ namespace
     // juce::Rectangle isn't a literal type; use static const (not constexpr)
     // Global offset for non-excluded components (exclude: reset/refreshButton, deviceBox, header, LED, status text)
     // Requested shift: move content (excluding header) by x -5, y -10.
-    const int offX = -10;
+    const int offX = -20;
     const int offY = -40;
 
     static const std::array<juce::Rectangle<int>, 7> kArcButtonRects = {
@@ -37,7 +37,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     : juce::AudioProcessorEditor(&p), processor(p)
 {
     setResizable(false, false);
-    setSize(320, 240);
+    setSize(300, 240);
     startTimerHz(60);
 
     // Component setup (colour, style, add, z-order)
@@ -153,6 +153,8 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
             processor.setExternalDeviceId(midiOutputs[(size_t) (selId - 2)].identifier);
     };
     deviceBox.setLookAndFeel(themeLNF.get());
+    // Make the combo box label use the accent colour but darker for contrast
+    deviceBox.setColour(juce::ComboBox::textColourId, UiThemeColours::accent().darker(0.5f));
 
     triggerModeToggle.onClick = [this]
     {
@@ -162,6 +164,8 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
 
     loadDancerFrames();
     triggerFade = 0.0f;
+    // Populate device list immediately so the editor recalls last-used port on open
+    refreshDeviceList();
 }
 
 void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
@@ -171,7 +175,23 @@ void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
     g.setGradientFill(bgGrad);
     g.fillRect(bounds);
 
-    auto header = getLocalBounds().removeFromTop(28).reduced(8, 4).toFloat();
+    // Decorative background circles: larger circles use a darker variant
+    {
+        auto centre = bounds.getCentre();
+        const std::array<int, 6> sizes = { 420 ,340, 280, 230, 190, 160 };
+        for (size_t i = 0; i < sizes.size(); ++i)
+        {
+            const float sz = (float) sizes[i];
+            const float darkFactor = 0.11f + 0.66f * (float) i; // bigger -> darker
+            //const float alpha = 0.02f + 0.1f * (float) i;      // subtle alpha increase
+            juce::Colour col = UiThemeColours::accent().darker(darkFactor);//.withAlpha(alpha);
+            juce::Rectangle<float> rc(centre.x - sz * 0.5f, centre.y - sz * 0.5f + 10, sz, sz);
+            g.setColour(col);
+            g.fillEllipse(rc);
+        }
+    }
+
+    auto header = getLocalBounds().removeFromTop(28).reduced(18, 4).toFloat();
     juce::Path headerPath; headerPath.addRoundedRectangle(header, 6.0f);
     g.setColour(UiThemeColours::base());
     g.fillPath(headerPath);
@@ -182,11 +202,11 @@ void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
     juce::String status = hasNext ? "NEXT" : (isRunning ? "RUN" : (isArmed ? "ARM" : "STOP"));
     g.setFont(juce::Font(juce::FontOptions("Arial", 11.0f, juce::Font::bold)));
     g.setColour(UiThemeColours::cyan());
-    g.drawFittedText(status, juce::Rectangle<int>(getWidth() - 80, (int)header.getY(), 50, (int)header.getHeight()),
+    g.drawFittedText(status, juce::Rectangle<int>(getWidth() - 90, (int)header.getY(), 50, (int)header.getHeight()),
                      juce::Justification::centredRight, 1);
 
     const float ledRadius = 6.0f;
-    auto ledCenter = juce::Point<float>(getWidth() - 18.0f, header.getCentreY());
+    auto ledCenter = juce::Point<float>(getWidth() - 28.0f, header.getCentreY());
     const float a = juce::jlimit(0.0f, 1.0f, ledLevel);
     auto ledColour = UiThemeColours::cyan().withAlpha(0.10f).interpolatedWith(UiThemeColours::cyan().withAlpha(0.97f), a);
     g.setColour(juce::Colours::black.withAlpha(0.5f));
@@ -229,7 +249,7 @@ void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
         g.setOrigin(0, 0);
     }
     // Curved label next so trigger ellipse can sit visually on top if overlapping.
-    drawIdleClockCurvedLabel(g);
+    //drawIdleClockCurvedLabel(g);
     // Draw trigger ellipse last to ensure it is front-most.
     drawTrigger(g);
 }
@@ -247,15 +267,15 @@ void ClockSyncAudioProcessorEditor::resized()
         const int buttonW = 40; // compact refresh button
         const int gap = 3; // retained gap but refresh stays at left
         const int fullComboOriginal = getWidth() - marginX * 2 - buttonW - gap; // previous wide combo width
-        int comboW = fullComboOriginal - 80; // reduce width by 60 as requested
-        comboW = std::max(100, comboW); // safety minimum (use std::max to avoid template deduction issues)
+        int comboW = fullComboOriginal - 90; // reduce width by 60 as requested
+        comboW = std::max(80, comboW); // safety minimum (use std::max to avoid template deduction issues)
         const int centerX = getWidth() / 2;
         const int comboX = centerX - comboW / 2;
-        refreshButton.setBounds(marginX + 3, marginY + 3, buttonW, contentH - 6);
+        refreshButton.setBounds(marginX + 18, marginY + 5, buttonW, contentH - 10);
         deviceBox.setBounds(comboX, marginY + 2, comboW, contentH - 4);
     }
 
-    clickLevelSlider.setBounds(63 + offX, 117 + offY, 46, 46); // rotary position (offset)
+    clickLevelSlider.setBounds(75 + offX, 96 + offY, 46, 46); // rotary position (offset)
     {
         auto sb = clickLevelSlider.getBounds();
         auto c = sb.getCentre();
@@ -266,7 +286,7 @@ void ClockSyncAudioProcessorEditor::resized()
     // Step offset button area (expanded to avoid hover scaling clipping)
     triggerModeToggle.setBounds(240 + offX, 156 + offY, 30, 30);
     stepOffsetMenu.setBounds(216 + offX - 30, 140 + offY , 140, 140);
-    idleClockToggle.setBounds(40 + offX, 133 + offY, 30, 30);
+    idleClockToggle.setBounds(120 + offX, 80 + offY, 30, 30);
     shuffleScaleToggle.setBounds(83 + offX, 200 + offY, 30, 30);
     // Declare click-through holes in stepOffsetMenu so controls behind remain clickable when its menu is closed
     {
@@ -275,9 +295,9 @@ void ClockSyncAudioProcessorEditor::resized()
         auto combined   = holeToggle.getUnion(holeArcRow);
         stepOffsetMenu.setClickThroughRect(combined);
     }
-    gridScaleMenu.setBounds(19 + offX, 128 + offY, 110, 110);
+    gridScaleMenu.setBounds(20 + offX, 128 + offY, 110, 110);
     triggerRect = juce::Rectangle<int>(221 + offX, 80 + offY, 85, 85);
-    shuffleModeMenu.setBounds(80 + offX, 200 + offY, 166, 80);
+    shuffleModeMenu.setBounds(82 + offX, 200 + offY, 166, 80);
     shuffleModeMenu.setManualBounds(kArcButtonRects);
     stepOffsetMenu.toFront(true);
 }
@@ -410,9 +430,9 @@ void ClockSyncAudioProcessorEditor::mouseUp(const juce::MouseEvent& e)
     // If click wasn't inside ring inner circle, check for label click along the bezier
     // Quadratic bezier control points used for the decorative curve (must match drawing)
     {
-        const juce::Point<float> p0 (82.0f, 85.0f);
+        const juce::Point<float> p0 (52.0f, 85.0f);
         const juce::Point<float> p1 (127.0f, 22.0f);
-        const juce::Point<float> p2 (198.0f, 52.0f);
+        const juce::Point<float> p2 (198.0f, 46.0f);
         const auto posf = juce::Point<float>((float)e.x, (float)e.y);
         // Quick bbox reject (inflated)
         float minx = std::min(std::min(p0.getX(), p1.getX()), p2.getX()) - 20.0f;
@@ -442,26 +462,7 @@ void ClockSyncAudioProcessorEditor::mouseUp(const juce::MouseEvent& e)
     }
 }
 
-void ClockSyncAudioProcessorEditor::openCurvedLabelEditor()
-{
-    // Create an AlertWindow with a TextEditor for inline editing
-    juce::AlertWindow w ("Edit label", "Enter new curved label text:", juce::AlertWindow::NoIcon);
-    w.addTextEditor("labelEditor", curvedLabelText, "");
-    w.addButton("OK", 1, juce::KeyPress(juce::KeyPress::returnKey));
-    w.addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
-    w.enterModalState(true, nullptr, true);
 
-    // Run modal loop on message thread (blocking) to simplify behaviour
-    if (w.runModalLoop())
-    {
-        auto* te = w.findEditor("labelEditor");
-        if (te)
-        {
-            curvedLabelText = te->getText();
-            repaint();
-        }
-    }
-}
 
 void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
 {
@@ -503,7 +504,7 @@ void ClockSyncAudioProcessorEditor::drawRing(juce::Graphics& g)
         (float) (kRingInnerD - (innerShrink - 8)));
 
     // Base ring
-    g.setColour(UiThemeColours::cyan()); g.fillEllipse(outer);
+    g.setColour(UiThemeColours::accent()); g.fillEllipse(outer);
     g.setColour(UiThemeColours::base());   g.fillEllipse(inner);
 
     // Stop indicator
@@ -513,7 +514,7 @@ void ClockSyncAudioProcessorEditor::drawRing(juce::Graphics& g)
         const float px = 1.0f / getDesktopScaleFactor();
         juce::Path clip; clip.addEllipse(inner.expanded(px)); g.reduceClipRegion(clip);
 
-        const float barW = 22.0f;
+        const float barW = 18.0f;
         juce::Rectangle<float> bar(
             (float) cx - barW * 0.5f,
             (float) cy - inner.getHeight() * 0.5f,
@@ -663,9 +664,9 @@ void ClockSyncAudioProcessorEditor::drawIdleClockCurvedLabel(juce::Graphics& g)
     {
         const juce::String text = curvedLabelText;
         // Quadratic bezier control points (match the curve drawn above)
-        const juce::Point<float> p0 (90.0f, 70.0f);
+        const juce::Point<float> p0 (50.0f, 70.0f);
         const juce::Point<float> p1 (145.0f, 20.0f);
-        const juce::Point<float> p2 (210.0f, 57.0f);
+        const juce::Point<float> p2 (210.0f, 50.0f);
 
         juce::Font baseFont(juce::FontOptions("Arial", 40.0f, juce::Font::bold));
         g.setColour(UiThemeColours::cyan());
@@ -734,6 +735,56 @@ void ClockSyncAudioProcessorEditor::refreshDeviceList()
         ++idx;
     }
     deviceBox.setSelectedId(selectionToSet, juce::dontSendNotification);
+}
+
+void ClockSyncAudioProcessorEditor::openCurvedLabelEditor()
+{
+    if (curvedLabelEditor) return; // already open
+
+    // Quadratic bezier control points (same as used for drawing)
+    const juce::Point<float> p0 (90.0f, 70.0f);
+    const juce::Point<float> p1 (145.0f, 20.0f);
+    const juce::Point<float> p2 (210.0f, 57.0f);
+
+    const float t = 0.5f;
+    const float mt = 1.0f - t;
+    const juce::Point<float> pos = mt*mt * p0 + 2.0f * mt * t * p1 + t*t * p2;
+
+    // Create editor and buttons
+    curvedLabelEditor = std::make_unique<juce::TextEditor>("curvedEditor");
+    curvedLabelEditor->setText(curvedLabelText);
+    curvedLabelEditor->setFont(juce::Font(36.0f));
+    curvedLabelEditor->setReturnKeyStartsNewLine(false);
+    curvedLabelEditor->onReturnKey = [this]() { closeCurvedLabelEditor(true); };
+    curvedLabelEditor->onEscapeKey = [this]() { closeCurvedLabelEditor(false); };
+    addAndMakeVisible(*curvedLabelEditor);
+
+    const int editorW = 220;
+    const int editorH = 36;
+    curvedLabelEditor->setBounds((int)pos.getX() - editorW/2, (int)pos.getY() - editorH/2, editorW, editorH);
+    curvedLabelEditor->grabKeyboardFocus();
+
+    curvedLabelOkButton = std::make_unique<juce::TextButton>("OK");
+    curvedLabelOkButton->onClick = [this]() { closeCurvedLabelEditor(true); };
+    addAndMakeVisible(*curvedLabelOkButton);
+    curvedLabelOkButton->setBounds((int)pos.getX() + editorW/2 + 6, (int)pos.getY() - editorH/2, 40, editorH);
+
+    curvedLabelCancelButton = std::make_unique<juce::TextButton>("Cancel");
+    curvedLabelCancelButton->onClick = [this]() { closeCurvedLabelEditor(false); };
+    addAndMakeVisible(*curvedLabelCancelButton);
+    curvedLabelCancelButton->setBounds((int)pos.getX() + editorW/2 + 50, (int)pos.getY() - editorH/2, 60, editorH);
+}
+
+void ClockSyncAudioProcessorEditor::closeCurvedLabelEditor(bool commit)
+{
+    if (!curvedLabelEditor) return;
+    if (commit)
+        curvedLabelText = curvedLabelEditor->getText();
+
+    curvedLabelEditor.reset();
+    curvedLabelOkButton.reset();
+    curvedLabelCancelButton.reset();
+    repaint();
 }
 
 // NOTE: PNG dancer frames are loaded here from BinaryData (dancer_0_png ... dancer_20_png).

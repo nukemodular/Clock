@@ -61,7 +61,7 @@ public:
     {
         auto r = getLocalBounds().toFloat();
         auto c = r.getCentre();
-        const float outerR = 25.0f;
+        const float outerR = 30.0f;
         if (c.getDistanceFrom(e.position) <= outerR)
         {
             opening = !menuOpen;
@@ -88,13 +88,13 @@ public:
         // Auto-close if pointer leaves outer bounds
         auto r = getLocalBounds().toFloat();
         auto center = r.getCentre();
-        const float baseD = 53.0f;
+        const float baseD = 60.0f;
         const float itemD = 20.0f;
         const float itemR = itemD * 0.5f;
         const float s0 = 1.5f; // keep in sync with drawOptions
         const float maxScaleR = itemR * s0;
         const float minRadius = baseD * 0.5f - 2.0f;
-        const float tighten = 7.0f; // reduced to allow wider spread
+        const float tighten = 5.0f; // reduced to allow wider spread
         const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - maxScaleR  - tighten;
         const float radius = juce::jlimit(minRadius, juce::jmax(minRadius, maxRadius), minRadius + (maxRadius - minRadius) * openAmount);
         const float outerBound = radius + maxScaleR + 12.0f; // slightly larger margin to avoid accidental collapse at extremes
@@ -137,8 +137,8 @@ private:
     juce::Colour kCyan   { juce::Colour::fromRGB(0x00, 0xD7, 0xFF) };
 
     // Centralised arc degrees for option placement (degrees)
-    static constexpr float kStartDeg = 100.0f; // lower bound of arc
-    static constexpr float kEndDeg   = 210.0f; // upper bound of arc
+    static constexpr float kStartDeg = 110.0f; // lower bound of arc
+    static constexpr float kEndDeg   = 230.0f; // upper bound of arc
 
     void timerCallback() override
     {
@@ -165,7 +165,7 @@ private:
         const float s0 = 1.5f, s1 = 1.1f; // hovered, adjacent, normal
         const float maxScaleR = itemR * s0;
         const float minRadius = baseD * 0.5f - 2.0f;
-        const float tighten = 7.0f;
+        const float tighten = 5.0f;
         const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - maxScaleR  - tighten;
         const float radius = juce::jlimit(minRadius, juce::jmax(minRadius, maxRadius), minRadius + (maxRadius - minRadius) * openAmount);
 
@@ -231,11 +231,11 @@ private:
         const float itemR = itemD * 0.5f;
         auto r = getLocalBounds().toFloat();
         auto center = r.getCentre();
-        const float baseD = 53.0f;
+        const float baseD = 60.0f;
         const float s0 = 1.5f; // unify with drawOptions
         const float maxScaleR = itemR * s0;
         const float minRadius = baseD * 0.5f - 2.0f;
-        const float tighten = 7.0f;
+        const float tighten = 5.0f;
         const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - maxScaleR  - tighten;
         const float radius = juce::jlimit(minRadius, juce::jmax(minRadius, maxRadius), minRadius + (maxRadius - minRadius) * openAmount);
         auto angleForIndex = [](int i)
@@ -268,11 +268,11 @@ private:
         const float extra = 10.0f; // expand hover radius for stability, especially at index 0/3
         auto r = getLocalBounds().toFloat();
         auto center = r.getCentre();
-        const float baseD = 53.0f;
+        const float baseD = 60.0f;
         const float s0 = 1.5f; // unify with drawOptions
         const float maxScaleR = itemR * s0;
         const float minRadius = baseD * 0.5f - 2.0f;
-        const float tighten = 7.0f;
+        const float tighten = 5.0f;
         const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - maxScaleR  - tighten;
         const float radius = juce::jlimit(minRadius, juce::jmax(minRadius, maxRadius), minRadius + (maxRadius - minRadius) * openAmount);
         auto angleForIndex = [](int i)

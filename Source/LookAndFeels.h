@@ -51,8 +51,8 @@ public:
                               bool isHighlighted, bool isDown) override
     {
         auto r = b.getLocalBounds().toFloat();
-        const float corner = 3.0f;
-        juce::Colour fill = UiThemeColours::accent().brighter(0.15f);
+        const float corner = 2.0f;
+        juce::Colour fill = UiThemeColours::accent().darker(0.15f);
         if (b.getToggleState() || isDown) fill = UiThemeColours::cyan();
         else if (isHighlighted) fill = UiThemeColours::accent().brighter(0.25f);
 
@@ -65,7 +65,7 @@ public:
     void drawButtonText(juce::Graphics& g, juce::TextButton& b, bool, bool) override
     {
         g.setColour(UiThemeColours::base());
-        g.setFont(juce::Font(juce::FontOptions("Arial", 11.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)));
         g.drawFittedText(b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, 1);
     }
 
