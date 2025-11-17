@@ -20,8 +20,14 @@ ClockSyncAudioProcessor::ClockSyncAudioProcessor()
     : juce::AudioProcessor(
 #if JucePlugin_IsMidiEffect
           BusesProperties() // MIDI effect: no audio buses
+#elif JucePlugin_IsSynth
+          // Synth/instrument: only output bus
+          BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)
 #else
-          BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true) // instrument: stereo out
+          // Effect plugin (FX): provide both input and output buses
+          BusesProperties()
+              .withInput("Input", juce::AudioChannelSet::stereo(), true)
+              .withOutput("Output", juce::AudioChannelSet::stereo(), true)
 #endif
       ),
       parameters(*this, nullptr, juce::Identifier("ClockSyncParams"), createParameterLayout())
@@ -136,8 +142,8 @@ bool ClockSyncAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts)
     // MIDI effect: no audio buses
     return layouts.getMainInputChannelSet() == juce::AudioChannelSet::disabled()
         && layouts.getMainOutputChannelSet() == juce::AudioChannelSet::disabled();
-#else
-    // Instrument: no audio input; allow mono or stereo output for host compatibility
+#elif JucePlugin_IsSynth
+    // Synth/instrument: no audio input; allow mono or stereo output
     if (layouts.getMainInputChannelSet() != juce::AudioChannelSet::disabled())
         return false;
 
@@ -146,10 +152,24 @@ bool ClockSyncAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts)
         return false;
 
     return true;
+#else
+    // Effect: require matching input/output channel layouts (mono or stereo)
+    const auto in = layouts.getMainInputChannelSet();
+    const auto out = layouts.getMainOutputChannelSet();
+
+    if (in == juce::AudioChannelSet::disabled() || out == juce::AudioChannelSet::disabled())
+        return false;
+
+    if (in != out)
+        return false;
+
+    if (in != juce::AudioChannelSet::mono() && in != juce::AudioChannelSet::stereo())
+        return false;
+
+    return true;
 #endif
 }
 
-//==============================================================================
 int ClockSyncAudioProcessor::getClockResolution() const
 {
     // Map current rate index (choice param) to pulses-per-quarter note.

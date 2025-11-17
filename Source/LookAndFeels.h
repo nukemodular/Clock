@@ -77,7 +77,7 @@ public:
 
         // Draw the label centred
         g.setColour(UiThemeColours::base());
-        g.setFont(juce::Font(juce::FontOptions("Arial", 11.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)));
         g.drawFittedText(b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, 1);
     }
 
@@ -114,7 +114,7 @@ public:
         }
     }
 
-    juce::Font getPopupMenuFont() override { return juce::Font(juce::FontOptions("Arial", 11.0f, juce::Font::bold)); }
+    juce::Font getPopupMenuFont() override { return juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)); }
     juce::Font getComboBoxFont(juce::ComboBox&) override { return getPopupMenuFont(); }
 
     void drawPopupMenuBackground(juce::Graphics& g, int w, int h) override
@@ -122,6 +122,67 @@ public:
         g.fillAll(UiThemeColours::base());
         g.setColour(UiThemeColours::accent());
         g.drawRect(0, 0, w, h, 1);
+    }
+
+    // Custom tooltip drawing to match requested style: Arial Bold, cyan text,
+    // semi-transparent base background. Wraps long text to multiple lines and
+    // constrains width to a reasonable maximum so tooltips remain readable.
+    void drawTooltip(juce::Graphics& g, const juce::String& text, int width, int /*height*/) override
+    {
+        const float cornerSize = 6.0f;
+        const float paddingH = 8.0f;
+        const float paddingV = 6.0f;
+        const float tooltipFontSize = 13.0f;
+        const int maxTooltipWidth = 120; // cap width in pixels before wrapping
+
+        // Determine drawing width (respect provided width but cap at maxTooltipWidth)
+        const int drawW = std::min(width, maxTooltipWidth);
+
+        juce::AttributedString s;
+        s.setWordWrap(juce::AttributedString::WordWrap::byWord);
+        s.setJustification(juce::Justification::centred);
+        s.append(text, juce::FontOptions (tooltipFontSize, juce::Font::bold).withMetricsKind (getDefaultMetricsKind()), UiThemeColours::cyan());
+
+        juce::TextLayout tl;
+        tl.createLayoutWithBalancedLineLengths(s, (float) (drawW - (int) (paddingH * 2.0f)));
+
+        const float textH = tl.getHeight();
+        const float totalH = textH + paddingV * 2.0f;
+
+        juce::Rectangle<float> bg(0, 0, (float) drawW, totalH);
+
+        g.setColour(UiThemeColours::base().withAlpha(0.8f));
+        g.fillRoundedRectangle(bg, cornerSize);
+
+        // Draw text inside padded area
+        juce::Rectangle<float> textArea = bg.reduced(paddingH, paddingV);
+        tl.draw(g, textArea);
+    }
+
+    // Compute tooltip bounds so the TooltipWindow sizes itself to accommodate
+    // wrapped text using the same max width and padding as drawTooltip.
+    juce::Rectangle<int> getTooltipBounds (const juce::String& tipText, juce::Point<int> screenPos, juce::Rectangle<int> parentArea) override
+    {
+        const float paddingH = 8.0f;
+        const float paddingV = 6.0f;
+        const float tooltipFontSize = 13.0f;
+        const int maxTooltipWidth = 120;
+
+        juce::AttributedString s;
+        s.setWordWrap(juce::AttributedString::WordWrap::byWord);
+        s.setJustification(juce::Justification::centred);
+        s.append(tipText, juce::FontOptions (tooltipFontSize, juce::Font::bold).withMetricsKind (getDefaultMetricsKind()), UiThemeColours::cyan());
+
+        juce::TextLayout tl;
+        tl.createLayoutWithBalancedLineLengths(s, (float) (maxTooltipWidth - (int)(paddingH * 2.0f)));
+
+        const int w = (int) std::ceil(tl.getWidth() + paddingH * 2.0f);
+        const int h = (int) std::ceil(tl.getHeight() + paddingV * 2.0f);
+
+        auto x = screenPos.x > parentArea.getCentreX() ? screenPos.x - (w + 12) : screenPos.x + 24;
+        auto y = screenPos.y > parentArea.getCentreY() ? screenPos.y - (h + 6)  : screenPos.y + 6;
+
+        return juce::Rectangle<int>(x, y, w, h).constrainedWithin(parentArea);
     }
 
     void drawPopupMenuItem(juce::Graphics& g, const juce::Rectangle<int>& area,

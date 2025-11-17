@@ -20,7 +20,6 @@ add_subdirectory(JUCE)
 juce_add_binary_data(DancerFrames
   NAMESPACE BinaryData
   SOURCES
-    dancer/dancer_all.svg
     dancer/png/dancer_0.png
     dancer/png/dancer_1.png
     dancer/png/dancer_2.png
@@ -51,17 +50,19 @@ juce_add_plugin(ClockV3
     COMPANY_NAME "toolBoy"
     PRODUCT_NAME "toolBoy Clock v3"
     BUNDLE_ID com.toolBoy.clockVst3
-    IS_SYNTH TRUE
-    NEEDS_MIDI_INPUT TRUE
-    NEEDS_MIDI_OUTPUT TRUE
+    # Build as an effect (FX) instead of a synth/instrument
+    IS_SYNTH FALSE
+    # Typically effects don't need MIDI; enable if you require MIDI control
+    NEEDS_MIDI_INPUT FALSE
+    NEEDS_MIDI_OUTPUT FALSE
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD TRUE
     PLUGIN_MANUFACTURER_CODE PLPR
     PLUGIN_CODE CLKS
-    FORMATS VST3
-    # Include Synth subcategory to improve host discovery under Instruments
-    VST3_CATEGORIES "Toolbox;Instrument,MIDIEffect"
+    FORMATS VST3 AU
+    # Plugin categories: use Fx for effect plugins
+    VST3_CATEGORIES "Toolbox;Fx"
 )
 
 
@@ -110,9 +111,14 @@ if (APPLE)
         XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.toolBoy.clockVst3"
     )
 
-    # Optional install rule: allows installing to system VST3 folder via
-    #   cmake --install <build-dir> --component ClockSync_VST3 --prefix /Library
+    # Optional install rules: allows installing to system VST3/AU folders via
+    #   cmake --install <build-dir> --component <component-name> --prefix /Library
     install(TARGETS ClockV3
         BUNDLE DESTINATION "Audio/Plug-Ins/VST3"
-        COMPONENT "toolBoy Clock v3")
+        COMPONENT "toolBoy Clock v3_vst3")
+
+    # Install the AU component bundle into the standard Components location
+    install(TARGETS ClockV3
+        BUNDLE DESTINATION "Audio/Plug-Ins/Components"
+        COMPONENT "toolBoy Clock v3_au")
 endif()

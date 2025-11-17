@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "UiLayoutConstants.h"
 
 // Animated radial step selector button (1..16)
 // - Base: 60x60 kAccent circle with inner (reduced by 10) kBase
@@ -69,7 +70,7 @@ public:
 
         // Number
         g.setColour(kCyan);
-        g.setFont(juce::Font(juce::FontOptions("Arial", 22.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions("Arial", 16.0f, juce::Font::bold)));
         g.drawFittedText(juce::String(selectedStep), outer.toNearestInt(), juce::Justification::centred, 1);
     }
 
@@ -77,25 +78,35 @@ public:
     {
         // Toggle menu if clicked within base circle
         auto r = getLocalBounds().toFloat();
-        auto c = r.getCentre();
-        const float outerR = 25.0f; // 50/2
-        if (c.getDistanceFrom(e.position) <= outerR)
+        auto center = r.getCentre();
+        const float baseD = kBaseD;
+        const float dx = e.x - center.x;
+        const float dy = e.y - center.y;
+        const float dist2 = dx*dx + dy*dy;
+        const float baseR = (baseD * 0.5f);
+        if (dist2 <= baseR * baseR)
         {
+            // Toggle open/closed on mouseDown for faster response
             opening = !menuOpen;
             closing = menuOpen;
             menuOpen = !menuOpen;
-            // Kick animation
-            // If opening, go forward; if closing, go backward
-            // openAmount remains as is to support quick toggles
-        }
-    }
-
-    void mouseUp(const juce::MouseEvent& e) override
-    {
-        if (! menuOpen)
+            // If we just opened, immediately set hoverIndex based on pointer so selection
+            // on the following mouseUp prefers the visually-hovered item.
+            if (menuOpen)
+                hoverIndex = hitTestOptionHover(e.position);
             return;
+        }
+        // If we're in the opening animation just ignore this mouseUp so
+        // a click that triggered opening doesn't immediately select/collapse.
+        if (opening) return;
         const auto clickPos = e.position;
-        int hit = hitTestOption(clickPos);
+        // Prefer the hover-aware test first (accounts for outward-shifted visuals)
+        int hit = hitTestOptionHover(clickPos);
+        if (hit < 1) // if hover-aware missed, fall back to the geometric hit test
+            hit = hitTestOption(clickPos);
+        // If both tests missed due to timing/jitter, but we have a hoverIndex, prefer it
+        if (hit < 1 && hoverIndex >= 1)
+            hit = hoverIndex;
         if (hit >= 1 && hit <= 16)
         {
             selectedStep = hit;
@@ -115,12 +126,12 @@ public:
             auto r = getLocalBounds().toFloat();
             auto center = r.getCentre();
             const float baseD = 50.0f;
-            const float itemD = 18.0f; // matches drawOptions
+            const float itemD = 20.0f; // matches drawOptions
             const float itemR = itemD * 0.5f;
             const float s0 = 1.30f;    // max scale (hover) — slightly bigger
             const float maxScaleR = itemR * s0;
             const float minRadius = baseD * 0.5f - 2.0f;
-            const float tighten = 6.0f * s0; // mirror drawOptions tightening
+            const float tighten = 4.0f * s0; // mirror drawOptions tightening
             const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - maxScaleR + 3.0f - tighten;
             const float radius = juce::jlimit(minRadius, juce::jmax(minRadius, maxRadius),
                                               minRadius + (maxRadius - minRadius) * openAmount);
@@ -159,13 +170,13 @@ public:
             // Recompute the same bounds used in mouseMove to determine an outer interactive radius.
             auto r = getLocalBounds().toFloat();
             auto center = r.getCentre();
-            const float baseD = 50.0f;
-            const float itemD = 18.0f; // matches mouseMove's itemD
+            const float baseD = kBaseD;
+            const float itemD = kOptionItemD; // matches mouseMove's itemD
             const float itemR = itemD * 0.5f;
-            const float s0 = 1.30f;
+            const float s0 = kHoverScale;
             const float maxScaleR = itemR * s0;
             const float minRadius = baseD * 0.5f - 2.0f;
-            const float tighten = 6.0f * s0;
+            const float tighten = kMouseTightenMul * s0;
             const float maxRadius = juce::jmin<float>(getWidth(), getHeight()) * 0.5f - maxScaleR + 3.0f - tighten;
             const float radius = juce::jlimit(minRadius, juce::jmax(minRadius, maxRadius),
                                               minRadius + (maxRadius - minRadius) * openAmount);
@@ -202,7 +213,7 @@ public:
                 return false;
             auto lb = getLocalBounds().toFloat();
             auto c  = lb.getCentre();
-            const float outerR = 30.0f; // matches paint outerD / 2
+            const float outerR = kOuterBaseR; // matches paint outerD / 2
             const float dx = (float) x - c.x;
             const float dy = (float) y - c.y;
             const bool insideBase = (dx*dx + dy*dy) <= (outerR * outerR);
@@ -231,6 +242,20 @@ private:
     juce::Colour kBase   { juce::Colour::fromRGB(0x26, 0x26, 0x26) };
     juce::Colour kCyan   { juce::Colour::fromRGB(0x00, 0xD7, 0xFF) };
 
+    // Use centralized UiLayout values so changes there take effect for StepOffsetMenu
+    static constexpr float kBaseInward        = UiLayout::kBaseInward; // px overall ring inward at full open
+    static constexpr float kInwardSmallShift  = UiLayout::kInwardSmallShift;  // px non-hover items pull inward
+    static constexpr float kInwardHoverExtra  = UiLayout::kInwardHoverExtra;  // px hovered item pushes outward
+    // More centralized UI layout constants (mirror UiLayout where appropriate)
+    static constexpr float kBaseD             = UiLayout::kBaseD; // base button diameter
+    static constexpr float kOptionItemD       = UiLayout::kStepOptionItemD; // option item diameter used for layout math (~15px)
+    static constexpr float kHoverScale        = 1.6666667f; // hovered scale multiplier (25px / 15px)
+    static constexpr float kMouseTightenMul   = UiLayout::kMouseTightenMul;  // tighten multiplier applied to s0
+    static constexpr float kDistanceFactor    = UiLayout::kDistanceFactor;  // used when computing outer interactive radius
+    static constexpr float kInnerBaseRadius   = UiLayout::kInnerBaseRadius; // px: block hover inside this inner radius
+    static constexpr float kHoverExtraRadius  = UiLayout::kHoverExtraRadius; // px: hover selection extra radius
+    static constexpr float kOuterBaseR        = UiLayout::kOuterBaseR; // px: base click radius when closed
+
     void timerCallback() override
     {
         const float speed = 0.22f; // animation speed
@@ -252,23 +277,27 @@ private:
     struct RingConfig
     {
         static constexpr int   count            = 16;
-        static constexpr float optionItemD      = 22.0f;
-        static constexpr float clickItemD       = 25.0f;
-        static constexpr float hoverItemD       = 25.0f;
-        static constexpr float scaleCenter      = 1.5f;
-        static constexpr float scaleNear1       = 1.1f;
-        static constexpr float scaleSmall       = 0.7f;
-        static constexpr float scaleNormalShrink= 0.7f;
+        static constexpr float optionItemD      = AnimatedStepOffsetMenu::kOptionItemD; // base small circle diameter (px)
+        static constexpr float clickItemD       = 25.0f; // diameter used for click detection (keep big enough)
+        static constexpr float hoverItemD       = 25.0f; // diameter used for hover detection
+        // Scales chosen to match requested absolute sizes for a 15px base:
+        // hovered => 25px (25/15 = 1.6667), adjacent => 20px (20/15 = 1.3333), small => 15px (1.0)
+        static constexpr float scaleCenter      = 1.6666667f; // hovered (25px)
+        static constexpr float scaleNear1       = 1.3333333f; // adjacent (20px)
+        static constexpr float scaleSmall       = 1.0f;       // non-adjacent (15px)
+        static constexpr float scaleNormalShrink= 1.0f;       // no additional shrink so base sizes match exact px
 
-        // Pull whole ring inward by 20px (visual and hit/hover)
-        static constexpr float inwardSmallShift = 5.0f;
-        static constexpr float inwardHoverExtra = 0.0f;
+        // Pull whole ring inward by configured amounts (visual and hit/hover)
+        // Values are read from the enclosing AnimatedStepOffsetMenu tweak constants
+        static constexpr float inwardSmallShift = AnimatedStepOffsetMenu::kInwardSmallShift;    // px: how much non-hover items pull inward
+        static constexpr float inwardHoverExtra = AnimatedStepOffsetMenu::kInwardHoverExtra;   // px: how much hovered item pushes outward
+        static constexpr float baseInward = AnimatedStepOffsetMenu::kBaseInward;              // px: overall ring inward at full open
 
         // No additional spread; keep the ring tight
         static constexpr float spreadVisual     = 0.0f;
         static constexpr float spreadHit        = 0.0f;
         static constexpr float spreadHover      = 0.0f;
-        static constexpr float visualMargin     = 15.0f;
+        static constexpr float visualMargin     = 0.0f;
 
         static int circularDistance(int a, int b)
         {
@@ -285,8 +314,18 @@ private:
         }
         static float inwardFor(int idx1, int hoverIdx)
         {
-            juce::ignoreUnused(idx1, hoverIdx);
-            // Constant inward shift for all circles
+            // If there's no hover, compact ring inward
+            if (hoverIdx < 1)
+                return -inwardSmallShift;
+
+            // Compute circular distance and apply outward offsets for hovered+adjacent
+            const int d = circularDistance(idx1, hoverIdx);
+            if (d == 0)
+                return inwardHoverExtra;                // hovered item: push outward fully
+            if (d == 1)
+                return inwardHoverExtra * 0.5f;        // adjacent items: push outward partially
+
+            // Otherwise pull small items slightly inward to compact the ring
             return -inwardSmallShift;
         }
         static float computeBaseRadius(float openAmt, int width, int height,
@@ -300,7 +339,9 @@ private:
             const float raw = juce::jlimit(minRadius,
                                            juce::jmax(minRadius, maxRadius),
                                            minRadius + (maxRadius - minRadius) * openAmt);
-            return raw; // global radius unchanged; per‑circle inward handles shrink
+            // Pull the entire ring inward when open for a tighter layout, then
+            // allow per-circle inward/outward offsets via inwardFor().
+            return raw - baseInward * openAmt;
         }
     };
 
@@ -334,7 +375,7 @@ private:
             g.fillEllipse(ring.translated(2.33f, 2.33f));
             g.setColour(kAccent); g.fillEllipse(ring);
             g.setColour(kBase);
-            g.setFont(juce::Font(juce::FontOptions("Arial", 18.0f * sc, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions("Arial", 12.0f * sc, juce::Font::bold)));
             g.drawFittedText(juce::String(i + 1), ring.toNearestInt(), juce::Justification::centred, 1);
         }
         // Draw hovered last, scaled and on top
@@ -353,7 +394,8 @@ private:
             g.fillEllipse(ring.translated(2.33f, 2.33f));
             g.setColour(kCyan); g.fillEllipse(ring);
             g.setColour(kBase);
-            g.setFont(juce::Font(juce::FontOptions("Arial", 18.0f, juce::Font::bold)));
+            // Use the same scaled font size as non-hovered items so adjacent fonts aren't bigger
+            g.setFont(juce::Font(juce::FontOptions("Arial", 12.0f * sc, juce::Font::bold)));
             g.drawFittedText(juce::String(i + 1), ring.toNearestInt(), juce::Justification::centred, 1);
         }
     }
@@ -402,7 +444,7 @@ private:
         const auto center = r.getCentre();
 
         // Block hover inside inner base ellipse of the central button
-        const float innerBaseRadius = 20.0f;
+        const float innerBaseRadius = kInnerBaseRadius;
         if (center.getDistanceFrom(pos) <= innerBaseRadius)
             return -1;
 
@@ -415,7 +457,7 @@ private:
 
         int bestIndex = -1;
         float bestDist2 = std::numeric_limits<float>::max();
-        const float rr = itemR + extra;
+        const float rr = itemR + kHoverExtraRadius;
         const float rr2 = rr * rr;
         for (int i = 0; i < count; ++i)
         {

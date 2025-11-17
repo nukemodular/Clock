@@ -42,6 +42,18 @@ public:
         }
     }
 
+    // Toggle on mouse-down to make interactions feel more immediate; suppress
+    // the default mouseUp behaviour so clicks aren't processed twice.
+    void mouseDown(const juce::MouseEvent& /*e*/) override
+    {
+        setToggleState(! getToggleState(), juce::sendNotification);
+    }
+
+    void mouseUp(const juce::MouseEvent& /*e*/) override
+    {
+        // Intentionally empty: we've already handled the toggle on mouseDown.
+    }
+
 private:
     juce::Colour kAccent { juce::Colour::fromRGB(0xFF, 0x4E, 0x5B) };
     juce::Colour kBase   { juce::Colour::fromRGB(0x26, 0x26, 0x26) };

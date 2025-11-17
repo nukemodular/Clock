@@ -9,6 +9,7 @@
 #include "RingToggle.h"
 #include "ShuffleModeMenu.h"
 #include "LookAndFeels.h" // Centralised LookAndFeel & theme colours
+#include "UiLayoutConstants.h"
 
 class ClockSyncAudioProcessorEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
@@ -96,6 +97,14 @@ private:
             g.setColour(getToggleState() ? on : off);
             g.fillEllipse(r);
         }
+        void mouseDown(const juce::MouseEvent& /*e*/) override
+        {
+            setToggleState(! getToggleState(), juce::sendNotification);
+        }
+        void mouseUp(const juce::MouseEvent& /*e*/) override
+        {
+            // suppress default mouseUp behaviour; handled on mouseDown
+        }
     private:
         juce::Colour off { juce::Colours::red };
         juce::Colour on  { juce::Colours::cyan };
@@ -132,6 +141,88 @@ private:
     // Inline entry widget for adding/editing a new instrument name
     std::unique_ptr<juce::TextEditor> nameEntryEditor;
 
+    // Help / tooltips
+    juce::TextButton helpToggle { "?" };
+    // Faster tooltip delay (milliseconds) so tips appear quickly when help is enabled
+    // Use a top-level TooltipWindow (parent = nullptr) so its transient popup
+    // isn't occluded by this editor's `paintOverChildren()` drawing.
+    juce::TooltipWindow tooltipWindow { nullptr, 250 };
+    // tooltipMap now stores pairs of target component pointer and tooltip key
+    // (lookup performed against `tooltipRegistry`).
+    std::vector<std::pair<juce::Component*, juce::String>> tooltipMap;
+    void applyTooltips(bool enabled);
+
+    // Centralised tooltip registry (populated from Tooltips.h at construction)
+    std::unordered_map<juce::String, juce::String> tooltipRegistry;
+    // Overlay helper used to provide tooltips for components that do not
+    // implement SettableTooltipClient (custom menus, etc). These overlays
+    // sit on top but do not intercept mouse clicks so the underlying
+    // components remain interactive while still exposing hover tooltips.
+    class OverlayTooltip : public juce::Component, public juce::SettableTooltipClient
+    {
+    public:
+        OverlayTooltip() { setInterceptsMouseClicks(true, true); target = nullptr; }
+        void updateBoundsRelativeTo(juce::Component* tgt)
+        {
+            target = tgt;
+            if (! target) return;
+            setBounds(target->getX(), target->getY(), target->getWidth(), target->getHeight());
+        }
+        // Store tooltip text locally so we can surface it via transient overlay
+        void setTooltip(const juce::String& t) override { tooltipStr = t; juce::SettableTooltipClient::setTooltip(t); }
+        const juce::String& getTooltipText() const { return tooltipStr; }
+        void mouseEnter(const juce::MouseEvent& e) override;
+        void mouseMove(const juce::MouseEvent& e) override;
+        void mouseExit(const juce::MouseEvent& e) override;
+        // Forward mouse clicks to the underlying target so overlays don't block interaction.
+        // If the overlay was created to cover a non-component region (e.g. run/trigger)
+        // then `target` will be null — in that case forward events to the parent editor
+        // so the normal editor-level click handlers still run.
+        void mouseDown(const juce::MouseEvent& e) override
+        {
+            if (target)
+                target->mouseDown(e.getEventRelativeTo(target));
+            else if (auto* p = getParentComponent())
+                p->mouseDown(e.getEventRelativeTo(p));
+        }
+        void mouseUp(const juce::MouseEvent& e) override
+        {
+            if (target)
+                target->mouseUp(e.getEventRelativeTo(target));
+            else if (auto* p = getParentComponent())
+                p->mouseUp(e.getEventRelativeTo(p));
+        }
+        void mouseDrag(const juce::MouseEvent& e) override
+        {
+            if (target)
+                target->mouseDrag(e.getEventRelativeTo(target));
+            else if (auto* p = getParentComponent())
+                p->mouseDrag(e.getEventRelativeTo(p));
+        }
+        void mouseDoubleClick(const juce::MouseEvent& e) override
+        {
+            if (target)
+                target->mouseDoubleClick(e.getEventRelativeTo(target));
+            else if (auto* p = getParentComponent())
+                p->mouseDoubleClick(e.getEventRelativeTo(p));
+        }
+    private:
+        juce::Component* target;
+        juce::String tooltipStr;
+    };
+    std::vector<std::unique_ptr<OverlayTooltip>> tooltipOverlays;
+    // Transient tooltip label shown for overlays in hosts where TooltipWindow
+    // popups may be blocked. Visible only when help toggle is enabled and the
+    // mouse hovers an overlay region.
+    std::unique_ptr<juce::Label> transientTooltip;
+    void showTransientTooltip(const juce::String& text, juce::Point<int> screenPos);
+    void hideTransientTooltip();
+    // transient tooltip animation state
+    float transientTooltipAlpha { 0.0f };
+    float transientTooltipTargetAlpha { 0.0f };
+    unsigned long long transientTooltipHideAt { 0 };
+    
+
     // Simple LED animation based on clock ticks
     unsigned long long lastSeenClockCounter { 0 };
     float ledLevel { 0.0f }; // 0..1 (driven by ledAnimator)
@@ -145,6 +236,8 @@ private:
     // Custom rotary & button LookAndFeels (now using global definitions from LookAndFeels.h)
     std::unique_ptr<ClickRotaryLNF> clickRotaryLNF;
     std::unique_ptr<ThemeLNF> themeLNF;
+    // Small LookAndFeel for the help '?' button to avoid drawing any border
+    std::unique_ptr<juce::LookAndFeel_V4> helpButtonLNF;
 
     // Layout cache for ring visualisation
     juce::Rectangle<int> ringArea;
@@ -179,9 +272,10 @@ private:
 
     // Backdrop pulse animation: six circles pulse in sequence then two-beat pause.
     std::array<float, 6> backdropPulseProgress {{ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }}; // 1.0 => full pulse
-    std::array<float, 6> backdropPulseScale {{ 0.02f, 0.03f, 0.04f, 0.05f, 0.06f, 0.07f }}; // scale increments per circle
+    std::array<float, 6> backdropPulseScale = UiLayout::kBackdropPulseScales; // scale increments per circle
     int lastBackdropBeatIndex { -1 };
     int lastLedBeatIndex { -1 };
+    std::array<std::unique_ptr<juce::Animator>, 6> backdropAnimators;
 
     
     
@@ -224,4 +318,7 @@ private:
             repaint(0, 0, getWidth(), 28);
         })
         .build() };
+    // VBlank-driven animator updater: used to drive visual animators at the
+    // display refresh rate while leaving the 60Hz timer for non-animation tasks.
+    std::unique_ptr<juce::VBlankAnimatorUpdater> vblankUpdater;
 };

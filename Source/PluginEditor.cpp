@@ -5,6 +5,8 @@
 #include "GridScaleMenu.h"
 #include "BinaryData.h"
 #include "LookAndFeels.h" // Use centralised LookAndFeel & theme colours
+#include "Tooltips.h"
+#include "UiLayoutConstants.h"
 #include <array>
 #include <optional>
 
@@ -80,6 +82,38 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         addAndMakeVisible(idleClockToggle);
         addAndMakeVisible(shuffleScaleToggle);
         addAndMakeVisible(stepOffsetMenu);
+
+            // Help toggle (small '?' square) - visible by default off; toggles tooltips
+            addAndMakeVisible(helpToggle);
+            helpToggle.setButtonText("?");
+            helpToggle.setClickingTogglesState(true);
+            // text colours: cyan when enabled, slightly darker cyan when disabled
+            helpToggle.setColour(juce::TextButton::textColourOffId, UiThemeColours::cyan().darker(0.45f));
+            helpToggle.setColour(juce::TextButton::textColourOnId, UiThemeColours::cyan());
+                    // Create a tiny LookAndFeel so the help button only draws text (no background/borders)
+                    struct HelpBtnLNF : public juce::LookAndFeel_V4
+                    {
+                        void drawButtonBackground(juce::Graphics&, juce::Button&, const juce::Colour&, bool, bool) override {}
+                        void drawButtonText(juce::Graphics& g, juce::TextButton& b, bool, bool) override
+                        {
+                            const float fontSize = UiLayout::kFontMedium;
+                            // Show colour based on toggle state so the button clearly
+                            // indicates whether help/tooltips are enabled.
+                            if (b.getToggleState())
+                                g.setColour(b.findColour(juce::TextButton::textColourOnId));
+                            else
+                                g.setColour(b.findColour(juce::TextButton::textColourOffId));
+                            g.setFont(juce::Font(juce::FontOptions("Arial", (float)fontSize, juce::Font::bold)));
+                            g.drawFittedText(b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, 1);
+                        }
+                    };
+                    helpButtonLNF = std::make_unique<HelpBtnLNF>();
+                    helpToggle.setLookAndFeel(helpButtonLNF.get());
+                    helpToggle.setRepeatSpeed(0, 0);
+                    helpToggle.onClick = [this]() { applyTooltips(helpToggle.getToggleState()); };
+                    // ensure the component background is not painted by the editor
+                    helpToggle.setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+            helpToggle.setColour(juce::TextButton::buttonOnColourId, juce::Colours::transparentBlack);
 
         gridScaleMenu.toBack();
         // Keep slider and its small click button in front so they are visually prominent
@@ -184,6 +218,22 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     nameMidiSwitch.setColour(juce::TextButton::textColourOffId, UiThemeColours::accent());
     nameMidiSwitch.setColour(juce::TextButton::textColourOnId,  UiThemeColours::base());
 
+    // Ensure the top-level tooltip window uses our ThemeLNF so drawTooltip is used
+    tooltipWindow.setLookAndFeel(themeLNF.get());
+    tooltipWindow.setColour(juce::TooltipWindow::backgroundColourId, UiThemeColours::base().withAlpha(0.666f));
+    tooltipWindow.setColour(juce::TooltipWindow::textColourId, UiThemeColours::cyan());
+    tooltipWindow.setColour(juce::TooltipWindow::outlineColourId, juce::Colours::transparentBlack);
+
+    // Create a transient tooltip label (fallback for hosts that restrict
+    // top-level transient windows). Hidden by default; shown by overlays.
+    transientTooltip = std::make_unique<juce::Label>();
+    transientTooltip->setVisible(false);
+    transientTooltip->setJustificationType(juce::Justification::centredLeft);
+    transientTooltip->setColour(juce::Label::backgroundColourId, UiThemeColours::base().withAlpha(0.85f));
+    transientTooltip->setColour(juce::Label::textColourId, UiThemeColours::cyan());
+    transientTooltip->setFont(juce::Font(juce::FontOptions("Arial", UiLayout::kFontTooltip, juce::Font::bold)));
+    addAndMakeVisible(*transientTooltip);
+
     if (auto* rp = apvts.getRawParameterValue(ClockSyncAudioProcessor::paramRun))
         runParamCached = rp->load() > 0.5f;
     rateParam = dynamic_cast<juce::AudioParameterChoice*>(
@@ -201,6 +251,24 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     clickButton.setColours(UiThemeColours::accent(), UiThemeColours::cyan());
     gridScaleMenu.setIndex(rateIndexCached);
     gridScaleMenu.onGridChanged = [setRateIndex](int idx){ setRateIndex(idx); };
+    
+    // Add soft drop shadows to a set of prominent controls for depth
+    auto addDropShadowTo = [](juce::Component& c, int radius = 12, juce::Colour col = juce::Colours::black.withAlpha(0.4f), int xOff = 4, int yOff = 4)
+    {
+        auto eff = std::make_unique<juce::DropShadowEffect>();
+        juce::DropShadow ds(col, radius, juce::Point<int>(xOff, yOff));
+        eff->setShadowProperties(ds);
+        // Component takes ownership of the raw pointer
+        c.setComponentEffect(eff.release());
+    };
+    
+    addDropShadowTo(gridScaleMenu);
+    addDropShadowTo(shuffleModeMenu);
+    addDropShadowTo(idleClockToggle, 8, juce::Colours::black.withAlpha(0.4f));
+    addDropShadowTo(helpToggle, 4, juce::Colours::black.withAlpha(0.4f));
+    addDropShadowTo(triggerModeToggle, 8, juce::Colours::black.withAlpha(0.4f));
+    addDropShadowTo(clickButton, 4, juce::Colours::black.withAlpha(0.4f));
+    addDropShadowTo(clickLevelSlider, 8, juce::Colours::black.withAlpha(0.4f));
 
     // Re-connect shuffle arc control to paramShuffleStep (1..7)
     if (auto* shuffleParam = apvts.getParameter(ClockSyncAudioProcessor::paramShuffleStep))
@@ -251,6 +319,99 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     triggerFade = 0.0f;
     // Populate device list immediately so the editor recalls last-used port on open
     refreshDeviceList();
+
+    // Populate tooltip map (tooltips are off by default until helpToggle enabled)
+    tooltipRegistry = getTooltipTextRegistry();
+    tooltipMap.clear();
+    // map components to registry keys (edit text in Source/Tooltips.h)
+    tooltipMap.push_back({ &refreshButton, "refreshButton" });
+    tooltipMap.push_back({ &deviceBox, "deviceBox" });
+    tooltipMap.push_back({ &nameBox, "nameBox" });
+    tooltipMap.push_back({ &nameMidiSwitch, "nameMidiSwitch" });
+    tooltipMap.push_back({ &clickButton, "clickButton" });
+    tooltipMap.push_back({ &clickLevelSlider, "clickLevelSlider" });
+    tooltipMap.push_back({ &triggerModeToggle, "triggerModeToggle" });
+    tooltipMap.push_back({ &idleClockToggle, "idleClockToggle" });
+    tooltipMap.push_back({ &shuffleScaleToggle, "shuffleScaleToggle" });
+    tooltipMap.push_back({ &stepOffsetMenu, "stepOffsetMenu" });
+    tooltipMap.push_back({ &gridScaleMenu, "gridScaleMenu" });
+    tooltipMap.push_back({ &shuffleModeMenu, "shuffleModeMenu" });
+    tooltipMap.push_back({ &helpToggle, "helpToggle" });
+    // Note: run/trigger areas are not native Components; create dedicated overlays below.
+    // Create overlay tooltip components for items that don't implement
+    // SettableTooltipClient (custom menus). The overlays are non-intercepting
+    // so they won't block mouse interaction with the underlying controls.
+    tooltipOverlays.clear();
+    for (auto& p : tooltipMap)
+    {
+        if (p.first == nullptr) continue;
+        const juce::String key = p.second;
+        const juce::String text = tooltipRegistry.count(key) ? tooltipRegistry[key] : juce::String();
+        // If the component doesn't implement SettableTooltipClient, add an overlay
+        if (dynamic_cast<juce::SettableTooltipClient*>(p.first) == nullptr)
+        {
+            auto overlay = std::make_unique<OverlayTooltip>();
+            overlay->setTooltip(text);
+            overlay->setComponentID(key);
+            addAndMakeVisible(*overlay);
+            // ensure overlay stays above other child components
+            overlay->setAlwaysOnTop(true);
+            overlay->toFront(true);
+            overlay->updateBoundsRelativeTo(p.first);
+            tooltipOverlays.push_back(std::move(overlay));
+        }
+        else
+        {
+            // For native SettableTooltipClient components, assign tooltip text directly
+            if (text.isNotEmpty())
+                dynamic_cast<juce::SettableTooltipClient*>(p.first)->setTooltip(text);
+        }
+    }
+
+    // Create overlays for non-component interactive regions: Run ring and Trigger area.
+    // These overlays use componentID keys that correspond to entries in the tooltip registry.
+    {
+        auto overlayRun = std::make_unique<OverlayTooltip>();
+        overlayRun->setComponentID("runButton");
+        const juce::String runText = tooltipRegistry.count("runButton") ? tooltipRegistry["runButton"] : juce::String();
+        overlayRun->setTooltip(runText);
+        addAndMakeVisible(*overlayRun);
+        overlayRun->setAlwaysOnTop(true);
+        overlayRun->toFront(true);
+        // Bounds are initially zero; resized() will place this overlay to `ringArea`.
+        tooltipOverlays.push_back(std::move(overlayRun));
+
+        auto overlayTrig = std::make_unique<OverlayTooltip>();
+        overlayTrig->setComponentID("triggerArea");
+        const juce::String trigText = tooltipRegistry.count("triggerArea") ? tooltipRegistry["triggerArea"] : juce::String();
+        overlayTrig->setTooltip(trigText);
+        addAndMakeVisible(*overlayTrig);
+        overlayTrig->setAlwaysOnTop(true);
+        overlayTrig->toFront(true);
+        tooltipOverlays.push_back(std::move(overlayTrig));
+    }
+
+    // Tooltips inactive initially
+    applyTooltips(false);
+
+    // Drive visual animators from a VBlank-synchronised updater so animations
+    // are in-step with the display refresh rate. Keep the 60Hz Timer for
+    // non-animation tasks (host polling, parameter sync, tooltip timing, etc.).
+    vblankUpdater = std::make_unique<juce::VBlankAnimatorUpdater>(this);
+    vblankUpdater->addAnimator(triggerFadeAnimator);
+    vblankUpdater->addAnimator(ledAnimator);
+    // Create backdrop animators (one per decorative ring) and register with vblank updater
+    for (size_t i = 0; i < backdropAnimators.size(); ++i)
+    {
+        backdropAnimators[i] = std::make_unique<juce::Animator>(juce::ValueAnimatorBuilder{}
+            .withDurationMs((float) UiLayout::kBackdropPulseDurationMs)
+            .withValueChangedCallback([this, i](float progress){
+                backdropPulseProgress[i] = 1.0f - juce::jlimit(0.0f, 1.0f, progress);
+                repaint();
+            })
+            .build());
+        vblankUpdater->addAnimator(*backdropAnimators[i]);
+    }
 }
 
 void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
@@ -263,11 +424,11 @@ void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
     // Decorative background circles: larger circles use a darker variant and pulse on beats
     {
         auto centre = bounds.getCentre();
-        const std::array<int, 6> sizes = { 420 ,340, 280, 230, 190, 160 };
+        const auto& sizes = UiLayout::kBackdropSizes;
         for (size_t i = 0; i < sizes.size(); ++i)
         {
             const float baseSz = (float) sizes[i];
-            const float darkFactor = 0.1f + 0.75f * (float) i; // bigger -> darker
+            const float darkFactor = 0.3f + 0.75f * (float) i; // bigger -> darker
 
             // Apply pulse scale (progress goes 1->0) to briefly enlarge the circle on its beat
             const float progress = backdropPulseProgress[i];
@@ -282,16 +443,17 @@ void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
             // No cyan interpolation and no alpha boost applied.
             juce::Colour col = UiThemeColours::accent().darker(darkFactor);
 
-            juce::Rectangle<float> rc(centre.x - sz * 0.5f, centre.y - sz * 0.5f + 10, sz, sz);
+            juce::Rectangle<float> rc(centre.x - sz * 0.5f, centre.y - sz * 0.5f + 5.0f + 5.0f , sz, sz);
             g.setColour(col);
             g.fillEllipse(rc);
         }
     }
 
     auto header = getLocalBounds().removeFromTop(30).reduced(8, 4).toFloat();
-    juce::Path headerPath; headerPath.addRoundedRectangle(header, 6.0f);
+    juce::Path headerPath; headerPath.addRoundedRectangle(header, UiLayout::kCornerRadius);
     g.setColour(UiThemeColours::base());
     g.fillPath(headerPath);
+    
 
     const bool isRunning = processor.getUiIsRunning();
     const bool isArmed = processor.getUiPendingStart();
@@ -311,7 +473,7 @@ void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
     g.drawFittedText(status, juce::Rectangle<int>(getWidth() - 73, (int)header.getY(), 50, (int)header.getHeight()),
                      juce::Justification::centred, 1);
 
-    const float ledRadius = 6.0f;
+    const float ledRadius = UiLayout::kLedRadius;
     // Move LED slightly right (+8px)
     auto ledCenter = juce::Point<float>(getWidth() - 17.0f, header.getCentreY());
     const float a = juce::jlimit(0.0f, 1.0f, ledLevel);
@@ -405,7 +567,7 @@ void ClockSyncAudioProcessorEditor::resized()
     }
 
     // Expand slider bounds slightly to increase drag detection area without visibly changing layout
-    const int sliderExtra = 12;
+    const int sliderExtra = 15;
     clickLevelSlider.setBounds(70 + offX - sliderExtra/2, 96 + offY - sliderExtra/2, 46 + sliderExtra, 46 + sliderExtra); // rotary position (offset)
     {
         auto sb = clickLevelSlider.getBounds();
@@ -419,7 +581,8 @@ void ClockSyncAudioProcessorEditor::resized()
     ringArea = juce::Rectangle<int>(104 + offX, 104 + offY, 132, 132);
     // Step offset button area (expanded to avoid hover scaling clipping)
     triggerModeToggle.setBounds(240 + offX, 156 + offY, 30, 30);
-    stepOffsetMenu.setBounds(216 + offX - 30, 140 + offY , 140, 140);
+    // Keep the same top-left position but limit the interactive area to 100x100
+    stepOffsetMenu.setBounds(195 + offX , 150 + offY, 120, 120);
     idleClockToggle.setBounds(120 + offX, 80 + offY, 30, 30);
     shuffleScaleToggle.setBounds(83 + offX, 200 + offY, 30, 30);
     // Declare click-through holes in stepOffsetMenu so controls behind remain clickable when its menu is closed
@@ -431,9 +594,129 @@ void ClockSyncAudioProcessorEditor::resized()
     }
     gridScaleMenu.setBounds(20 + offX, 128 + offY, 110, 110);
     triggerRect = juce::Rectangle<int>(221 + offX, 80 + offY, 85, 85);
-    shuffleModeMenu.setBounds(82 + offX, 200 + offY, 166, 80);
+    shuffleModeMenu.setBounds(102 + offX, 220 + offY, 155, 65);
     shuffleModeMenu.setManualBounds(kArcButtonRects);
+    triggerModeToggle.toFront(true);
+    shuffleModeMenu.toFront(true);
     stepOffsetMenu.toFront(true);
+
+    // Help toggle position: lower-left 24x24
+    const int helpSize = 25;
+    helpToggle.setBounds(0, 210, helpSize, helpSize);
+
+    // Keep any overlay tooltip components aligned with their targets
+    for (auto& ov : tooltipOverlays)
+    {
+        if (! ov) continue;
+        // find matching target from tooltipMap by comparing componentID keys
+        for (auto& p : tooltipMap)
+        {
+            if (p.first == nullptr) continue;
+            if (ov->getComponentID() == p.second)
+            {
+                ov->updateBoundsRelativeTo(p.first);
+                // keep overlays above everything
+                ov->setAlwaysOnTop(true);
+                ov->toFront(true);
+                break;
+            }
+        }
+        // If the overlay corresponds to a non-component region (run/trigger),
+        // position it explicitly using the cached rects.
+        if (ov->getComponentID() == "runButton")
+        {
+            // Position overlay to cover the ring area
+            if (! ringArea.isEmpty())
+            {
+                ov->setBounds(ringArea.getX(), ringArea.getY(), ringArea.getWidth(), ringArea.getHeight());
+                ov->setAlwaysOnTop(true);
+                ov->toFront(true);
+            }
+        }
+        else if (ov->getComponentID() == "triggerArea")
+        {
+            if (! triggerRect.isEmpty())
+            {
+                ov->setBounds(triggerRect.getX(), triggerRect.getY(), triggerRect.getWidth(), triggerRect.getHeight());
+                ov->setAlwaysOnTop(true);
+                ov->toFront(true);
+            }
+        }
+    }
+
+    // Ensure transient tooltip sits above children but below native top-level
+    if (transientTooltip)
+    {
+        transientTooltip->toFront(true);
+        transientTooltip->setBounds(8, getHeight() - 48, getWidth() - 16, 36);
+    }
+}
+
+void ClockSyncAudioProcessorEditor::applyTooltips(bool enabled)
+{
+    for (auto& p : tooltipMap)
+    {
+        if (p.first == nullptr) continue;
+        const juce::String key = p.second;
+        const juce::String text = tooltipRegistry.count(key) ? tooltipRegistry[key] : juce::String();
+        if (auto* tc = dynamic_cast<juce::SettableTooltipClient*>(p.first))
+        {
+            if (enabled)
+                tc->setTooltip(text);
+            else
+                tc->setTooltip(juce::String());
+        }
+        else
+        {
+            // for overlays, find the overlay by componentID and enable/disable its tooltip
+            for (auto& ov : tooltipOverlays)
+            {
+                if (! ov) continue;
+                if (ov->getComponentID() == key)
+                {
+                        if (enabled) {
+                            ov->setTooltip(text);
+                            ov->setAlwaysOnTop(true);
+                            ov->toFront(true);
+                        }
+                        else {
+                            ov->setTooltip(juce::String());
+                        }
+                        break;
+                    }
+            }
+        }
+    }
+
+    // Also ensure overlays that represent non-component regions (run/trigger)
+    // are enabled/disabled when tooltips are toggled.
+    for (auto& ov : tooltipOverlays)
+    {
+        if (! ov) continue;
+        const juce::String id = ov->getComponentID();
+        if (id.isEmpty()) continue;
+        const juce::String text = tooltipRegistry.count(id) ? tooltipRegistry[id] : juce::String();
+        if (enabled)
+        {
+            ov->setTooltip(text);
+            ov->setAlwaysOnTop(true);
+            ov->toFront(true);
+            ov->setVisible(true);
+            // intercept mouse events so overlays get enter/move/exit to show tooltips;
+            // clicks are forwarded by OverlayTooltip implementation so interaction remains.
+            ov->setInterceptsMouseClicks(true, true);
+        }
+        else
+        {
+            ov->setTooltip(juce::String());
+            ov->setVisible(false);
+            ov->setInterceptsMouseClicks(false, true);
+        }
+    }
+
+    // Hide transient tooltip when disabling tooltips
+    if (! enabled && transientTooltip)
+        transientTooltip->setVisible(false);
 }
 
 void ClockSyncAudioProcessorEditor::timerCallback()
@@ -501,18 +784,20 @@ void ClockSyncAudioProcessorEditor::timerCallback()
                             switch (beatIndex)
                             {
                                 case 0:
-                                    backdropPulseProgress[0] = 1.0f;
-                                    backdropPulseProgress[4] = 1.0f;
+                                    if (backdropAnimators.size() > 1) backdropAnimators[1]->start();
+                                    if (backdropAnimators.size() > 5) backdropAnimators[5]->start();
                                     break;
                                 case 1:
-                                    backdropPulseProgress[1] = 1.0f;
-                                    backdropPulseProgress[5] = 1.0f;
+                                    if (backdropAnimators.size() > 2) backdropAnimators[2]->start();
+                                    if (backdropAnimators.size() > 5) backdropAnimators[5]->start();
                                     break;
                                 case 2:
-                                    backdropPulseProgress[2] = 1.0f;
+                                    if (backdropAnimators.size() > 3) backdropAnimators[3]->start();
                                     break;
                                 case 3:
-                                    backdropPulseProgress[3] = 1.0f;
+                                    if (backdropAnimators.size() > 4) backdropAnimators[4]->start();
+                                    break;
+                                default:
                                     break;
                             }
                             // Backdrop circles occupy the full canvas; request a full repaint.
@@ -560,19 +845,36 @@ void ClockSyncAudioProcessorEditor::timerCallback()
     }
 
     // Update trigger fade animator (drives repaint via value changed callback)
-    {
-        const double ts = juce::Time::getMillisecondCounterHiRes();
-        auto status = triggerFadeAnimator.update(ts);
-        if (status == juce::Animator::Status::inProgress)
-            needTrigger = true; // ensure region gets repainted if callback missed
-    }
+    // Trigger fade animator is now driven by the VBlankAnimatorUpdater; the
+    // value-changed callback repaints the trigger area when necessary.
 
     // Update LED animator so pulses decay (ledAnimator callbacks repaint header)
+    // LED animator is driven by the VBlankAnimatorUpdater; its callback
+    // repaints the header when active.
+
+    // Transient tooltip fade / auto-hide handling (driven from the editor timer)
+    if (transientTooltip)
     {
-        const double ts2 = juce::Time::getMillisecondCounterHiRes();
-        auto ledStatus = ledAnimator.update(ts2);
-        if (ledStatus == juce::Animator::Status::inProgress)
-            needAll = true; // ensure header/full repaint if animator is active
+        const unsigned long long now = juce::Time::getMillisecondCounter();
+        // If the tooltip has passed its hide time, start fading out
+        if (transientTooltipTargetAlpha > 0.0f && transientTooltipHideAt > 0 && now >= transientTooltipHideAt)
+            transientTooltipTargetAlpha = 0.0f;
+
+        // Smoothly approach target alpha
+        const float fadeStep = 0.12f; // per-frame lerp towards target
+        transientTooltipAlpha += (transientTooltipTargetAlpha - transientTooltipAlpha) * fadeStep;
+        transientTooltipAlpha = juce::jlimit(0.0f, 1.0f, transientTooltipAlpha);
+        transientTooltip->setAlpha(transientTooltipAlpha);
+
+        if (transientTooltipAlpha > 0.001f)
+            needAll = true; // ensure repaint while tooltip is visible/fading
+
+        // When fully faded out, hide the component to avoid blocking inputs
+        if (transientTooltipAlpha <= 0.001f && transientTooltip->isVisible())
+        {
+            transientTooltip->setVisible(false);
+            transientTooltipHideAt = 0;
+        }
     }
 
     // (Previously backdrop sequencing and LED start logic ran here based on
@@ -623,11 +925,13 @@ void ClockSyncAudioProcessorEditor::timerCallback()
                 lastBackdropBeatIndex = beatIndex;
                 static int backdropSequencePos = -1;
                 backdropSequencePos = (backdropSequencePos + 1) % 8;
-                if (backdropSequencePos >= 0 && backdropSequencePos < 6)
+                if (backdropSequencePos >= 0)
                 {
-                    backdropPulseProgress[(size_t)backdropSequencePos] = 1.0f;
-                    if (backdropSequencePos == 4)
-                        backdropPulseProgress[0] = 1.0f;
+                    const int idx = backdropSequencePos % (int)backdropAnimators.size();
+                    if (idx >= 0 && idx < (int)backdropAnimators.size())
+                        backdropAnimators[idx]->start();
+                    if (backdropSequencePos == 4 && backdropAnimators.size() > 0)
+                        backdropAnimators[0]->start();
                     needAll = true;
                 }
             }
@@ -635,16 +939,7 @@ void ClockSyncAudioProcessorEditor::timerCallback()
     }
 
     // Decay backdrop pulse progress (frame-based) so pulses scale/fade back over time
-    const float pulseDecay = 0.10f; // per-frame decrement at ~60Hz (~0.12 -> ~8-9 frames)
-    for (size_t i = 0; i < backdropPulseProgress.size(); ++i)
-    {
-        if (backdropPulseProgress[i] > 0.0f)
-        {
-            backdropPulseProgress[i] = juce::jmax(0.0f, backdropPulseProgress[i] - pulseDecay);
-            // Decay affects the full decorative background, repaint whole area.
-            needAll = true;
-        }
-    }
+    // Backdrop pulse decay is now driven by per-ring animators (VBlank-driven)
 
     // Step number update tied to 16th-note changes (no fade).
     // The numeric step shown in the trigger updates always, but the visual
@@ -733,18 +1028,94 @@ void ClockSyncAudioProcessorEditor::timerCallback()
     }
 }
 
+// Overlay tooltip mouse handlers (defined after timerCallback to keep header tidy)
+void ClockSyncAudioProcessorEditor::OverlayTooltip::mouseEnter(const juce::MouseEvent& e)
+{
+    if (tooltipStr.isNotEmpty())
+    {
+        if (auto* p = dynamic_cast<ClockSyncAudioProcessorEditor*>(getParentComponent()))
+            p->showTransientTooltip(tooltipStr, e.getScreenPosition());
+    }
+}
+
+void ClockSyncAudioProcessorEditor::OverlayTooltip::mouseMove(const juce::MouseEvent& e)
+{
+    if (tooltipStr.isNotEmpty())
+    {
+        if (auto* p = dynamic_cast<ClockSyncAudioProcessorEditor*>(getParentComponent()))
+            p->showTransientTooltip(tooltipStr, e.getScreenPosition());
+    }
+}
+
+void ClockSyncAudioProcessorEditor::OverlayTooltip::mouseExit(const juce::MouseEvent&)
+{
+    if (auto* p = dynamic_cast<ClockSyncAudioProcessorEditor*>(getParentComponent()))
+        p->hideTransientTooltip();
+}
+
 ClockSyncAudioProcessorEditor::~ClockSyncAudioProcessorEditor()
 {
+    // Ensure vblank updater is destroyed before member animators go away
+    vblankUpdater.reset();
     clickLevelSlider.setLookAndFeel(nullptr);
     deviceBox.setLookAndFeel(nullptr);
     refreshButton.setLookAndFeel(nullptr);
     nameBox.setLookAndFeel(nullptr);
     nameMidiSwitch.setLookAndFeel(nullptr);
+    // Clear tooltip look-and-feel to avoid dangling reference to themeLNF
+    tooltipWindow.setLookAndFeel(nullptr);
+    // Clear help button look-and-feel
+    helpToggle.setLookAndFeel(nullptr);
+}
+
+void ClockSyncAudioProcessorEditor::showTransientTooltip(const juce::String& text, juce::Point<int> screenPos)
+{
+    if (! transientTooltip) return;
+    if (! helpToggle.getToggleState()) return; // only show when help is enabled
+
+    // First try to show the real TooltipWindow; some hosts prevent top-level
+    // windows from appearing. If TooltipWindow becomes visible we won't show
+    // the transient in-window label.
+    tooltipWindow.displayTip(screenPos, text);
+    if (tooltipWindow.isVisible())
+    {
+        // ensure our transient fallback is hidden
+        transientTooltip->setVisible(false);
+        transientTooltipAlpha = transientTooltipTargetAlpha = 0.0f;
+        return;
+    }
+
+    // Fallback: use the editor transient label positioned near the cursor.
+    transientTooltip->setText(text, juce::dontSendNotification);
+    const juce::Point<int> local = getLocalPoint(nullptr, screenPos);
+    const int w = std::min(getWidth() - 16, 360);
+    const int h = 36;
+    int x = juce::jlimit(8, getWidth() - w - 8, local.x + 12);
+    int y = juce::jlimit(8, getHeight() - h - 8, local.y + 12);
+    transientTooltip->setBounds(x, y, w, h);
+    transientTooltipTargetAlpha = 1.0f;
+    transientTooltipHideAt = juce::Time::getMillisecondCounter() + 3000; // auto-hide after 3s
+    transientTooltip->setVisible(true);
+    transientTooltip->toFront(true);
+}
+
+void ClockSyncAudioProcessorEditor::hideTransientTooltip()
+{
+    if (transientTooltip) transientTooltip->setVisible(false);
 }
 
 void ClockSyncAudioProcessorEditor::mouseUp(const juce::MouseEvent& e)
 {
-    // Toggle run when clicking within the inner black circle
+    // No-op: ringArea (run) toggling handled on mouseDown for more immediate response.
+
+    // Curved-label feature removed: no click handling here.
+}
+
+
+
+void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
+{
+    // Toggle run when clicking within the inner black circle (ringArea) on mouseDown
     if (ringArea.contains(e.getPosition()))
     {
         const int cx = ringArea.getCentreX();
@@ -766,16 +1137,10 @@ void ClockSyncAudioProcessorEditor::mouseUp(const juce::MouseEvent& e)
                     repaint(ringArea);
                 }
             }
+            // If the click was inside the inner ring we don't want to treat it as a trigger region as well
+            return;
         }
     }
-
-    // Curved-label feature removed: no click handling here.
-}
-
-
-
-void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
-{
     // Only respond to mouse-down inside the trigger circle
     if (triggerRect.contains(e.getPosition()))
     {
@@ -836,7 +1201,7 @@ void ClockSyncAudioProcessorEditor::drawRing(juce::Graphics& g)
         const float px = 1.0f / getDesktopScaleFactor();
         juce::Path clip; clip.addEllipse(inner.expanded(px)); g.reduceClipRegion(clip);
 
-        const float barW = 18.0f;
+        const float barW = UiLayout::kBarWidth;
         juce::Rectangle<float> bar(
             (float) cx - barW * 0.5f,
             (float) cy - inner.getHeight() * 0.5f,
@@ -915,7 +1280,7 @@ void ClockSyncAudioProcessorEditor::drawDancer(juce::Graphics& g)
     juce::Rectangle<float> inner((float) (ringArea.getCentreX() - kRingInnerD / 2),
                                  (float) (ringArea.getCentreY() - kRingInnerD / 2),
                                  (float) kRingInnerD, (float) kRingInnerD);
-    auto dest = inner.reduced(6.0f);
+    auto dest = inner.reduced(UiLayout::kInnerReduce);
 
     // PNG layout scaling (original PNG canvas assumption kept for sizing math)
     constexpr float dancerCanvasW = 355.0f;
