@@ -1010,22 +1010,6 @@ public:
             float scale = 1.0f;
             if (i == 1) scale = 1.0f + 0.2f * f;
             const float rrScaled = rr * scale;
-            // Soft shadow behind circle indices 0..7 (loop is 1..N, include <=7). Use a simple offset
-            // ellipse with alpha scaled by flash factor for subtle dynamic depth.
-            if (i <= 7)
-            {
-                const float shadowOffsetY = 4.0f; // vertical lift shadow
-                const float shadowOffsetX = 1.5f;
-                const float shadowExpand  = 3.0f; // slight blur simulation
-                const float shadowAlpha   = juce::jlimit(0.15f, 0.45f, 0.30f + 0.25f * f);
-                g.setColour(juce::Colours::black.withAlpha(shadowAlpha));
-                g.fillEllipse(c.x - rrScaled - shadowExpand + shadowOffsetX,
-                              c.y - rrScaled - shadowExpand + shadowOffsetY,
-                              (rrScaled*2.0f) + shadowExpand*2.0f,
-                              (rrScaled*2.0f) + shadowExpand*2.0f);
-                // restore fill colour after shadow draw
-                g.setColour(fillCol);
-            }
             g.fillEllipse (c.x - rrScaled, c.y - rrScaled, rrScaled*2.0f, rrScaled*2.0f);
         }
 
@@ -1064,17 +1048,6 @@ public:
                 const float R = Rstart + (Rend - Rstart) * linearShufflePos;
                 const float innerR = R * 0.6f;
 
-                // Shadow for linear shuffle travelling circle (index 4 related visual). Draw before base accent.
-                {
-                    const float shadowExpand  = 3.0f;
-                    const float shadowOffsetY = 4.0f;
-                    const float shadowOffsetX = 1.5f;
-                    g.setColour(juce::Colours::black.withAlpha(0.35f));
-                    g.fillEllipse(posPt.x - R - shadowExpand + shadowOffsetX,
-                                  posPt.y - R - shadowExpand + shadowOffsetY,
-                                  (R*2.0f) + shadowExpand*2.0f,
-                                  (R*2.0f) + shadowExpand*2.0f);
-                }
                 g.setColour (UiThemeColours::accent());
                 g.fillEllipse (posPt.x - R, posPt.y - R, R*2.0f, R*2.0f);
 
@@ -1094,17 +1067,6 @@ public:
                 const float R = pos.r;
                 const float innerR = R * 0.6f;
 
-                // Shadow for discrete shuffle selection (index 4 region). Draw before accent fill.
-                {
-                    const float shadowExpand  = 3.0f;
-                    const float shadowOffsetY = 4.0f;
-                    const float shadowOffsetX = 1.5f;
-                    g.setColour(juce::Colours::black.withAlpha(0.35f));
-                    g.fillEllipse(pos.x - R - shadowExpand + shadowOffsetX,
-                                  pos.y - R - shadowExpand + shadowOffsetY,
-                                  (R*2.0f) + shadowExpand*2.0f,
-                                  (R*2.0f) + shadowExpand*2.0f);
-                }
                 g.setColour (UiThemeColours::accent());
                 g.fillEllipse (pos.x - R, pos.y - R, R*2.0f, R*2.0f);
 
@@ -1158,18 +1120,6 @@ public:
         const float outerScale = 1.0f + 0.2f * fOuter;
         const float outerRScaled = outerR * outerScale;
         juce::Colour fillCol = UiThemeColours::accent().interpolatedWith (UiThemeColours::cyan(), fOuter).withAlpha (1.0f);
-        // Shadow for main circle index 1
-        {
-            const float shadowExpand  = 4.0f;
-            const float shadowOffsetY = 5.0f;
-            const float shadowOffsetX = 2.0f;
-            const float shadowAlpha   = juce::jlimit(0.20f, 0.50f, 0.28f + 0.25f * fOuter);
-            g.setColour(juce::Colours::black.withAlpha(shadowAlpha));
-            g.fillEllipse(c1.x - outerRScaled - shadowExpand + shadowOffsetX,
-                          c1.y - outerRScaled - shadowExpand + shadowOffsetY,
-                          (outerRScaled*2.0f) + shadowExpand*2.0f,
-                          (outerRScaled*2.0f) + shadowExpand*2.0f);
-        }
         g.setColour (fillCol);
         g.fillEllipse (c1.x - outerRScaled, c1.y - outerRScaled, outerRScaled*2.0f, outerRScaled*2.0f);
 
@@ -1199,17 +1149,6 @@ public:
             const float testYOffset = 0.0f; // testing: draw button moved up
             const float smallR = 8.0f;
             juce::Colour bcol = clickToPulseOn ? UiThemeColours::cyan() : UiThemeColours::accent();
-            // Shadow for small toggle (index 7)
-            {
-                const float shadowExpand  = 2.0f;
-                const float shadowOffsetY = 3.0f;
-                const float shadowOffsetX = 1.0f;
-                g.setColour(juce::Colours::black.withAlpha(0.35f));
-                g.fillEllipse(c7.x - smallR - shadowExpand + shadowOffsetX,
-                              (c7.y + testYOffset) - smallR - shadowExpand + shadowOffsetY,
-                              (smallR*2.0f) + shadowExpand*2.0f,
-                              (smallR*2.0f) + shadowExpand*2.0f);
-            }
             g.setColour (bcol);
             g.fillEllipse (c7.x - smallR, (c7.y + testYOffset) - smallR, smallR*2.0f, smallR*2.0f);
             if (clickToPulseHover)
@@ -1223,17 +1162,6 @@ public:
         {
             const auto& c6 = circles.getReference (6);
             const float insetR6 = 17.0f;
-            // Shadow for index 6 base circle
-            {
-                const float shadowExpand  = 3.0f;
-                const float shadowOffsetY = 4.0f;
-                const float shadowOffsetX = 1.5f;
-                g.setColour(juce::Colours::black.withAlpha(0.35f));
-                g.fillEllipse(c6.x - insetR6 - shadowExpand + shadowOffsetX,
-                              c6.y - insetR6 - shadowExpand + shadowOffsetY,
-                              (insetR6*2.0f) + shadowExpand*2.0f,
-                              (insetR6*2.0f) + shadowExpand*2.0f);
-            }
             g.setColour (UiThemeColours::base());
             g.fillEllipse (c6.x - insetR6, c6.y - insetR6, insetR6*2.0f, insetR6*2.0f);
             g.setColour (UiThemeColours::cyan());
@@ -1252,17 +1180,6 @@ public:
         {
             const auto& c3 = circles.getReference (3);
             const float insetR3 = 17.0f;
-            // Shadow for index 3 base circle
-            {
-                const float shadowExpand  = 3.0f;
-                const float shadowOffsetY = 4.0f;
-                const float shadowOffsetX = 1.5f;
-                g.setColour(juce::Colours::black.withAlpha(0.35f));
-                g.fillEllipse(c3.x - insetR3 - shadowExpand + shadowOffsetX,
-                              c3.y - insetR3 - shadowExpand + shadowOffsetY,
-                              (insetR3*2.0f) + shadowExpand*2.0f,
-                              (insetR3*2.0f) + shadowExpand*2.0f);
-            }
             g.setColour (UiThemeColours::base());
             g.fillEllipse (c3.x - insetR3, c3.y - insetR3, insetR3*2.0f, insetR3*2.0f);
             g.setColour (UiThemeColours::cyan());
