@@ -905,9 +905,14 @@ void ClockSyncAudioProcessorEditor::timerCallback()
             {
                 lastBackdropBeatIndex = beatIndex;
                 const double nowMs = juce::Time::getMillisecondCounterHiRes();
-                for (size_t i = 0; i < backdropScheduledStartMs.size(); ++i)
+                // Invert pulse sequence: previously index 0 pulsed first. Now highest index
+                // starts immediately and lower indices are staggered later so the visual
+                // ripple direction reverses.
+                const size_t total = backdropScheduledStartMs.size();
+                for (size_t i = 0; i < total; ++i)
                 {
-                    backdropScheduledStartMs[i] = nowMs + (double)i * kPerBackdropDelayMs;
+                    const size_t reversedIdx = total - 1 - i; // total-1 -> 0
+                    backdropScheduledStartMs[i] = nowMs + (double)reversedIdx * kPerBackdropDelayMs;
                 }
                 // request full repaint when pulses begin
                 needAll = true;
