@@ -238,4 +238,18 @@ private:
     // VBlank-driven animator updater: used to drive visual animators at the
     // display refresh rate while leaving the 60Hz timer for non-animation tasks.
     std::unique_ptr<juce::VBlankAnimatorUpdater> vblankUpdater;
+
+    // --- Dancer PNG sequence (reintroduced) ---
+    // Frames loaded from BinaryData dancer_0_png .. dancer_20_png (reference canvas 355x500).
+    void loadDancerFrames();
+    void drawDancer(juce::Graphics& g);
+    std::vector<std::unique_ptr<juce::Drawable>> dancerFrames; // ordered frame drawables
+    int dancerFrameCount { 0 };              // number of loaded frames
+    int dancerLastFrame { 0 };               // last computed frame index
+    unsigned long long dancerLastDrawnClockCounter { 0 }; // last clock counter used for frame selection
+    static constexpr int kDancerRefW = 355;  // reference design width
+    static constexpr int kDancerRefH = 500;  // reference design height
+    // Option: divisor for clock pulses per frame advance (1 => every pulse; 24 => quarter-note cycle)
+    int dancerPulseCyclePPQ { 24 };          // use 24 PPQ quarter-note cycle mapping
+    
 };

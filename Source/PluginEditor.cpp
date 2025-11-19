@@ -472,6 +472,9 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
             .build());
         vblankUpdater->addAnimator(*backdropAnimators[i]);
     }
+
+    // Load dancer PNG frame sequence (placed inside idx0 donut interior)
+    loadDancerFrames();
 }
   
 }
@@ -511,6 +514,9 @@ void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
             g.setColour(col);
             g.fillEllipse(rc);
         }
+
+        // Draw dancer (behind ring visuals) clipped to inner donut
+        drawDancer(g);
     }
 
     // Draw a donut-shaped mask behind the ring (circle index 0) to hide thin aliasing lines.
@@ -857,6 +863,8 @@ void ClockSyncAudioProcessorEditor::timerCallback()
     if (counter != lastSeenClockCounter)
     {
         lastSeenClockCounter = counter;
+        // Ensure dancer advances every 24PPQ pulse by repainting ring area
+        needRing = true;
         // When a new MIDI clock tick arrives, check whether the 1/16 step
         // has advanced and drive any step-aligned UI updates (LED pulse,
         // backdrop sequencing) from this branch. This is more robust than
@@ -911,7 +919,7 @@ void ClockSyncAudioProcessorEditor::timerCallback()
                 const size_t total = backdropScheduledStartMs.size();
                 for (size_t i = 0; i < total; ++i)
                 {
-                    const size_t reversedIdx = total - 1 - i; // total-1 -> 0
+                    const size_t reversedIdx = total  - 2 - i; // total-1 -> 0
                     backdropScheduledStartMs[i] = nowMs + (double)reversedIdx * kPerBackdropDelayMs;
                 }
                 // request full repaint when pulses begin
@@ -1210,6 +1218,75 @@ void ClockSyncAudioProcessorEditor::timerCallback()
         // Trigger updates can affect the ring drawing; repaint ring.
         repaint(ringArea);
     }
+}
+
+// ---------------- Dancer PNG sequence ----------------
+void ClockSyncAudioProcessorEditor::loadDancerFrames()
+{
+    dancerFrames.clear();
+    dancerFrames.reserve(24);
+    auto addFrame = [this](const void* data, int size){
+        if (! data || size <= 0) return;
+        if (auto d = juce::Drawable::createFromImageData(data, size))
+            dancerFrames.push_back(std::move(d));
+    };
+    addFrame(BinaryData::dancer_0_png,  BinaryData::dancer_0_pngSize);
+    addFrame(BinaryData::dancer_1_png,  BinaryData::dancer_1_pngSize);
+    addFrame(BinaryData::dancer_2_png,  BinaryData::dancer_2_pngSize);
+    addFrame(BinaryData::dancer_3_png,  BinaryData::dancer_3_pngSize);
+    addFrame(BinaryData::dancer_4_png,  BinaryData::dancer_4_pngSize);
+    addFrame(BinaryData::dancer_5_png,  BinaryData::dancer_5_pngSize);
+    addFrame(BinaryData::dancer_6_png,  BinaryData::dancer_6_pngSize);
+    addFrame(BinaryData::dancer_7_png,  BinaryData::dancer_7_pngSize);
+    addFrame(BinaryData::dancer_8_png,  BinaryData::dancer_8_pngSize);
+    addFrame(BinaryData::dancer_9_png,  BinaryData::dancer_9_pngSize);
+    addFrame(BinaryData::dancer_10_png, BinaryData::dancer_10_pngSize);
+    addFrame(BinaryData::dancer_11_png, BinaryData::dancer_11_pngSize);
+    addFrame(BinaryData::dancer_12_png, BinaryData::dancer_12_pngSize);
+    addFrame(BinaryData::dancer_13_png, BinaryData::dancer_13_pngSize);
+    addFrame(BinaryData::dancer_14_png, BinaryData::dancer_14_pngSize);
+    addFrame(BinaryData::dancer_15_png, BinaryData::dancer_15_pngSize);
+    addFrame(BinaryData::dancer_16_png, BinaryData::dancer_16_pngSize);
+    addFrame(BinaryData::dancer_17_png, BinaryData::dancer_17_pngSize);
+    addFrame(BinaryData::dancer_18_png, BinaryData::dancer_18_pngSize);
+    addFrame(BinaryData::dancer_19_png, BinaryData::dancer_19_pngSize);
+    addFrame(BinaryData::dancer_20_png, BinaryData::dancer_20_pngSize);
+    dancerFrameCount = (int) dancerFrames.size();
+    dancerLastFrame = 0;
+    dancerLastDrawnClockCounter = 0;
+}
+
+void ClockSyncAudioProcessorEditor::drawDancer(juce::Graphics& g)
+{
+    if (dancerFrameCount <= 0 || dancerFrames.empty() || ringArea.isEmpty()) return;
+    const unsigned long long pulses = processor.getUiClockCounter();
+    if (runParamCached && dancerFrameCount > 1)
+    {
+        const int pulsesInQuarter = 24; // fixed PPQ sync
+        const int pInQuarter = (int) (pulses % (unsigned long long) pulsesInQuarter);
+        int frameIdx = (pInQuarter * dancerFrameCount) / pulsesInQuarter;
+        frameIdx = juce::jlimit(0, dancerFrameCount - 1, frameIdx);
+        dancerLastFrame = frameIdx;
+        dancerLastDrawnClockCounter = pulses;
+    }
+    juce::Drawable* drawable = dancerFrames[(size_t) dancerLastFrame].get();
+    if (! drawable) return;
+    juce::Rectangle<float> inner((float)(ringArea.getCentreX() - kRingInnerD / 2),
+                                 (float)(ringArea.getCentreY() - kRingInnerD / 2),
+                                 (float) kRingInnerD, (float) kRingInnerD);
+    auto dest = inner.reduced(6.0f);
+    const float refW = (float) kDancerRefW;
+    const float refH = (float) kDancerRefH;
+    const float sx = dest.getWidth() / refW;
+    const float sy = dest.getHeight() / refH;
+    const float scale = std::min(sx, sy) * 0.92f; // padding
+    const float scaledW = refW * scale;
+    const float scaledH = refH * scale;
+    const float tx = dest.getCentreX() - scaledW * 0.5f;
+    const float ty = dest.getCentreY() - scaledH * 0.5f;
+    juce::Path clip; clip.addEllipse(dest);
+    g.reduceClipRegion(clip);
+    drawable->draw(g, 1.0f, juce::AffineTransform::scale(scale).translated(tx, ty));
 }
 
 // OverlayTooltip handlers unused.
