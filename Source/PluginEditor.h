@@ -4,12 +4,14 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 #include <juce_animation/juce_animation.h>
 #include "PluginProcessor.h"
-#include "StepOffsetMenu.h"
-#include "GridScaleMenu.h"
 #include "RingToggle.h"
-#include "ShuffleModeMenu.h"
-#include "LookAndFeels.h" // Centralised LookAndFeel & theme colours
+#include "LookAndFeels.h" // theme colours
 #include "UiLayoutConstants.h"
+
+#include "PlaygroundComponent.h"
+
+// Forward-declare popup ring
+class PopupMenuRing;
 
 class ClockSyncAudioProcessorEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
@@ -18,11 +20,12 @@ public:
     ~ClockSyncAudioProcessorEditor() override;
 
     void paint(juce::Graphics&) override;
-    // Draw elements that must appear above child components (e.g. trigger ellipse)
+    // Draw elements that must appear above child components
     void paintOverChildren(juce::Graphics&) override;
     void resized() override;
     void mouseUp(const juce::MouseEvent&) override;
     void mouseDown(const juce::MouseEvent&) override;
+    void mouseMove(const juce::MouseEvent&) override;
 
 private:
     ClockSyncAudioProcessor& processor;
@@ -31,21 +34,15 @@ private:
     void timerCallback() override;
 
     // UI components
-    // Rate selection: 4 custom text buttons
-    // Legacy rate buttons removed (replaced by gridScaleMenu)
-    // ComboBox that paints its text centered across the full control width
     class FullWidthComboBox : public juce::ComboBox
     {
     public:
         void paint(juce::Graphics& g) override
         {
-            // Draw background using the active LookAndFeel only. Do not draw text here
-            // — the ComboBox may contain an internal label/editor which we'll stretch
-            // to occupy the full width in `resized()` to prevent arrow-area shifting.
+            // Draw combo background only
             getLookAndFeel().drawComboBox(g, getWidth(), getHeight(), false, 0, 0, 0, 0, *this);
 
-            // If nothing is selected, show the placeholder text (e.g. "new...")
-            // because the LookAndFeel's combo drawing path no longer renders text.
+            // Show placeholder when no selection
             if (getSelectedId() == 0)
             {
                 juce::String placeholder = getTextWhenNothingSelected();
@@ -60,12 +57,10 @@ private:
 
         void resized() override
         {
-            // Let base class perform any placement it needs
+            // Base resized
             juce::ComboBox::resized();
 
-            // Stretch any internal label or text editor child to the full width so
-            // the displayed text is truly centred across the whole control and not
-            // constrained by a reserved arrow area.
+            // Stretch child label/editor to full width
             for (auto* c : getChildren())
             {
                 if (auto* te = dynamic_cast<juce::TextEditor*>(c))
@@ -81,12 +76,17 @@ private:
         }
     } deviceBox;
     juce::TextButton refreshButton { "RESET" };
+    juce::TextButton setupButton { "SETUP" };
+    // Setup-mode toggles
+    juce::TextButton idleModeButton { "IDLE OFF" };
+    juce::TextButton legacyModernButton { "LEGACY" };
+    juce::TextButton sppButton { "S.P.P. OFF" };
     // New: instrument name combo + NAME/MIDI toggle
     FullWidthComboBox nameBox;
     juce::TextButton nameMidiSwitch { "NAME" };
     // Name editor helper
     void toggleNameEditorOrCommit();
-    // Small center-dot toggle used to enable/disable click
+    // Small center-dot click toggle
     class SmallDotToggle : public juce::ToggleButton {
     public:
         void setColours(juce::Colour offCol, juce::Colour onCol) { off = offCol; on = onCol; repaint(); }
@@ -109,25 +109,22 @@ private:
         juce::Colour off { juce::Colours::red };
         juce::Colour on  { juce::Colours::cyan };
     } clickButton;
-    // Replaces keepClockButton with a circular toggle
-    juce::Slider clickLevelSlider;
-    AnimatedStepOffsetMenu stepOffsetMenu;
-    // New grid scale radial selector replacing four rate buttons
-    GridScaleMenu gridScaleMenu; // manages 1/32..1/4 selection
-    // New: toggle to control whether trigger arms a bar-restart (+/- offset)
-    RingToggle triggerModeToggle;
-    // New: idle clock toggle (32x32) near top-left
+    // Idle clock toggle
     RingToggle idleClockToggle;
     // New: shuffle scale toggle at (65,195) size 40x40
-    RingToggle shuffleScaleToggle;
-    ShuffleModeMenu shuffleModeMenu; // 7 arc-arranged size-gradient buttons 1..7
+
+    // Popup ring(s)
+    std::unique_ptr<PopupMenuRing> popupRing0;
+    std::unique_ptr<PopupMenuRing> popupRing1;
+    // Shared playground component (migrated UI)
+    std::unique_ptr<PlaygroundComponent> playgroundComp;
+
+    // UI timing
+    double lastUiUpdateMs { 0.0 };
 
     // Attachments
-    // Attachments
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> clickEnableAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> clickLevelAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> idleClockAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> triggerModeAttachment;
 
     // Helpers
     void refreshDeviceList();
@@ -136,97 +133,19 @@ private:
     void populateNameBox();
     void showNewNameDialog();
     std::vector<juce::MidiDeviceInfo> midiOutputs;
-    // Persisted instrument name list (stored in APVTS state as newline-separated string)
+    // Persisted instrument names
     juce::StringArray instrumentNames;
-    // Inline entry widget for adding/editing a new instrument name
+    // Inline entry editor
     std::unique_ptr<juce::TextEditor> nameEntryEditor;
 
-    // Help / tooltips
+    // Help toggle
     juce::TextButton helpToggle { "?" };
-    // Faster tooltip delay (milliseconds) so tips appear quickly when help is enabled
-    // Use a top-level TooltipWindow (parent = nullptr) so its transient popup
-    // isn't occluded by this editor's `paintOverChildren()` drawing.
-    juce::TooltipWindow tooltipWindow { nullptr, 250 };
-    // tooltipMap now stores pairs of target component pointer and tooltip key
-    // (lookup performed against `tooltipRegistry`).
-    std::vector<std::pair<juce::Component*, juce::String>> tooltipMap;
-    void applyTooltips(bool enabled);
-
-    // Centralised tooltip registry (populated from Tooltips.h at construction)
-    std::unordered_map<juce::String, juce::String> tooltipRegistry;
-    // Overlay helper used to provide tooltips for components that do not
-    // implement SettableTooltipClient (custom menus, etc). These overlays
-    // sit on top but do not intercept mouse clicks so the underlying
-    // components remain interactive while still exposing hover tooltips.
-    class OverlayTooltip : public juce::Component, public juce::SettableTooltipClient
-    {
-    public:
-        OverlayTooltip() { setInterceptsMouseClicks(true, true); target = nullptr; }
-        void updateBoundsRelativeTo(juce::Component* tgt)
-        {
-            target = tgt;
-            if (! target) return;
-            setBounds(target->getX(), target->getY(), target->getWidth(), target->getHeight());
-        }
-        // Store tooltip text locally so we can surface it via transient overlay
-        void setTooltip(const juce::String& t) override { tooltipStr = t; juce::SettableTooltipClient::setTooltip(t); }
-        const juce::String& getTooltipText() const { return tooltipStr; }
-        void mouseEnter(const juce::MouseEvent& e) override;
-        void mouseMove(const juce::MouseEvent& e) override;
-        void mouseExit(const juce::MouseEvent& e) override;
-        // Forward mouse clicks to the underlying target so overlays don't block interaction.
-        // If the overlay was created to cover a non-component region (e.g. run/trigger)
-        // then `target` will be null — in that case forward events to the parent editor
-        // so the normal editor-level click handlers still run.
-        void mouseDown(const juce::MouseEvent& e) override
-        {
-            if (target)
-                target->mouseDown(e.getEventRelativeTo(target));
-            else if (auto* p = getParentComponent())
-                p->mouseDown(e.getEventRelativeTo(p));
-        }
-        void mouseUp(const juce::MouseEvent& e) override
-        {
-            if (target)
-                target->mouseUp(e.getEventRelativeTo(target));
-            else if (auto* p = getParentComponent())
-                p->mouseUp(e.getEventRelativeTo(p));
-        }
-        void mouseDrag(const juce::MouseEvent& e) override
-        {
-            if (target)
-                target->mouseDrag(e.getEventRelativeTo(target));
-            else if (auto* p = getParentComponent())
-                p->mouseDrag(e.getEventRelativeTo(p));
-        }
-        void mouseDoubleClick(const juce::MouseEvent& e) override
-        {
-            if (target)
-                target->mouseDoubleClick(e.getEventRelativeTo(target));
-            else if (auto* p = getParentComponent())
-                p->mouseDoubleClick(e.getEventRelativeTo(p));
-        }
-    private:
-        juce::Component* target;
-        juce::String tooltipStr;
-    };
-    std::vector<std::unique_ptr<OverlayTooltip>> tooltipOverlays;
-    // Transient tooltip label shown for overlays in hosts where TooltipWindow
-    // popups may be blocked. Visible only when help toggle is enabled and the
-    // mouse hovers an overlay region.
-    std::unique_ptr<juce::Label> transientTooltip;
-    void showTransientTooltip(const juce::String& text, juce::Point<int> screenPos);
-    void hideTransientTooltip();
-    // transient tooltip animation state
-    float transientTooltipAlpha { 0.0f };
-    float transientTooltipTargetAlpha { 0.0f };
-    unsigned long long transientTooltipHideAt { 0 };
     
 
-    // Simple LED animation based on clock ticks
+    // LED animation
     unsigned long long lastSeenClockCounter { 0 };
     float ledLevel { 0.0f }; // 0..1 (driven by ledAnimator)
-    // Animator-driven LED pulse target (set before starting the animator)
+    // LED pulse target
     float ledPulseTarget { 1.0f };
     bool runParamCached { true };
     int rateIndexCached { 1 };
@@ -241,70 +160,68 @@ private:
 
     // Layout cache for ring visualisation
     juce::Rectangle<int> ringArea;
-    juce::Rectangle<int> triggerRect; // 50x50 trigger circle in bottom-right
-    float triggerFade { 0.0f };       // 0..1, blue -> red fade after click
     // Step number fade shown inside triggerRect, updates each 16th
     int stepNumberCached { 0 };
-    // Visual step used for the outer ring wedge animation. This is gated by
-    // the `idleClockToggle` so the wedge can freeze while the internal clock
-    // and dancer animations continue.
+    // Visual step (chaselight)
     int visualStepCached { 1 };
-    // Selected arc size (1..7) used as shuffleValue
+    // Relative step 1..16 from last restart
+    int relativeStepCached { 1 };
+    // Selected resync step 1..16
+    int selectedResyncStepCached { 1 };
+    // Cycle start absolute step
+    int cycleStartStepAbsolute { -1 }; // -1 => not initialised yet
+    // Cached NEXT indicator
+    bool nextRestartPendingCached { false };
+    // Shuffle value
     int shuffleValue { 4 }; // default middle
 
-    // Cached rate parameter pointer to avoid repeated dynamic_cast in timer
+    // Cached rate parameter pointer
     juce::AudioParameterChoice* rateParam { nullptr };
 
     // Drawing helpers
     
-    void drawRing(juce::Graphics& g);
-    void drawTrigger(juce::Graphics& g);
-    void drawDancer(juce::Graphics& g);
-    void loadDancerFrames();
-    void startAsyncDancerLoad();
-    static juce::File findDancerFolder();
-    static void scrubSvgColours(juce::XmlElement& el, juce::Colour accent);
+    // Legacy ring/dancer helpers removed (PlaygroundComponent owns visuals).
    
 
-    // Constants
+    // Ring constants
     static constexpr int kRingOuterD = 160;
     static constexpr int kRingInnerD = 120;
 
-    // Backdrop pulse animation: six circles pulse in sequence then two-beat pause.
-    std::array<float, 6> backdropPulseProgress {{ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }}; // 1.0 => full pulse
-    std::array<float, 6> backdropPulseScale = UiLayout::kBackdropPulseScales; // scale increments per circle
+    // Backdrop pulse animation
+    std::array<float, 8> backdropPulseProgress {{ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }}; // 1.0 => full pulse
+    std::array<float, 8> backdropPulseScale = UiLayout::kBackdropPulseScales; // scale increments per circle
     int lastBackdropBeatIndex { -1 };
     int lastLedBeatIndex { -1 };
-    std::array<std::unique_ptr<juce::Animator>, 6> backdropAnimators;
+    std::array<std::unique_ptr<juce::Animator>, 8> backdropAnimators;
+    // Scheduled start times (ms since epoch high-res) for staggered backdrop pulses.
+    // When a quarter-note beat occurs we populate this with now + i * kPerBackdropDelayMs
+    // and the timerCallback will start each animator when its scheduled time arrives.
+    std::array<double, 8> backdropScheduledStartMs {{ 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 }};
+
+    // Setup submenu animation state
+    float setupSubmenuProgress { 0.0f }; // 0 hidden (-25), 1 shown (+25)
+    bool setupSubmenuTargetOn { false }; // current target (true = shown)
+    bool setupSubmenuAnimatingHide { false }; // true when playing hide animation (invert progress)
+    int hoveredSetupIndex { -1 }; // 0 idle,1 legacy,2 spp
+    std::unique_ptr<juce::Animator> setupAnimator; // drives setupSubmenuProgress
+
+    // Chase light segment fade trail: each raw wedge (0..15) holds a fade value decaying toward 0.
+    // Legacy editor-side segment fade trail removed (Ring16Component now owns fade state).
+
+    // Manual trigger offset preview state
+    bool manualTriggerOffsetActive { false };      // true after manual trigger until restart applied
+    int  manualTriggerRelativeStepAtTrigger { 1 }; // relativeStepCached snapshot at trigger time
+    int  manualTriggerPlayheadDelta { 0 };         // (selectedResyncStepCached - snapshot) modulo 16
+
+    // Layout helper for animated submenu
+    void updateSetupSubmenuLayout();
 
     
     
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ClockSyncAudioProcessorEditor)
 
-    // Dancer animation
-    std::vector<std::unique_ptr<juce::Drawable>> dancerFrames;
-    int dancerFrameCount { 0 }; // Populated from layers in dancer_all.svg
-    // Cached last dancer frame (freeze when stopped)
-    int dancerLastFrame { 0 };
-    std::atomic<bool> dancerLoading { false }; // true while background thread parsing SVG
-    double dancerLoadStartMs { 0.0 }; // start timestamp for async load
-    // Last clock counter value actually used to advance the dancer.
-    // This lets us cheaply skip animation math & SVG transforms when no new
-    // clock pulse has arrived (or when stopped), further ensuring that GUI
-    // work never competes with MIDI clock timing. All animation is strictly
-    // on the message thread and never touches audio thread resources.
-    unsigned long long dancerLastDrawnClockCounter { std::numeric_limits<unsigned long long>::max() };
-
-    // Trigger fade animator (JUCE animation module). Replaces manual exponential decay.
-    juce::Animator triggerFadeAnimator { juce::ValueAnimatorBuilder{}
-        .withDurationMs(240.0)
-        .withValueChangedCallback([this](float progress){
-            // progress 0..1 => fade from 1 -> 0
-            triggerFade = 1.0f - juce::jlimit(0.0f, 1.0f, progress);
-            repaint(triggerRect);
-        })
-        .build() };
+    // Legacy dancer animation members removed.
 
     // LED pulse animator: on each 16th step we start this animator to produce
     // a brief pulse. The animator supplies a 0..1 progress; we multiply the

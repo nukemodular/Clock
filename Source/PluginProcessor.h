@@ -47,7 +47,7 @@ public:
     juce::AudioProcessorValueTreeState& getAPVTS() { return parameters; }
     
     // One-shot trigger request from the editor: retrigger at next 1/16, then restart at next bar
-    void requestTriggerOnce();
+    void requestTriggerOnce(); // (modified) schedule Start at next BAR + offset step (never mid-bar)
     void setTriggerModeEnabled(bool enabled);
     void notifyResyncOffsetChanged();
 
@@ -57,6 +57,7 @@ public:
     bool getUiIsRunning() const { return uiIsRunning.load(std::memory_order_relaxed); }
     bool getUiPendingStart() const { return uiPendingStart.load(std::memory_order_relaxed); }
     bool getUiNextRestartPending() const { return uiNextRestartPending.load(std::memory_order_relaxed); }
+    double getUiBpm() const { return uiBpm.load(std::memory_order_relaxed); }
 
     // External MIDI device selection API (used by editor)
     void setExternalDeviceId(const juce::String& id);
@@ -92,10 +93,12 @@ private:
     int pendingRateIndex { -1 };
     bool runActive { true };
     bool pendingStart { false };
+    bool forceNextBarStart { false }; // when true, pendingStart will target the NEXT bar (always wrap) + offset step
     // Trigger and restart flags
     std::atomic<bool> triggerArmedForNextSixteenth { false }; // when true, send a Start at next 1/16 grid boundary
     std::atomic<bool> pendingBarRestart { false };    // restart at selected step
     std::atomic<bool> triggerModeEnabled { true };    // governs whether bar restart follows trigger
+    bool lastTriggerModeEnabled { true };             // track rising edge to schedule restart when enabling while running
         bool suppressUntilRestart = false; // suppress clock emission until first scheduled restart boundary
         bool firstBlock = true;            // distinguish plugin load vs later transport edges
         bool lastRunParam { false };       // track parameter transitions
@@ -128,6 +131,7 @@ private:
     std::atomic<bool> uiIsRunning { true };
     std::atomic<bool> uiPendingStart { false };
     std::atomic<bool> uiNextRestartPending { false }; // show "NEXT" when a bar+offset restart is scheduled
+    std::atomic<double> uiBpm { 120.0 }; // host tempo (fallback 120)
 
     // Helpers
     int getClockResolution() const; // returns 48/24/12/6 based on currentRateIndex

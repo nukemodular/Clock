@@ -2,40 +2,21 @@
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
 #include "build_info.h"
-#include "GridScaleMenu.h"
 #include "BinaryData.h"
-#include "LookAndFeels.h" // Use centralised LookAndFeel & theme colours
-#include "Tooltips.h"
+#include "LookAndFeels.h" // theme colours
 #include "UiLayoutConstants.h"
 #include <array>
 #include <optional>
+#include "PopupMenuRing.h"
 
 namespace
 {
-    // Derived theme colour variant (slightly lighter/darker base) while core colours come from UiThemeColours
+    // Accent background variant
     const juce::Colour kBaseLo  = UiThemeColours::base().darker(0.12f);
-
-    // Arc size button definitions (absolute positions from canvas origin)
-    // Previously positioned algorithmically with baseY/xStart/gap; converted to fixed rects for easier manual tweaking.
-    // Each rect: {x, y, w, h}. Derived from former layout: sizes {22,25,28,31,34,37,40} and y-offsets {0,16,22,26,28,26,16} added to baseY=215.
-    // Visual shallow arc preserved. Adjust these directly as needed.
-    // juce::Rectangle isn't a literal type; use static const (not constexpr)
-    // Global offset for non-excluded components (exclude: reset/refreshButton, deviceBox, header, LED, status text)
-    // Requested shift: move content (excluding header) by x -5, y -10.
-    const int offX = -20;
-    const int offY = -40;
-
-    static const std::array<juce::Rectangle<int>, 7> kArcButtonRects = {
-        juce::Rectangle<int>( 107 + offX, 220 + offY, 22, 22),
-        juce::Rectangle<int>(118 + offX, 230 + offY, 25, 25),
-        juce::Rectangle<int>(131 + offX, 236 + offY, 28, 28),
-        // Adjusted Y for value 4 button (index 3) to sit along the drag path and avoid being skipped (was 220)
-        juce::Rectangle<int>(147 + offX, 239 + offY, 31, 31),
-        juce::Rectangle<int>(166 + offX, 238 + offY, 34, 34),
-        juce::Rectangle<int>(187 + offX, 231 + offY, 37, 37),
-        juce::Rectangle<int>(204 + offX, 221 + offY, 40, 40)
-    };
 }
+
+// (internal namespace only holds accent colour variant)
+
 
 ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProcessor& p)
     : juce::AudioProcessorEditor(&p), processor(p)
@@ -44,195 +25,35 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     setSize(300, 240);
     startTimerHz(60);
 
-    // Component setup (colour, style, add, z-order)
+    // Component setup
     {
-        gridScaleMenu.setColours(UiThemeColours::accent(), UiThemeColours::base(), UiThemeColours::cyan());
-        shuffleModeMenu.setColours(UiThemeColours::accent(), UiThemeColours::base(), UiThemeColours::cyan());
-        triggerModeToggle.setColours(UiThemeColours::accent(), UiThemeColours::base(), UiThemeColours::cyan());
         idleClockToggle.setColours(UiThemeColours::accent(), UiThemeColours::base(), UiThemeColours::cyan());
-        shuffleScaleToggle.setColours(UiThemeColours::accent(), UiThemeColours::base(), UiThemeColours::cyan());
-        stepOffsetMenu.setColours(UiThemeColours::accent(), UiThemeColours::base(), UiThemeColours::cyan());
         clickButton.setColours(UiThemeColours::accent(), UiThemeColours::cyan());
-
-        clickLevelSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-        clickLevelSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
-        clickRotaryLNF = std::make_unique<ClickRotaryLNF>();
-        clickLevelSlider.setLookAndFeel(clickRotaryLNF.get());
-        // Repurposed rotary: discrete 0..4 stages for click rate (0=off,1=4th,2=8th,3=16th,4=24ppq)
-        clickLevelSlider.setRange(0, 4, 1);
-        clickLevelSlider.setTooltip("Off / 4th / 8th / 16th / 24ppq");
-
-        addAndMakeVisible(gridScaleMenu);
-        addAndMakeVisible(shuffleModeMenu);
-        addAndMakeVisible(deviceBox);
-        addAndMakeVisible(refreshButton);
-        addAndMakeVisible(nameBox);
-        addAndMakeVisible(nameMidiSwitch);
-        // attach a mouse listener so double-clicking the name combo opens an inline editor
-        struct NameBoxMouseListener : public juce::MouseListener
-        {
-            ClockSyncAudioProcessorEditor* owner;
-            NameBoxMouseListener(ClockSyncAudioProcessorEditor* o) : owner(o) {}
-            void mouseDoubleClick(const juce::MouseEvent&) override { owner->toggleNameEditorOrCommit(); }
-        };
-        nameBox.addMouseListener(new NameBoxMouseListener(this), true);
-        addAndMakeVisible(clickButton);
-        addAndMakeVisible(clickLevelSlider);
-        addAndMakeVisible(triggerModeToggle);
-        addAndMakeVisible(idleClockToggle);
-        addAndMakeVisible(shuffleScaleToggle);
-        addAndMakeVisible(stepOffsetMenu);
-
-            // Help toggle (small '?' square) - visible by default off; toggles tooltips
-            addAndMakeVisible(helpToggle);
-            helpToggle.setButtonText("?");
-            helpToggle.setClickingTogglesState(true);
-            // text colours: cyan when enabled, slightly darker cyan when disabled
-            helpToggle.setColour(juce::TextButton::textColourOffId, UiThemeColours::cyan().darker(0.45f));
-            helpToggle.setColour(juce::TextButton::textColourOnId, UiThemeColours::cyan());
-                    // Create a tiny LookAndFeel so the help button only draws text (no background/borders)
-                    struct HelpBtnLNF : public juce::LookAndFeel_V4
-                    {
-                        void drawButtonBackground(juce::Graphics&, juce::Button&, const juce::Colour&, bool, bool) override {}
-                        void drawButtonText(juce::Graphics& g, juce::TextButton& b, bool, bool) override
-                        {
-                            const float fontSize = UiLayout::kFontMedium;
-                            // Show colour based on toggle state so the button clearly
-                            // indicates whether help/tooltips are enabled.
-                            if (b.getToggleState())
-                                g.setColour(b.findColour(juce::TextButton::textColourOnId));
-                            else
-                                g.setColour(b.findColour(juce::TextButton::textColourOffId));
-                            g.setFont(juce::Font(juce::FontOptions("Arial", (float)fontSize, juce::Font::bold)));
-                            g.drawFittedText(b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, 1);
-                        }
-                    };
-                    helpButtonLNF = std::make_unique<HelpBtnLNF>();
-                    helpToggle.setLookAndFeel(helpButtonLNF.get());
-                    helpToggle.setRepeatSpeed(0, 0);
-                    helpToggle.onClick = [this]() { applyTooltips(helpToggle.getToggleState()); };
-                    // ensure the component background is not painted by the editor
-                    helpToggle.setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
-            helpToggle.setColour(juce::TextButton::buttonOnColourId, juce::Colours::transparentBlack);
-
-        gridScaleMenu.toBack();
-        // Keep slider and its small click button in front so they are visually prominent
-        clickLevelSlider.toFront(true);
-        clickButton.toFront(true);
-        idleClockToggle.toBack();
-        stepOffsetMenu.toFront(true);
-    }
-
-    auto& apvts = processor.getAPVTS();
-
-    // clickButton now toggles click variant (sample spike vs 1ms pulse)
-    clickEnableAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
-        apvts, ClockSyncAudioProcessor::paramClickPulse, clickButton);
-    // clickLevelSlider repurposed to select click rate stages (0..4)
-    clickLevelAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        apvts, ClockSyncAudioProcessor::paramClickRate, clickLevelSlider);
-    idleClockAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
-        apvts, ClockSyncAudioProcessor::paramClockWhileStopped, idleClockToggle);
-    triggerModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
-        apvts, ClockSyncAudioProcessor::paramTriggerModeEnabled, triggerModeToggle);
-
-    // Name/Instrument combo setup (look-and-feel assigned after ThemeLNF is created)
-    nameBox.setColour(juce::ComboBox::textColourId, UiThemeColours::cyan());
-    nameBox.setJustificationType(juce::Justification::centred);
-    // hide the arrow for nameBox so clicks are handled by overlay
-    nameBox.setColour(juce::ComboBox::arrowColourId, juce::Colours::transparentBlack);
-    // Ensure the internal text component does not allow editing (prevents extra text widgets)
-    nameBox.setEditableText(false);
-    // Load saved instrument names from state
-    loadInstrumentNamesFromState();
-    populateNameBox();
-
-    // Default: NAME mode off => show deviceBox
-    nameMidiSwitch.setToggleState(false, juce::dontSendNotification);
-    nameMidiSwitch.setButtonText("NAME");
-    nameMidiSwitch.onClick = [this]
-    {
-        const bool isOn = nameMidiSwitch.getToggleState();
-        if (isOn) nameMidiSwitch.setButtonText("MIDI"); else nameMidiSwitch.setButtonText("NAME");
-        // Show only the active combo and ensure z-order to avoid accidental overlap
-        nameBox.setVisible(isOn);
-        deviceBox.setVisible(! isOn);
-        if (isOn)
-        {
-            nameBox.toFront(true);
-            deviceBox.toBack();
-        }
-        else
-        {
-            deviceBox.toFront(true);
-            nameBox.toBack();
-        }
-        // nothing else needed; editing trigger handled by double-click on the combo
-    };
-
-    nameBox.onChange = [this]
-    {
-        const int id = nameBox.getSelectedId();
-        if (id == 1000) // new...
-            showNewNameDialog();
-        else if (id == 1001) // clear all
-        {
-            instrumentNames.clear();
-            saveInstrumentNamesToState();
-            populateNameBox();
-        }
-    };
-
-    // editing/commit handled by double-click listener which calls toggleNameEditorOrCommit()
-
-    {
-        int initialStep = 1;
-        if (auto* pi = dynamic_cast<juce::AudioParameterInt*>(
-                apvts.getParameter(ClockSyncAudioProcessor::paramResyncOffsetStep)))
-            initialStep = pi->get();
-        stepOffsetMenu.setStep(initialStep);
-    }
-
-    stepOffsetMenu.onStepChanged = [this](int step)
-    {
-        if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramResyncOffsetStep))
-        {
-            const auto& range = p->getNormalisableRange();
-            p->beginChangeGesture();
-            p->setValueNotifyingHost(range.convertTo0to1((float) juce::jlimit(1, 16, step)));
-            p->endChangeGesture();
-        }
-        processor.notifyResyncOffsetChanged();
-    };
+        
+    
 
 
 
     themeLNF = std::make_unique<ThemeLNF>();
 
-    // Ensure controls use our theme look-and-feel instance
+    // Assign theme LNF
     nameBox.setLookAndFeel(themeLNF.get());
     nameMidiSwitch.setLookAndFeel(themeLNF.get());
-    // Make the TextButton behave like a toggle
+    setupButton.setLookAndFeel(themeLNF.get());
+    idleModeButton.setLookAndFeel(themeLNF.get());
+    legacyModernButton.setLookAndFeel(themeLNF.get());
+    sppButton.setLookAndFeel(themeLNF.get());
+    // Enable toggle state
     nameMidiSwitch.setClickingTogglesState(true);
-    // Flip colouring: when OFF show base; when ON show accent (swapped per request)
-    nameMidiSwitch.setColour(juce::TextButton::textColourOffId, UiThemeColours::accent());
-    nameMidiSwitch.setColour(juce::TextButton::textColourOnId,  UiThemeColours::base());
+    setupButton.setClickingTogglesState(true);
+    idleModeButton.setClickingTogglesState(true);
+    legacyModernButton.setClickingTogglesState(true);
+    sppButton.setClickingTogglesState(true);
+    // Dynamic colouring per label
+    
 
-    // Ensure the top-level tooltip window uses our ThemeLNF so drawTooltip is used
-    tooltipWindow.setLookAndFeel(themeLNF.get());
-    tooltipWindow.setColour(juce::TooltipWindow::backgroundColourId, UiThemeColours::base().withAlpha(0.666f));
-    tooltipWindow.setColour(juce::TooltipWindow::textColourId, UiThemeColours::cyan());
-    tooltipWindow.setColour(juce::TooltipWindow::outlineColourId, juce::Colours::transparentBlack);
-
-    // Create a transient tooltip label (fallback for hosts that restrict
-    // top-level transient windows). Hidden by default; shown by overlays.
-    transientTooltip = std::make_unique<juce::Label>();
-    transientTooltip->setVisible(false);
-    transientTooltip->setJustificationType(juce::Justification::centredLeft);
-    transientTooltip->setColour(juce::Label::backgroundColourId, UiThemeColours::base().withAlpha(0.85f));
-    transientTooltip->setColour(juce::Label::textColourId, UiThemeColours::cyan());
-    transientTooltip->setFont(juce::Font(juce::FontOptions("Arial", UiLayout::kFontTooltip, juce::Font::bold)));
-    addAndMakeVisible(*transientTooltip);
+    // APVTS alias
+    auto& apvts = processor.getAPVTS();
 
     if (auto* rp = apvts.getRawParameterValue(ClockSyncAudioProcessor::paramRun))
         runParamCached = rp->load() > 0.5f;
@@ -249,10 +70,9 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
 
     refreshButton.setLookAndFeel(themeLNF.get());
     clickButton.setColours(UiThemeColours::accent(), UiThemeColours::cyan());
-    gridScaleMenu.setIndex(rateIndexCached);
-    gridScaleMenu.onGridChanged = [setRateIndex](int idx){ setRateIndex(idx); };
+    // Rate now via playground idx6
     
-    // Add soft drop shadows to a set of prominent controls for depth
+    // Drop shadows helper
     auto addDropShadowTo = [](juce::Component& c, int radius = 12, juce::Colour col = juce::Colours::black.withAlpha(0.4f), int xOff = 4, int yOff = 4)
     {
         auto eff = std::make_unique<juce::DropShadowEffect>();
@@ -262,33 +82,200 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         c.setComponentEffect(eff.release());
     };
     
-    addDropShadowTo(gridScaleMenu);
-    addDropShadowTo(shuffleModeMenu);
     addDropShadowTo(idleClockToggle, 8, juce::Colours::black.withAlpha(0.4f));
     addDropShadowTo(helpToggle, 4, juce::Colours::black.withAlpha(0.4f));
-    addDropShadowTo(triggerModeToggle, 8, juce::Colours::black.withAlpha(0.4f));
     addDropShadowTo(clickButton, 4, juce::Colours::black.withAlpha(0.4f));
-    addDropShadowTo(clickLevelSlider, 8, juce::Colours::black.withAlpha(0.4f));
+    
 
-    // Re-connect shuffle arc control to paramShuffleStep (1..7)
-    if (auto* shuffleParam = apvts.getParameter(ClockSyncAudioProcessor::paramShuffleStep))
+    // Popup ring (only 0 retained)
+
+    popupRing0 = std::make_unique<PopupMenuRing>();
+    popupRing0->setValues({1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16});
+    popupRing0->setLabels({"1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16"});
+    popupRing0->setAngles(-juce::MathConstants<float>::halfPi, juce::MathConstants<float>::halfPi * 1.5f);
+    popupRing0->setCircleRadius(16.0f);
+    popupRing0->setExpansionRadius(62.0f);
+    
+
+    // Create playground component
+    playgroundComp = std::make_unique<PlaygroundComponent>();
+    addAndMakeVisible(*playgroundComp);
+    // Full-canvas playground
+    playgroundComp->setBounds(0, 0, getWidth(), getHeight());
+    playgroundComp->setHeaderHeight(30);
+    playgroundComp->toBack();
+
+    // Header widgets on top
+    addAndMakeVisible(refreshButton);
+    addAndMakeVisible(setupButton);
+    addAndMakeVisible(idleModeButton);
+    addAndMakeVisible(legacyModernButton);
+    addAndMakeVisible(sppButton);
+    addAndMakeVisible(deviceBox);
+    addAndMakeVisible(nameBox);
+    addAndMakeVisible(nameMidiSwitch);
+    refreshButton.toFront(true);
+    deviceBox.toFront(true);
+    nameBox.toFront(true);
+    nameMidiSwitch.toFront(true);
+    
+    clickButton.setVisible(false);
+    // Keep other small toggles non-intercepting so they don't block playground hovers
+    
+
+    // --- Wire PlaygroundComponent callbacks to APVTS so user interactions
+    // in the playground update plugin parameters (editor owns the APVTS).
+    if (playgroundComp)
     {
-        auto shuffleRange = shuffleParam->getNormalisableRange();
-        // Continuous feedback while dragging / changing
-        shuffleModeMenu.onValueChanged = [shuffleParam, shuffleRange](int v)
+        // Resync step selected (1..16)
+        playgroundComp->onResyncStepRequested = [this](int step)
         {
-            v = juce::jlimit(1, 7, v);
-            shuffleParam->beginChangeGesture();
-            shuffleParam->setValueNotifyingHost(shuffleRange.convertTo0to1((float) v));
+            if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramResyncOffsetStep))
+            {
+                const auto& range = p->getNormalisableRange();
+                p->beginChangeGesture();
+                p->setValueNotifyingHost(range.convertTo0to1((float) juce::jlimit(1, 16, step)));
+                p->endChangeGesture();
+            }
+            processor.notifyResyncOffsetChanged();
         };
-        // Finalize gesture on mouse-up click callback
-        shuffleModeMenu.onButtonClicked = [shuffleParam, shuffleRange](int v)
+
+        // Toggle Run (play/stop)
+        playgroundComp->onRunToggleRequested = [this](bool on)
         {
-            v = juce::jlimit(1, 7, v);
-            shuffleParam->setValueNotifyingHost(shuffleRange.convertTo0to1((float) v));
-            shuffleParam->endChangeGesture();
+            if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramRun))
+            {
+                p->beginChangeGesture();
+                p->setValueNotifyingHost(on ? 1.0f : 0.0f);
+                p->endChangeGesture();
+            }
         };
+
+        // One-shot trigger
+        playgroundComp->onTriggerOnceRequested = [this]()
+        {
+            // Stronger LED pulse to acknowledge manual trigger (playground animates idx1)
+            ledPulseTarget = 1.0f;
+            ledAnimator.start();
+            // Defer restart to processor (quantized 1/16; bar+offset if trigger mode enabled)
+            processor.requestTriggerOnce();
+            // Manual trigger chase-light offset: apply visual offset immediately.
+            // Compute delta from current relative step to selected offset step.
+            manualTriggerOffsetActive = true;
+            manualTriggerRelativeStepAtTrigger = juce::jlimit(1,16, relativeStepCached);
+            if (selectedResyncStepCached > 0)
+            {
+                manualTriggerPlayheadDelta = (selectedResyncStepCached - manualTriggerRelativeStepAtTrigger + 16) % 16; // 0..15
+            }
+            else
+            {
+                manualTriggerPlayheadDelta = 0;
+            }
+            // Flash the segment corresponding to the current playhead step at trigger time (not the offset preview target)
+            if (playgroundComp)
+            {
+                playgroundComp->flashSegmentLogical(manualTriggerRelativeStepAtTrigger);
+            }
+            repaint();
+        };
+
+        // Clock rate requested (playground sends division value: 4/8/16/32)
+        playgroundComp->onClockRateIndexRequested = [this](int val)
+        {
+            // Map value -> index 0..3 and mimic GridScaleMenu's onGridChanged by
+            // setting the choice value. Processor will defer applying until next
+            // bar+offset boundary and show NEXT while pending.
+            int idx = 1; // default -> 16
+            if (val == 32) idx = 0;
+            else if (val == 16) idx = 1;
+            else if (val == 8)  idx = 2;
+            else if (val == 4)  idx = 3;
+            // Use the same helper used by GridScaleMenu wiring
+            if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramClockRateIndex))
+                p->setValueNotifyingHost(p->getNormalisableRange().convertTo0to1((float) idx));
+        };
+
+        // Shuffle amount (1..7)
+        playgroundComp->onShuffleStepRequested = [this](int v)
+        {
+            if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramShuffleStep))
+            {
+                const auto& range = p->getNormalisableRange();
+                p->beginChangeGesture();
+                p->setValueNotifyingHost(range.convertTo0to1((float) juce::jlimit(1, 7, v)));
+                p->endChangeGesture();
+            }
+        };
+
+        // Clock while stopped (boolean)
+        playgroundComp->onClockWhileStoppedRequested = [this](bool on)
+        {
+            if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramClockWhileStopped))
+            {
+                p->beginChangeGesture();
+                p->setValueNotifyingHost(on ? 1.0f : 0.0f);
+                p->endChangeGesture();
+            }
+        };
+
+        // Click rate (0..4) and click pulse variant (bool)
+        playgroundComp->onClickRateRequested = [this](int v)
+        {
+            if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramClickRate))
+            {
+                p->beginChangeGesture();
+                p->setValueNotifyingHost(p->getNormalisableRange().convertTo0to1((float) juce::jlimit(0, 4, v)));
+                p->endChangeGesture();
+            }
+        };
+        playgroundComp->onClickPulseRequested = [this](bool on)
+        {
+            if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramClickPulse))
+            {
+                p->beginChangeGesture();
+                p->setValueNotifyingHost(on ? 1.0f : 0.0f);
+                p->endChangeGesture();
+            }
+        };
+
+        // Trigger mode toggle (idx 8)
+        playgroundComp->onTriggerModeRequested = [this](bool on)
+        {
+            if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramTriggerModeEnabled))
+            {
+                p->beginChangeGesture();
+                p->setValueNotifyingHost(on ? 1.0f : 0.0f);
+                p->endChangeGesture();
+            }
+            // Do not force a restart when toggling mode; processor uses this only to decide
+            // whether manual triggers schedule a bar+offset restart.
+        };
+
+        // Popup3 selection: not mapped to an APVTS param yet — leave as a no-op
+        playgroundComp->onPopup3Selected = [this](int){ /* no-op for now */ };
+
+        // Initialise playground visual state from current parameters
+        playgroundComp->setRunState(runParamCached);
+        if (auto* pi = dynamic_cast<juce::AudioParameterInt*>(apvts.getParameter(ClockSyncAudioProcessor::paramResyncOffsetStep)))
+            playgroundComp->setResyncStepSelected(pi->get());
+        // Map rate index -> displayed division value
+        int displayed = 16;
+        switch (rateIndexCached)
+        {
+            case 0: displayed = 32; break;
+            case 1: displayed = 16; break;
+            case 2: displayed = 8;  break;
+            case 3: displayed = 4;  break;
+            default: displayed = 16; break;
+        }
+        playgroundComp->setClockRateIndexValue(displayed);
+        if (auto* cp = apvts.getRawParameterValue(ClockSyncAudioProcessor::paramClickPulse))
+            playgroundComp->setClickPulseState(cp->load() > 0.5f);
+        if (auto* tm = apvts.getRawParameterValue(ClockSyncAudioProcessor::paramTriggerModeEnabled))
+            playgroundComp->setTriggerModeState(tm->load() > 0.5f);
     }
+
+    // Shuffle step handled via playground idx4.
 
     refreshButton.onClick = [this]{ refreshDeviceList(); };
     deviceBox.onChange = [this]
@@ -300,105 +287,173 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     };
     deviceBox.setLookAndFeel(themeLNF.get());
     deviceBox.setJustificationType(juce::Justification::centred);
-    // hide the arrow so the text isn't shifted by an arrow-area
     deviceBox.setColour(juce::ComboBox::arrowColourId, juce::Colours::transparentBlack);
-    // Ensure the internal text component does not allow editing (prevents extra text widgets)
     deviceBox.setEditableText(false);
-    // Make the combo box label use the accent colour but darker for contrast
-    deviceBox.setColour(juce::ComboBox::textColourId, UiThemeColours::accent().darker(0.5f));
-
-    // Ensure nameBox visibility mirrors switch state initially
+    deviceBox.setColour(juce::ComboBox::textColourId, UiThemeColours::accent());
+    // Provide explicit placeholder when no selection is made.
+    deviceBox.setTextWhenNothingSelected("select midi-out...");
+    // Name combo: centred cyan text, hide arrow to center the label text like deviceBox
+    nameBox.setJustificationType(juce::Justification::centred);
+    nameBox.setEditableText(false);
+    nameBox.setColour(juce::ComboBox::arrowColourId, juce::Colours::transparentBlack);
+    nameBox.setColour(juce::ComboBox::textColourId, UiThemeColours::cyan());
     nameBox.setVisible(nameMidiSwitch.getToggleState());
-    triggerModeToggle.onClick = [this]
+    deviceBox.setVisible(!nameMidiSwitch.getToggleState());
+    // Show S in NAME mode and R in MIDI mode
+    setupButton.setVisible(nameMidiSwitch.getToggleState());
+    idleModeButton.setVisible(false);
+    legacyModernButton.setVisible(false);
+    sppButton.setVisible(false);
+    refreshButton.setVisible(!nameMidiSwitch.getToggleState());
+    // Ensure appearance of NAME/MIDI toggle reflects current mode
     {
-        if (triggerModeToggle.getToggleState())
-            processor.notifyResyncOffsetChanged();
-    };
-
-    loadDancerFrames();
-    triggerFade = 0.0f;
-    // Populate device list immediately so the editor recalls last-used port on open
-    refreshDeviceList();
-
-    // Populate tooltip map (tooltips are off by default until helpToggle enabled)
-    tooltipRegistry = getTooltipTextRegistry();
-    tooltipMap.clear();
-    // map components to registry keys (edit text in Source/Tooltips.h)
-    tooltipMap.push_back({ &refreshButton, "refreshButton" });
-    tooltipMap.push_back({ &deviceBox, "deviceBox" });
-    tooltipMap.push_back({ &nameBox, "nameBox" });
-    tooltipMap.push_back({ &nameMidiSwitch, "nameMidiSwitch" });
-    tooltipMap.push_back({ &clickButton, "clickButton" });
-    tooltipMap.push_back({ &clickLevelSlider, "clickLevelSlider" });
-    tooltipMap.push_back({ &triggerModeToggle, "triggerModeToggle" });
-    tooltipMap.push_back({ &idleClockToggle, "idleClockToggle" });
-    tooltipMap.push_back({ &shuffleScaleToggle, "shuffleScaleToggle" });
-    tooltipMap.push_back({ &stepOffsetMenu, "stepOffsetMenu" });
-    tooltipMap.push_back({ &gridScaleMenu, "gridScaleMenu" });
-    tooltipMap.push_back({ &shuffleModeMenu, "shuffleModeMenu" });
-    tooltipMap.push_back({ &helpToggle, "helpToggle" });
-    // Note: run/trigger areas are not native Components; create dedicated overlays below.
-    // Create overlay tooltip components for items that don't implement
-    // SettableTooltipClient (custom menus). The overlays are non-intercepting
-    // so they won't block mouse interaction with the underlying controls.
-    tooltipOverlays.clear();
-    for (auto& p : tooltipMap)
+        const bool showName = nameMidiSwitch.getToggleState();
+        nameMidiSwitch.setButtonText(showName ? "MIDI" : "NAME");
+        auto txtCol = (showName ? UiThemeColours::accent() : UiThemeColours::cyan());
+        nameMidiSwitch.setColour(juce::TextButton::textColourOffId, txtCol);
+        nameMidiSwitch.setColour(juce::TextButton::textColourOnId,  txtCol);
+    }
+    if (nameMidiSwitch.getToggleState())
     {
-        if (p.first == nullptr) continue;
-        const juce::String key = p.second;
-        const juce::String text = tooltipRegistry.count(key) ? tooltipRegistry[key] : juce::String();
-        // If the component doesn't implement SettableTooltipClient, add an overlay
-        if (dynamic_cast<juce::SettableTooltipClient*>(p.first) == nullptr)
+        loadInstrumentNamesFromState();
+        populateNameBox();
+    }
+    nameMidiSwitch.onClick = [this]
+    {
+        const bool showName = nameMidiSwitch.getToggleState();
+        if (showName) nameMidiSwitch.setButtonText("MIDI"); else nameMidiSwitch.setButtonText("NAME");
+        // Colour depends on label: NAME -> cyan, MIDI -> accent
         {
-            auto overlay = std::make_unique<OverlayTooltip>();
-            overlay->setTooltip(text);
-            overlay->setComponentID(key);
-            addAndMakeVisible(*overlay);
-            // ensure overlay stays above other child components
-            overlay->setAlwaysOnTop(true);
-            overlay->toFront(true);
-            overlay->updateBoundsRelativeTo(p.first);
-            tooltipOverlays.push_back(std::move(overlay));
+            auto txtCol = (showName ? UiThemeColours::accent() : UiThemeColours::cyan());
+            nameMidiSwitch.setColour(juce::TextButton::textColourOffId, txtCol);
+            nameMidiSwitch.setColour(juce::TextButton::textColourOnId,  txtCol);
+        }
+        nameBox.setVisible(showName);
+        deviceBox.setVisible(!showName);
+        setupButton.setVisible(showName);
+        refreshButton.setVisible(!showName);
+        if (showName)
+        {
+            // Load & populate instrument names each time NAME mode becomes active
+            loadInstrumentNamesFromState();
+            populateNameBox();
+            nameBox.toFront(true);
+            deviceBox.toBack();
         }
         else
         {
-            // For native SettableTooltipClient components, assign tooltip text directly
-            if (text.isNotEmpty())
-                dynamic_cast<juce::SettableTooltipClient*>(p.first)->setTooltip(text);
+            deviceBox.toFront(true);
+            nameBox.toBack();
+            // Leaving NAME mode: collapse setup if active
+            if (setupButton.getToggleState())
+                setupButton.setToggleState(false, juce::dontSendNotification);
+            // Force submenu hidden state (avoid stale targetOn causing reappear on return)
+            setupSubmenuTargetOn = false;
+            setupSubmenuProgress = 0.0f;
+            setupSubmenuAnimatingHide = true;
         }
-    }
-
-    // Create overlays for non-component interactive regions: Run ring and Trigger area.
-    // These overlays use componentID keys that correspond to entries in the tooltip registry.
+        // Re-layout. Keep PlaygroundComponent header height fixed at 30 so controls don't shift.
+        const int headerH = 30 ;//+ ((showName && setupButton.getToggleState()) ? 30 : 0);
+        if (playgroundComp) playgroundComp->setHeaderHeight(30);
+        resized();
+        repaint(0,0,getWidth(), headerH + 4);
+    };
+    // Setup button toggles extra header area (visible only in NAME mode)
+    // Animated setup submenu: we slide a 50px rectangle containing the setup buttons below the header (fixed header height 30).
+    // Submenu animates between hidden (top=-25) and shown (top=25). We track progress 0..1 with an Animator.
+    // Setup submenu animation initialisation
+    setupSubmenuProgress = 0.0f; // hidden
+    hoveredSetupIndex = -1;
+    setupAnimator = std::make_unique<juce::Animator>(juce::ValueAnimatorBuilder{}
+        .withDurationMs(166.0f)
+        .withValueChangedCallback([this](float progress){
+            const float p = juce::jlimit(0.0f, 1.0f, progress);
+            // When hiding, invert progress so animation plays reverse without needing direction API
+            setupSubmenuProgress = setupSubmenuAnimatingHide ? (1.0f - p) : p;
+            updateSetupSubmenuLayout();
+            // Update interactivity of submenu buttons & block playground hover while active
+            const bool active = nameMidiSwitch.getToggleState() && (setupSubmenuTargetOn || setupSubmenuProgress > 0.0f);
+            idleModeButton.setVisible(active);
+            legacyModernButton.setVisible(active);
+            sppButton.setVisible(active);
+            idleModeButton.setInterceptsMouseClicks(active, active);
+            legacyModernButton.setInterceptsMouseClicks(active, active);
+            sppButton.setInterceptsMouseClicks(active, active);
+            if (playgroundComp)
+            {
+                playgroundComp->setExternalHoverBlocked(active);
+                if (! active) playgroundComp->clearForcedHoverIndex();
+            }
+            repaint(0,0,getWidth(), 80);
+        })
+        .build());
+    if (! vblankUpdater)
     {
-        auto overlayRun = std::make_unique<OverlayTooltip>();
-        overlayRun->setComponentID("runButton");
-        const juce::String runText = tooltipRegistry.count("runButton") ? tooltipRegistry["runButton"] : juce::String();
-        overlayRun->setTooltip(runText);
-        addAndMakeVisible(*overlayRun);
-        overlayRun->setAlwaysOnTop(true);
-        overlayRun->toFront(true);
-        // Bounds are initially zero; resized() will place this overlay to `ringArea`.
-        tooltipOverlays.push_back(std::move(overlayRun));
-
-        auto overlayTrig = std::make_unique<OverlayTooltip>();
-        overlayTrig->setComponentID("triggerArea");
-        const juce::String trigText = tooltipRegistry.count("triggerArea") ? tooltipRegistry["triggerArea"] : juce::String();
-        overlayTrig->setTooltip(trigText);
-        addAndMakeVisible(*overlayTrig);
-        overlayTrig->setAlwaysOnTop(true);
-        overlayTrig->toFront(true);
-        tooltipOverlays.push_back(std::move(overlayTrig));
+        vblankUpdater = std::make_unique<juce::VBlankAnimatorUpdater>(this);
     }
+    vblankUpdater->addAnimator(*setupAnimator);
+    setupButton.onClick = [this]
+    {
+        const bool showName = nameMidiSwitch.getToggleState();
+        if (! showName) { // If leaving NAME mode, force hidden state (no animator stop API)
+            setupSubmenuTargetOn = false; setupSubmenuAnimatingHide = true; setupSubmenuProgress = 0.0f; updateSetupSubmenuLayout(); repaint(); return; }
+        setupSubmenuTargetOn = setupButton.getToggleState();
+        setupSubmenuAnimatingHide = ! setupSubmenuTargetOn;
+        setupAnimator->start();
+    };
+    // Placeholder toggles: change text + colour when toggled (no backend wiring yet)
+    auto configureSetupToggle = [](juce::TextButton& b){
+        b.setColour(juce::TextButton::textColourOffId, UiThemeColours::cyan());
+        b.setColour(juce::TextButton::textColourOnId, UiThemeColours::cyan());
+    };
+    configureSetupToggle(idleModeButton);
+    configureSetupToggle(legacyModernButton);
+    configureSetupToggle(sppButton);
+    // Initially keep buttons visible (they slide under header when hidden)
+    idleModeButton.setVisible(true);
+    legacyModernButton.setVisible(true);
+    sppButton.setVisible(true);
+    idleModeButton.onClick = [this]
+    {
+        const bool on = idleModeButton.getToggleState();
+        idleModeButton.setButtonText(on ? "IDLE ON" : "IDLE OFF");
+    };
+    legacyModernButton.onClick = [this]
+    {
+        const bool on = legacyModernButton.getToggleState();
+        legacyModernButton.setButtonText(on ? "MODERN" : "LEGACY");
+    };
+    sppButton.onClick = [this]
+    {
+        const bool on = sppButton.getToggleState();
+        sppButton.setButtonText(on ? "S.P.P. ON" : "S.P.P. OFF");
+    };
+        nameBox.onChange = [this]
+    {
+        const int id = nameBox.getSelectedId();
+        if (id == 1000) // new...
+            showNewNameDialog();
+        else if (id == 1001) // clear all
+        {
+            instrumentNames.clear();
+            saveInstrumentNamesToState();
+            populateNameBox();
+        }
+    };
 
-    // Tooltips inactive initially
-    applyTooltips(false);
+    // Trigger mode toggle handled by playground idx8.
+
+    // Populate device list immediately to recall last-used MIDI port.
+    refreshDeviceList();
+
+    
 
     // Drive visual animators from a VBlank-synchronised updater so animations
     // are in-step with the display refresh rate. Keep the 60Hz Timer for
     // non-animation tasks (host polling, parameter sync, tooltip timing, etc.).
-    vblankUpdater = std::make_unique<juce::VBlankAnimatorUpdater>(this);
-    vblankUpdater->addAnimator(triggerFadeAnimator);
+    if (! vblankUpdater)
+        vblankUpdater = std::make_unique<juce::VBlankAnimatorUpdater>(this);
+    // Add LED animator to existing updater (do not recreate; preserves setupAnimator)
     vblankUpdater->addAnimator(ledAnimator);
     // Create backdrop animators (one per decorative ring) and register with vblank updater
     for (size_t i = 0; i < backdropAnimators.size(); ++i)
@@ -413,9 +468,12 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         vblankUpdater->addAnimator(*backdropAnimators[i]);
     }
 }
+  
+}
 
 void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
 {
+    g.fillAll (UiThemeColours::accent());
     auto bounds = getLocalBounds().toFloat();
     juce::ColourGradient bgGrad(UiThemeColours::base(), bounds.getTopLeft(), kBaseLo, bounds.getBottomLeft(), false);
     g.setGradientFill(bgGrad);
@@ -428,12 +486,12 @@ void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
         for (size_t i = 0; i < sizes.size(); ++i)
         {
             const float baseSz = (float) sizes[i];
-            const float darkFactor = 0.3f + 0.75f * (float) i; // bigger -> darker
-
+            //const float darkFactor = 0.3f + 0.75f * (float) i; // bigger -> darker
+            const float darkFactor = 0.888f + 0.888f * (float) i;
             // Apply pulse scale (progress goes 1->0) to briefly enlarge the circle on its beat
             const float progress = backdropPulseProgress[i];
             const float extraScale = backdropPulseScale[i] * progress; // e.g. 0.02 -> +2%
-            const float sz = baseSz * (1.0f + extraScale);
+            const float sz = baseSz * (UiLayout::kBackdropMultiplier + extraScale);
 
             // Slight alpha boost on pulse so it looks like a brief flash
             const float baseAlpha = 1.0f; // fully opaque base colouring
@@ -443,21 +501,146 @@ void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
             // No cyan interpolation and no alpha boost applied.
             juce::Colour col = UiThemeColours::accent().darker(darkFactor);
 
-            juce::Rectangle<float> rc(centre.x - sz * 0.5f, centre.y - sz * 0.5f + 5.0f + 5.0f , sz, sz);
+            // single vertical offset for backdrop positioning
+            juce::Rectangle<float> rc(centre.x - sz * 0.5f, centre.y - sz * 0.5f + 10.0f, sz, sz);
             g.setColour(col);
             g.fillEllipse(rc);
         }
     }
 
-    auto header = getLocalBounds().removeFromTop(30).reduced(8, 4).toFloat();
-    juce::Path headerPath; headerPath.addRoundedRectangle(header, UiLayout::kCornerRadius);
-    g.setColour(UiThemeColours::base());
-    g.fillPath(headerPath);
-    
+    // Draw a donut-shaped mask behind the ring (circle index 0) to hide thin aliasing lines.
+    // Use the ring's own radius values so the visual mask stays in sync if the ring constants change.
+    {
+        float maskOuter = (float) (kRingOuterD / 2);
+        float maskInner = (float) (kRingInnerD / 2);
+        juce::Path donutPath;
+        donutPath.addEllipse((float) (ringArea.getCentreX() - maskOuter), (float) (ringArea.getCentreY() - maskOuter), maskOuter * 2.0f, maskOuter * 2.0f);
+        donutPath.addEllipse((float) (ringArea.getCentreX() - maskInner), (float) (ringArea.getCentreY() - maskInner), maskInner * 2.0f, maskInner * 2.0f);
+        // Use even-odd rule so the second ellipse becomes a hole. Do NOT draw
+        // anything here; the playground is responsible for ensuring its own
+        // cutout so the editor should leave the centre transparent.
+        donutPath.setUsingNonZeroWinding(false);
+    }
 
-    const bool isRunning = processor.getUiIsRunning();
-    const bool isArmed = processor.getUiPendingStart();
-    const bool hasNext = processor.getUiNextRestartPending();
+    // Header background now drawn in paintOverChildren to ensure it sits above playground visuals.
+}
+
+void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
+{
+    // Submenu should draw first (behind header) so header masks its top portion.
+    const bool inNameMode = nameMidiSwitch.getToggleState();
+    const bool submenuActive = (inNameMode && (setupSubmenuTargetOn || setupSubmenuProgress > 0.0f));
+    if (submenuActive)
+    {
+        const float hiddenTop = -10.0f; // fully hidden behind header
+        const float shownTop  = 25.0f;  // final revealed position (shift upward by 20px per request)
+        const float submenuH  =  30.0f;
+        const float topY = hiddenTop + (shownTop - hiddenTop) * setupSubmenuProgress;
+        juce::Rectangle<float> submenuRect(0.0f, topY, (float)getWidth(), submenuH);
+        // Drop shadow for submenu (lighter & smaller than header shadow). Draw first, then fill.
+        {
+            juce::DropShadow ds(juce::Colours::black.withAlpha(0.30f), 10, juce::Point<int>(0, 4));
+            // Slightly shrink width to avoid horizontal bleed; allow a couple px extra height for blur.
+            auto shadowInt = submenuRect.toNearestInt().expanded(-2, 2);
+            ds.drawForRectangle(g, shadowInt);
+        }
+        g.setColour(UiThemeColours::base());
+        g.fillRect(submenuRect);
+        // Repaint buttons manually AFTER fill so they appear above submenu background (normal child paint occurred earlier & is covered).
+        const int btnW = 60, btnH = 14, gap = 6, marginX = 8;
+        const int yButtons = (int) std::round(submenuRect.getBottom() - btnH - 4.0f);
+        idleModeButton.setBounds(marginX + 6, yButtons, btnW, btnH);
+        legacyModernButton.setBounds(marginX + 6 + (btnW + gap), yButtons, btnW, btnH);
+        sppButton.setBounds(marginX + 6 + 2*(btnW + gap), yButtons, btnW, btnH);
+        auto repaintComp = [&g](juce::Component& c){ if (! c.isVisible()) return; juce::Graphics::ScopedSaveState ss(g); g.setOrigin(c.getX(), c.getY()); c.paint(g); g.setOrigin(0,0); };
+        repaintComp(idleModeButton);
+        repaintComp(legacyModernButton);
+        repaintComp(sppButton);
+
+        // Version label (right-aligned)
+        const juce::String ver = PLUGIN_VERSION_WITH_BUILD;
+        juce::Font vf(juce::FontOptions("Arial", 11.0f, juce::Font::bold));
+        g.setFont(vf);
+        g.setColour(UiThemeColours::cyan());
+        // Version label alignment uses button geometry (already computed above)
+        juce::Rectangle<int> verArea((int)getWidth() - 156, yButtons, 150, btnH);
+        g.drawFittedText(ver, verArea, juce::Justification::centredRight, 1);
+
+        // Hover tooltips (avoid drawing above header region 0..30)
+        if (hoveredSetupIndex >= 0)
+        {
+            g.setColour(UiThemeColours::accent());
+            g.setFont(vf);
+            auto drawTip = [&](const juce::String& text, const juce::Component& c){
+                juce::Rectangle<int> r = c.getBounds();
+                juce::Rectangle<int> tipR(r.getX(), r.getY() - 18, r.getWidth(), r.getHeight());
+                if (tipR.getBottom() < 30) return; // clipped by header
+                g.drawFittedText(text, tipR, juce::Justification::centred, 1);
+            };
+            if (hoveredSetupIndex == 0) drawTip("send midi-clocks when idle/stopped", idleModeButton);
+            else if (hoveredSetupIndex == 1) drawTip("legacy sends always stop before start", legacyModernButton);
+            else if (hoveredSetupIndex == 2) drawTip("send song position pointer", sppButton);
+        }
+    }
+
+    // Draw fixed header (30px) at top (on top of submenu).
+    const int headerPaintH = 30;
+    juce::Rectangle<float> headerRect(0.0f, 0.0f, (float) getWidth(), (float) headerPaintH);
+    // Draw drop shadow (using juce::DropShadow) first so base fill sits on top.
+    {
+        juce::DropShadow ds(juce::Colours::black.withAlpha(0.45f), 14, juce::Point<int>(0, 6));
+        // Use integer rect for shadow drawing; shrink width slightly to avoid horizontal bleed
+        auto shadowInt = headerRect.toNearestInt().withWidth(headerRect.getWidth() - 2);
+        ds.drawForRectangle(g, shadowInt);
+    }
+    // Base header fill rectangle
+    g.setColour(UiThemeColours::base());
+    g.fillRect(headerRect);
+    // Repaint visible header child components manually so they appear above the header background fill.
+    auto repaintHeaderComp = [&g](juce::Component& c)
+    {
+        if (! c.isVisible()) return;
+        juce::Graphics::ScopedSaveState ss(g);
+        g.setOrigin(c.getX(), c.getY());
+        c.paint(g);
+        g.setOrigin(0,0);
+    };
+    repaintHeaderComp(nameMidiSwitch);
+    if (refreshButton.isVisible()) repaintHeaderComp(refreshButton);
+    if (setupButton.isVisible()) repaintHeaderComp(setupButton);
+    repaintHeaderComp(deviceBox);
+    repaintHeaderComp(nameBox);
+    // Setup submenu drawn separately below; buttons repainted there.
+
+    // Skip fallback ring/dancer drawing when playground is active.
+
+
+    // Draw popup menu rings (if configured). Place them at the centres of
+    // the components they replace so they visually substitute the legacy UI.
+    auto drawAtComp = [&](const std::unique_ptr<PopupMenuRing>& pr, const juce::Component& c)
+    {
+        if (! pr) return;
+        auto b = c.getBounds().toFloat();
+        const float baseX = b.getCentreX();
+        const float baseY = b.getCentreY();
+        const float baseR = std::min(b.getWidth(), b.getHeight()) * 0.5f;
+        pr->draw(g, baseX, baseY, baseR);
+    };
+
+    // If PlaygroundComponent is present, prefer its internal popups and
+    // skip drawing the legacy popup-ring overlays which depend on small
+    // component bounds and can visually clip expansion outside those bounds.
+    if (! playgroundComp)
+    {
+        // Only draw remaining popup rings for non-playground mode.
+    }
+
+    // Always draw header status and LED above all child components (keep within the base 30px header area)
+    {
+        auto header = juce::Rectangle<float>(0,0,(float)getWidth(), 30.0f).reduced(8,4);
+        const bool isRunning = processor.getUiIsRunning();
+        const bool isArmed = processor.getUiPendingStart();
+        const bool hasNext = processor.getUiNextRestartPending();
         juce::String status;
         if (hasNext)
             status = "PENDING";
@@ -466,84 +649,49 @@ void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
         else if (isArmed)
             status = "ARMED";
         else
-            status = idleClockToggle.getToggleState() ? "IDLE" : "STOP";
-    g.setFont(juce::Font(juce::FontOptions("Arial", 11.0f, juce::Font::bold)));
-    g.setColour(UiThemeColours::cyan());
-    // Shift status text slightly right (+4px) per request
-    g.drawFittedText(status, juce::Rectangle<int>(getWidth() - 73, (int)header.getY(), 50, (int)header.getHeight()),
-                     juce::Justification::centred, 1);
+            status = idleModeButton.getToggleState() ? "IDLE" : "STOP";
 
-    const float ledRadius = UiLayout::kLedRadius;
-    // Move LED slightly right (+8px)
-    auto ledCenter = juce::Point<float>(getWidth() - 17.0f, header.getCentreY());
-    const float a = juce::jlimit(0.0f, 1.0f, ledLevel);
-    auto ledColour = UiThemeColours::cyan().withAlpha(0.10f).interpolatedWith(UiThemeColours::cyan().withAlpha(0.97f), a);
-    g.setColour(juce::Colours::black.withAlpha(0.5f));
-    g.fillEllipse(ledCenter.x - ledRadius - 1.5f, ledCenter.y - ledRadius + 1.5f, ledRadius * 2, ledRadius * 2);
-    g.setColour(ledColour);
-    g.fillEllipse(ledCenter.x - ledRadius, ledCenter.y - ledRadius, ledRadius * 2, ledRadius * 2);
-    g.setColour(juce::Colours::white.withAlpha(0.15f));
-    g.drawEllipse(ledCenter.x - ledRadius, ledCenter.y - ledRadius, ledRadius * 2, ledRadius * 2, 1.0f);
-}
-
-void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
-{
-    // Draw ring first (outer + inner base); then overlay dancer so it remains visible.
-    drawRing(g);
-    {
-        juce::Graphics::ScopedSaveState ss(g);
-        // Clip to inner circle to avoid drawing over ring outline.
-        juce::Path clip;
-        clip.addEllipse((float) (ringArea.getCentreX() - kRingInnerD / 2),
-                        (float) (ringArea.getCentreY() - kRingInnerD / 2),
-                        (float) kRingInnerD, (float) kRingInnerD);
-        g.reduceClipRegion(clip);
-        drawDancer(g);
-    }
-    {
-        juce::Graphics::ScopedSaveState ss(g);
-        auto r = stepOffsetMenu.getBounds().toFloat();
-        g.reduceClipRegion(r.toNearestInt());
-        g.setOrigin(stepOffsetMenu.getPosition());
-        stepOffsetMenu.paintEntireComponent(g, true);
-        g.setOrigin(0, 0);
-    }
-    // Repaint the small click toggle above the ring as well
-    {
-        juce::Graphics::ScopedSaveState ss(g);
-        auto r = clickButton.getBounds().toFloat();
-        g.reduceClipRegion(r.toNearestInt());
-        g.setOrigin(clickButton.getPosition());
-        clickButton.paintEntireComponent(g, true);
-        g.setOrigin(0, 0);
-    }
-    // Curved label feature removed.
-    // Draw trigger ellipse last to ensure it is front-most.
-    drawTrigger(g);
-
-    // Small version/build label at bottom-right
-    {
-        const juce::String ver = PLUGIN_VERSION_WITH_BUILD;
-        const int padding = 6;
-        juce::Font f(juce::FontOptions("Arial", 11.0f, juce::Font::bold));
-        g.setFont(f);
+        g.setFont(juce::Font(juce::FontOptions("Arial", 11.0f, juce::Font::bold)));
         g.setColour(UiThemeColours::cyan());
-        auto area = getLocalBounds().reduced(padding);
-        auto labelArea = area.removeFromBottom(10).removeFromRight(200);
-        g.drawFittedText(ver, labelArea, juce::Justification::centredRight, 1);
+        // Shift status text slightly right (+4px) per request
+        g.drawFittedText(status, juce::Rectangle<int>(getWidth() - 73, (int)header.getY(), 50, (int)header.getHeight()),
+                         juce::Justification::centred, 1);
+
+        const float ledRadius = UiLayout::kLedRadius;
+        // Move LED slightly right (+8px)
+        auto ledCenter = juce::Point<float>(getWidth() - 17.0f, header.getCentreY());
+        const float a = juce::jlimit(0.0f, 1.0f, ledLevel);
+        auto ledColour = UiThemeColours::cyan().withAlpha(0.10f).interpolatedWith(UiThemeColours::cyan().withAlpha(0.97f), a);
+        g.setColour(juce::Colours::black.withAlpha(0.5f));
+        g.fillEllipse(ledCenter.x - ledRadius - 1.5f, ledCenter.y - ledRadius + 1.5f, ledRadius * 2, ledRadius * 2);
+        g.setColour(ledColour);
+        g.fillEllipse(ledCenter.x - ledRadius, ledCenter.y - ledRadius, ledRadius * 2, ledRadius * 2);
+        g.setColour(juce::Colours::white.withAlpha(0.15f));
+        g.drawEllipse(ledCenter.x - ledRadius, ledCenter.y - ledRadius, ledRadius * 2, ledRadius * 2, 1.0f);
     }
 }
 
 void ClockSyncAudioProcessorEditor::resized()
 {
     // Static absolute positions for fixed 300x300 canvas
+    // Ensure shared playground component occupies the full editor. The header
+    // overlays in Z, not by shifting content in Y.
+    if (playgroundComp)
+    {
+        playgroundComp->setBounds(0, 0, getWidth(), getHeight());
+        playgroundComp->setHeaderHeight(30); // keep fixed; Setup expansion only paints extra base area
+    }
     // Header area is painted, no components there (top 28px)
 
     {
-        const int headerH = 30;
+        const bool showName = nameMidiSwitch.getToggleState();
+        // Painted header height (base 30 + optional 20 for Setup row)
+        const int headerH = 30; // fixed header height now
         const int marginX = 5;
         const int marginY = 3;
-        const int contentH = headerH - marginY * 2; // 20px
+        // First-row content height is fixed (decoupled from Setup expansion)
+        const int baseHeaderH = 30;
+        const int contentH = baseHeaderH - marginY * 2; // stay constant at 24px
         const int gap = 4;
         const int buttonW = std::max(16, contentH - 6); // square-ish refresh button (width ~= height)
         const int toggleW = 14; // same width for name/midi toggle
@@ -555,175 +703,145 @@ void ClockSyncAudioProcessorEditor::resized()
         const int comboX = centerX - comboW / 2;
         // place refresh button immediately left of the combo
         refreshButton.setBounds(comboX - (toggleW + 4), marginY + 5, toggleW, contentH - 10);
+        setupButton.setBounds(refreshButton.getBounds());
         // place NAME/MIDI toggle left of refresh button (moved further left to avoid clipping)
         const int extraLeft = 17; // nudge left
         nameMidiSwitch.setBounds(refreshButton.getX() - (toggleW + 13 + extraLeft), marginY + 5, 40, contentH - 10);
         // comboboxes share same bounds; only one visible at a time
         deviceBox.setBounds(comboX, marginY + 3, comboW, contentH - 2);
         nameBox.setBounds(comboX, marginY + 3, comboW, contentH - 2);
-        // nameEdit overlay removed; combo remains interactive (double-click to edit)
+
+        // Setup submenu layout now handled in paintOverChildren via animation; initial hidden position set here.
+        updateSetupSubmenuLayout();
+        
+        // Combo remains interactive (double-click to edit).
         // make refresh button small single-letter
         refreshButton.setButtonText("R");
+        setupButton.setButtonText("S");
     }
 
-    // Expand slider bounds slightly to increase drag detection area without visibly changing layout
-    const int sliderExtra = 15;
-    clickLevelSlider.setBounds(70 + offX - sliderExtra/2, 96 + offY - sliderExtra/2, 46 + sliderExtra, 46 + sliderExtra); // rotary position (offset)
+    // Position imported components exactly as authored in LayoutPlayground (use canonical baseCircles)
+    if (playgroundComp && playgroundComp->baseCircles.size() >= 9)
     {
-        auto sb = clickLevelSlider.getBounds();
-        auto c = sb.getCentre();
-        clickButton.setBounds(c.x - 8, c.y - 8, 16, 16);
-        // ensure slider and click button remain front-most after layout
-        clickLevelSlider.toFront(true);
-        clickButton.toFront(true);
-    }
-    // Step ring area (centered region for ring + labels margin)
-    ringArea = juce::Rectangle<int>(104 + offX, 104 + offY, 132, 132);
-    // Step offset button area (expanded to avoid hover scaling clipping)
-    triggerModeToggle.setBounds(240 + offX, 156 + offY, 30, 30);
-    // Keep the same top-left position but limit the interactive area to 100x100
-    stepOffsetMenu.setBounds(195 + offX , 150 + offY, 120, 120);
-    idleClockToggle.setBounds(120 + offX, 80 + offY, 30, 30);
-    shuffleScaleToggle.setBounds(83 + offX, 200 + offY, 30, 30);
-    // Declare click-through holes in stepOffsetMenu so controls behind remain clickable when its menu is closed
-    {
-        auto holeToggle = stepOffsetMenu.getLocalArea(&triggerModeToggle, triggerModeToggle.getLocalBounds());
-        auto holeArcRow = stepOffsetMenu.getLocalArea(&shuffleModeMenu, shuffleModeMenu.getLocalBounds());
-        auto combined   = holeToggle.getUnion(holeArcRow);
-        stepOffsetMenu.setClickThroughRect(combined);
-    }
-    gridScaleMenu.setBounds(20 + offX, 128 + offY, 110, 110);
-    triggerRect = juce::Rectangle<int>(221 + offX, 80 + offY, 85, 85);
-    shuffleModeMenu.setBounds(102 + offX, 220 + offY, 155, 65);
-    shuffleModeMenu.setManualBounds(kArcButtonRects);
-    triggerModeToggle.toFront(true);
-    shuffleModeMenu.toFront(true);
-    stepOffsetMenu.toFront(true);
+        // Use canonical positions from Main.cpp (baseCircles). Do NOT apply
+        // any vertical shift; the header is a Z-overlay.
 
-    // Help toggle position: lower-left 24x24
-    const int helpSize = 25;
-    helpToggle.setBounds(0, 210, helpSize, helpSize);
+        // idx7 (click rate rotary + inner click-to-pulse button) is fully handled
+        // by the PlaygroundComponent. Keep legacy slider/button hidden and do not
+        // lay them out when the playground is active.
 
-    // Keep any overlay tooltip components aligned with their targets
-    for (auto& ov : tooltipOverlays)
-    {
-        if (! ov) continue;
-        // find matching target from tooltipMap by comparing componentID keys
-        for (auto& p : tooltipMap)
+        // circle 0 -> ring area
         {
-            if (p.first == nullptr) continue;
-            if (ov->getComponentID() == p.second)
-            {
-                ov->updateBoundsRelativeTo(p.first);
-                // keep overlays above everything
-                ov->setAlwaysOnTop(true);
-                ov->toFront(true);
-                break;
-            }
+            const auto& c0 = playgroundComp->baseCircles.getReference(0);
+            const int d = (int) std::round(c0.r * 2.0f);
+            ringArea = juce::Rectangle<int>((int)std::round(c0.x - c0.r), (int)std::round(c0.y - c0.r), d, d);
         }
-        // If the overlay corresponds to a non-component region (run/trigger),
-        // position it explicitly using the cached rects.
-        if (ov->getComponentID() == "runButton")
+
+        // circle 1 handled by playground visuals.
+
+        // circle 2 -> idleClockToggle
         {
-            // Position overlay to cover the ring area
-            if (! ringArea.isEmpty())
-            {
-                ov->setBounds(ringArea.getX(), ringArea.getY(), ringArea.getWidth(), ringArea.getHeight());
-                ov->setAlwaysOnTop(true);
-                ov->toFront(true);
-            }
+            const auto& c2 = playgroundComp->baseCircles.getReference(2);
+            const int w = (int) std::round(c2.r * 2.0f);
+            idleClockToggle.setBounds((int)std::round(c2.x - c2.r), (int)std::round(c2.y - c2.r), w, w);
         }
-        else if (ov->getComponentID() == "triggerArea")
-        {
-            if (! triggerRect.isEmpty())
-            {
-                ov->setBounds(triggerRect.getX(), triggerRect.getY(), triggerRect.getWidth(), triggerRect.getHeight());
-                ov->setAlwaysOnTop(true);
-                ov->toFront(true);
-            }
-        }
+
+        // circle 5: shuffle / clockWhileStopped visuals.
+
+        // Resync step selection handled by ring segments.
+
+        // Help toggle: keep its authored placement relative to canvas (use previous explicit position)
+        const int helpSize = 25;
+        helpToggle.setBounds(0, 210, helpSize, helpSize);
+    }
+    else
+    {
+        // Fallback positions if playground absent; keep clickButton hidden.
+        ringArea = juce::Rectangle<int>(150 - 70, 130 - 70, 140, 140);
+        //idleClockToggle.setBounds(234 - 14, 132 - 14, 28, 28);
+        // shuffleScaleToggle removed.
+        // no legacy triggerRect fallback
+        // stepOffsetMenu no longer present.
+        const int helpSize = 25; helpToggle.setBounds(0, 210, helpSize, helpSize);
     }
 
-    // Ensure transient tooltip sits above children but below native top-level
-    if (transientTooltip)
-    {
-        transientTooltip->toFront(true);
-        transientTooltip->setBounds(8, getHeight() - 48, getWidth() - 16, 36);
-    }
+    
 }
 
-void ClockSyncAudioProcessorEditor::applyTooltips(bool enabled)
+// Update setup submenu button positions based on current animation progress (without repaint).
+void ClockSyncAudioProcessorEditor::updateSetupSubmenuLayout()
 {
-    for (auto& p : tooltipMap)
-    {
-        if (p.first == nullptr) continue;
-        const juce::String key = p.second;
-        const juce::String text = tooltipRegistry.count(key) ? tooltipRegistry[key] : juce::String();
-        if (auto* tc = dynamic_cast<juce::SettableTooltipClient*>(p.first))
-        {
-            if (enabled)
-                tc->setTooltip(text);
-            else
-                tc->setTooltip(juce::String());
-        }
-        else
-        {
-            // for overlays, find the overlay by componentID and enable/disable its tooltip
-            for (auto& ov : tooltipOverlays)
-            {
-                if (! ov) continue;
-                if (ov->getComponentID() == key)
-                {
-                        if (enabled) {
-                            ov->setTooltip(text);
-                            ov->setAlwaysOnTop(true);
-                            ov->toFront(true);
-                        }
-                        else {
-                            ov->setTooltip(juce::String());
-                        }
-                        break;
-                    }
-            }
-        }
-    }
-
-    // Also ensure overlays that represent non-component regions (run/trigger)
-    // are enabled/disabled when tooltips are toggled.
-    for (auto& ov : tooltipOverlays)
-    {
-        if (! ov) continue;
-        const juce::String id = ov->getComponentID();
-        if (id.isEmpty()) continue;
-        const juce::String text = tooltipRegistry.count(id) ? tooltipRegistry[id] : juce::String();
-        if (enabled)
-        {
-            ov->setTooltip(text);
-            ov->setAlwaysOnTop(true);
-            ov->toFront(true);
-            ov->setVisible(true);
-            // intercept mouse events so overlays get enter/move/exit to show tooltips;
-            // clicks are forwarded by OverlayTooltip implementation so interaction remains.
-            ov->setInterceptsMouseClicks(true, true);
-        }
-        else
-        {
-            ov->setTooltip(juce::String());
-            ov->setVisible(false);
-            ov->setInterceptsMouseClicks(false, true);
-        }
-    }
-
-    // Hide transient tooltip when disabling tooltips
-    if (! enabled && transientTooltip)
-        transientTooltip->setVisible(false);
+    if (! nameMidiSwitch.getToggleState()) return; // submenu only relevant in NAME mode
+    if (! (setupSubmenuTargetOn || setupSubmenuProgress > 0.0f)) return; // not active
+    const float hiddenTop = -10.0f;
+    const float shownTop  = 25.0f; // adjusted per request (less downward slide)
+    const float topY = hiddenTop + (shownTop - hiddenTop) * setupSubmenuProgress;
+    const float submenuH = 30.0f;
+    const int btnW = 60;
+    const int btnH = 14;
+    const int gap = 6;
+    const int marginX = 8;
+    const int yButtons = (int) std::round(topY + submenuH - btnH - 3.0f);
+    idleModeButton.setBounds(marginX, yButtons, btnW, btnH);
+    legacyModernButton.setBounds(marginX + (btnW + gap), yButtons, btnW, btnH);
+    sppButton.setBounds(marginX + 2*(btnW + gap), yButtons, btnW, btnH);
 }
+
+// Track hover state for setup submenu buttons to show tips
+// Disabled duplicate mouseMove block
+#if 0
+void ClockSyncAudioProcessorEditor::mouseMove(const juce::MouseEvent& e)
+{
+    // Preserve existing hover forwarding behaviour by calling base logic first (duplicated excerpt simplified)
+    juce::Point<float> pf((float) e.x, (float) e.y);
+    // Existing playground hover code omitted for brevity; retain original via call to base implementation if refactored.
+    // Setup submenu hover detection
+    int newHover = -1;
+    if (idleModeButton.getBounds().contains(e.getPosition())) newHover = 0;
+    else if (legacyModernButton.getBounds().contains(e.getPosition())) newHover = 1;
+    else if (sppButton.getBounds().contains(e.getPosition())) newHover = 2;
+    if (newHover != hoveredSetupIndex)
+    {
+        hoveredSetupIndex = newHover;
+        // Repaint submenu area only
+        repaint(0, 0, getWidth(), 80);
+    }
+    // Forward hover info to playground (minimal) -- replicate original behaviour
+    if (playgroundComp && playgroundComp->baseCircles.size() > 0)
+    {
+        bool found = false;
+        for (int i = 0; i < playgroundComp->baseCircles.size(); ++i)
+        {
+            const auto& c = playgroundComp->baseCircles.getReference(i);
+            juce::Rectangle<int> r((int)std::round(c.x - c.r), (int)std::round(c.y - c.r), (int)std::round(c.r * 2.0f), (int)std::round(c.r * 2.0f));
+            if (r.contains(e.getPosition())) { playgroundComp->setHoverIndexFromEditor(i); found = true; break; }
+        }
+        if (! found) playgroundComp->clearHoverFromEditor();
+    }
+}
+#endif // disabled duplicate mouseMove
+
+// Tooltips handled by PlaygroundComponent hoverText.
 
 void ClockSyncAudioProcessorEditor::timerCallback()
 {
     bool needAll = false;
     bool needRing = false;
     bool needTrigger = false;
+    // Process any scheduled backdrop animator starts (staggered starts placed by beat detection).
+    const double nowMsTop = juce::Time::getMillisecondCounterHiRes();
+    constexpr double kPerBackdropDelayMs = 88.0; // ~66ms stagger between successive backdrop circles
+    for (size_t si = 0; si < backdropScheduledStartMs.size(); ++si)
+    {
+        double s = backdropScheduledStartMs[si];
+        if (s > 0.0 && s <= nowMsTop)
+        {
+            if (si < backdropAnimators.size() && backdropAnimators[si])
+                backdropAnimators[si]->start();
+            backdropScheduledStartMs[si] = 0.0;
+            needAll = true; // scheduled starts affect full-canvas backdrop
+        }
+    }
     
     // LED update: do NOT set ledLevel on every MIDI clock tick (uiClockCounter)
     // — that was causing the LED to blink at clock resolution. Instead we
@@ -751,7 +869,7 @@ void ClockSyncAudioProcessorEditor::timerCallback()
             const bool armed = processor.getUiPendingStart();
             if (hasNext || armed)
                 ledPulseTarget = 1.0f;
-            else if (! runParamCached && idleClockToggle.getToggleState())
+            else if (! runParamCached && idleModeButton.getToggleState())
                 ledPulseTarget = 0.5f;
             else if (runParamCached)
                 ledPulseTarget = 1.0f;
@@ -777,32 +895,25 @@ void ClockSyncAudioProcessorEditor::timerCallback()
                 }
             }
 
-            // Backdrop pulse sequencing: advance on quarter-note boundaries
-                        if (beatIndex != lastBackdropBeatIndex)
-                        {
-                            lastBackdropBeatIndex = beatIndex;
-                            switch (beatIndex)
-                            {
-                                case 0:
-                                    if (backdropAnimators.size() > 1) backdropAnimators[1]->start();
-                                    if (backdropAnimators.size() > 5) backdropAnimators[5]->start();
-                                    break;
-                                case 1:
-                                    if (backdropAnimators.size() > 2) backdropAnimators[2]->start();
-                                    if (backdropAnimators.size() > 5) backdropAnimators[5]->start();
-                                    break;
-                                case 2:
-                                    if (backdropAnimators.size() > 3) backdropAnimators[3]->start();
-                                    break;
-                                case 3:
-                                    if (backdropAnimators.size() > 4) backdropAnimators[4]->start();
-                                    break;
-                                default:
-                                    break;
-                            }
-                            // Backdrop circles occupy the full canvas; request a full repaint.
-                            needAll = true;
-                        }
+            // Backdrop pulse sequencing: on quarter-note boundaries schedule staggered starts
+            if (beatIndex != lastBackdropBeatIndex)
+            {
+                lastBackdropBeatIndex = beatIndex;
+                const double nowMs = juce::Time::getMillisecondCounterHiRes();
+                for (size_t i = 0; i < backdropScheduledStartMs.size(); ++i)
+                {
+                    backdropScheduledStartMs[i] = nowMs + (double)i * kPerBackdropDelayMs;
+                }
+                // request full repaint when pulses begin
+                needAll = true;
+                // Also ask the playground to schedule its per-circle pulses so
+                // the UI circles (not just the decorative backdrop) pulse in
+                // sync with the editor-driven beat. Playground exposes a
+                // wrapper that schedules pulses for all circles.
+                // Do NOT request playground pulses: only decorative backdrop
+                // animators in the editor should pulse on beats. Avoid invoking
+                // playground scheduling so UI elements do not animate on the beat.
+            }
         }
     }
 
@@ -821,8 +932,37 @@ void ClockSyncAudioProcessorEditor::timerCallback()
             if (ledPulseTarget > 0.0f) ledAnimator.start();
         }
     }
+    // Mirror trigger mode param into playground idx8 button so automation updates UI
+    if (playgroundComp)
+    {
+        if (auto* tm = processor.getAPVTS().getRawParameterValue(ClockSyncAudioProcessor::paramTriggerModeEnabled))
+        {
+            playgroundComp->setTriggerModeState(tm->load() > 0.5f);
+        }
+    }
+    // Cache NEXT state to detect restart application (edge: true -> false)
+    const bool uiNextPendingNow = processor.getUiNextRestartPending();
     const bool running = processor.getUiIsRunning();
-    if (running != engineRunningCached) { engineRunningCached = running; needAll = true; }
+    if (running != engineRunningCached) {
+        engineRunningCached = running;
+        needAll = true;
+        if (playgroundComp) playgroundComp->setRunState(running);
+            // Ensure ring internal progression uses host tempo + rate multiplier (clear external playhead usage implicitly)
+            if (playgroundComp && running) {
+                playgroundComp->setHostTempo(processor.getUiBpm());
+            }
+        // When transport/run starts, initialise cycle start using selected offset so
+        // visual relative step reflects offset immediately (selected step becomes relative target)
+        if (running && cycleStartStepAbsolute < 0) {
+            if (selectedResyncStepCached > 1) {
+                // Shift cycle start backwards so the first visual relative step aligns with selected offset.
+                int stepNow = juce::jlimit(1,16, processor.getUiStep16());
+                int cs = stepNow - (selectedResyncStepCached - 1);
+                while (cs <= 0) cs += 16;
+                cycleStartStepAbsolute = cs; // 1..16
+            }
+        }
+    }
     const bool armed = processor.getUiPendingStart();
     if (armed != pendingStartCached) {
         pendingStartCached = armed;
@@ -839,7 +979,22 @@ void ClockSyncAudioProcessorEditor::timerCallback()
         if (idx != rateIndexCached)
         {
             rateIndexCached = idx;
-            gridScaleMenu.setIndex(idx);
+            // Keep Playground idx6 (rate popup) in sync with APVTS, same as GridScaleMenu
+            if (playgroundComp)
+            {
+                int displayed = 16; // map index -> division label
+                switch (idx)
+                {
+                    case 0: displayed = 32; break;
+                    case 1: displayed = 16; break;
+                    case 2: displayed = 8;  break;
+                    case 3: displayed = 4;  break;
+                    default: displayed = 16; break;
+                }
+                playgroundComp->setClockRateIndexValue(displayed);
+                    // Update host tempo each rate change to ensure internal progression uses latest BPM
+                    playgroundComp->setHostTempo(processor.getUiBpm());
+            }
             needRing = true;
         }
     }
@@ -852,30 +1007,7 @@ void ClockSyncAudioProcessorEditor::timerCallback()
     // LED animator is driven by the VBlankAnimatorUpdater; its callback
     // repaints the header when active.
 
-    // Transient tooltip fade / auto-hide handling (driven from the editor timer)
-    if (transientTooltip)
-    {
-        const unsigned long long now = juce::Time::getMillisecondCounter();
-        // If the tooltip has passed its hide time, start fading out
-        if (transientTooltipTargetAlpha > 0.0f && transientTooltipHideAt > 0 && now >= transientTooltipHideAt)
-            transientTooltipTargetAlpha = 0.0f;
-
-        // Smoothly approach target alpha
-        const float fadeStep = 0.12f; // per-frame lerp towards target
-        transientTooltipAlpha += (transientTooltipTargetAlpha - transientTooltipAlpha) * fadeStep;
-        transientTooltipAlpha = juce::jlimit(0.0f, 1.0f, transientTooltipAlpha);
-        transientTooltip->setAlpha(transientTooltipAlpha);
-
-        if (transientTooltipAlpha > 0.001f)
-            needAll = true; // ensure repaint while tooltip is visible/fading
-
-        // When fully faded out, hide the component to avoid blocking inputs
-        if (transientTooltipAlpha <= 0.001f && transientTooltip->isVisible())
-        {
-            transientTooltip->setVisible(false);
-            transientTooltipHideAt = 0;
-        }
-    }
+    
 
     // (Previously backdrop sequencing and LED start logic ran here based on
     // reading `getUiStep16()`. That could miss updates due to timing races;
@@ -896,7 +1028,7 @@ void ClockSyncAudioProcessorEditor::timerCallback()
             const bool armed = processor.getUiPendingStart();
             if (hasNext || armed)
                 ledPulseTarget = 1.0f;
-            else if (! runParamCached && idleClockToggle.getToggleState())
+            else if (! runParamCached && idleModeButton.getToggleState())
                 ledPulseTarget = 0.5f;
             else if (runParamCached)
                 ledPulseTarget = 1.0f;
@@ -923,17 +1055,11 @@ void ClockSyncAudioProcessorEditor::timerCallback()
             if (beatIndex != lastBackdropBeatIndex)
             {
                 lastBackdropBeatIndex = beatIndex;
-                static int backdropSequencePos = -1;
-                backdropSequencePos = (backdropSequencePos + 1) % 8;
-                if (backdropSequencePos >= 0)
-                {
-                    const int idx = backdropSequencePos % (int)backdropAnimators.size();
-                    if (idx >= 0 && idx < (int)backdropAnimators.size())
-                        backdropAnimators[idx]->start();
-                    if (backdropSequencePos == 4 && backdropAnimators.size() > 0)
-                        backdropAnimators[0]->start();
-                    needAll = true;
-                }
+                const double nowMs = juce::Time::getMillisecondCounterHiRes();
+                constexpr double kPerBackdropDelayMs = 22.0;
+                for (size_t i = 0; i < backdropScheduledStartMs.size(); ++i)
+                    backdropScheduledStartMs[i] = nowMs + (double)i * kPerBackdropDelayMs;
+                needAll = true;
             }
         }
     }
@@ -942,9 +1068,10 @@ void ClockSyncAudioProcessorEditor::timerCallback()
     // Backdrop pulse decay is now driven by per-ring animators (VBlank-driven)
 
     // Step number update tied to 16th-note changes (no fade).
-    // The numeric step shown in the trigger updates always, but the visual
-    // wedge (`visualStepCached`) only advances when idleClockToggle permits
-    // it (or when the plugin is actively running).
+    // The numeric step is tracked internally, but the visual playhead
+    // wedge (`visualStepCached`) should advance ONLY while actually running
+    // (no fallback 120 BPM chaser when idle). This mirrors the playground’s
+    // canonical behaviour.
     {
         const int stepNow = juce::jlimit(1, 16, processor.getUiStep16());
         if (stepNow != stepNumberCached)
@@ -957,7 +1084,7 @@ void ClockSyncAudioProcessorEditor::timerCallback()
             const bool armed = processor.getUiPendingStart();
             if (hasNext || armed)
                 ledPulseTarget = 1.0f;
-            else if (! runParamCached && idleClockToggle.getToggleState())
+            else if (! runParamCached && idleModeButton.getToggleState())
                 ledPulseTarget = 0.5f;
             else if (runParamCached)
                 ledPulseTarget = 1.0f;
@@ -984,351 +1111,345 @@ void ClockSyncAudioProcessorEditor::timerCallback()
                 }
             }
         }
-        // Advance visual wedge only if idleClockToggle allows or the engine is running
-        if ((idleClockToggle.getToggleState() || runParamCached) && stepNow != visualStepCached)
+        // Advance visual wedge only when the engine is actually running; do not
+        // advance on the idle 120 BPM fallback. This ensures the chaselights
+        // are driven by the real playhead (visualStepCached), consistent with
+        // the segment colouring.
+        if (engineRunningCached && stepNow != visualStepCached)
         {
-            visualStepCached = stepNow;
+            // Keep visual wedge loosely in sync with real step (no rate scaling here; ring handles scaled progression).
+            visualStepCached = ((stepNow % 16) + 1);
             needRing = true; // ring contains the wedge
+            // External playhead sync deferred until relativeStepCached updated below.
         }
+        // Detect restart application: either NEXT just cleared or pendingStart just cleared at a running state.
+        // Restart applied when NEXT indicator clears (true -> false). PendingStart edge is already handled by processor flags.
+        const bool restartApplied = (nextRestartPendingCached && ! uiNextPendingNow);
+        // If NEXT just cleared and we're running, capture the absolute step as cycle start.
+        if (restartApplied && engineRunningCached)
+        {
+            // If a manual trigger with an offset preview was active, adjust the
+            // recorded cycle start so the relative step matches the selected
+            // resync offset. Otherwise use the reported absolute step.
+            if (manualTriggerOffsetActive)
+            {
+                int cs = stepNow - manualTriggerPlayheadDelta; // may underflow
+                while (cs <= 0) cs += 16;
+                cycleStartStepAbsolute = cs; // 1..16
+            }
+            else
+            {
+                cycleStartStepAbsolute = stepNow; // absolute bar step where restart applied
+            }
+            // Clear manual trigger offset state – the real restart just applied.
+            manualTriggerOffsetActive = false;
+            manualTriggerPlayheadDelta = 0;
+            // Full ring flash to acknowledge restart application (intensity boost if offset selected)
+            if (playgroundComp) playgroundComp->flashFullRing(selectedResyncStepCached > 1 ? 1.5f : 1.0f);
+            // Commit any pending speed multiplier change now so visual chase speed updates ONLY on restart.
+            if (playgroundComp) playgroundComp->commitPendingSpeedMultiplier();
+        }
+        // Initialise cycle start if not set yet once running
+        if (cycleStartStepAbsolute < 0 && engineRunningCached)
+            cycleStartStepAbsolute = stepNow;
+        // Compute relative step counting from cycleStartStepAbsolute (1..16)
+        if (cycleStartStepAbsolute > 0)
+        {
+            relativeStepCached = ((stepNow - cycleStartStepAbsolute + 16) % 16) + 1; // 1..16
+        }
+        nextRestartPendingCached = uiNextPendingNow;
+        // Do not override the playground's running playhead here. The chase-light
+        // must continue running uninterrupted. Manual-trigger previews flash a
+        // single segment via flashSegmentLogical without setting the external
+        // playhead, and the actual restart alignment is applied when the restart
+        // event is seen (cycleStartStepAbsolute adjusted above).
     }
 
-    // Sync step offset button with parameter (automation support)
+    // Cache selected resync offset step from parameter.
     {
         int paramStep = -1;
         if (auto* pi = dynamic_cast<juce::AudioParameterInt*>(processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramResyncOffsetStep)))
             paramStep = juce::jlimit(1, 16, pi->get());
-        if (paramStep > 0 && paramStep != stepOffsetMenu.getStep())
-        {
-            stepOffsetMenu.setStep(paramStep);
-            // no repaint flag needed; component repaints itself
-        }
+        if (paramStep > 0)
+            selectedResyncStepCached = paramStep;
     }
 
-    // Sync shuffle arc buttons with parameter (automation support & external automation)
-    {
-        int shuffleParam = -1;
-        if (auto* si = dynamic_cast<juce::AudioParameterInt*>(processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramShuffleStep)))
-            shuffleParam = juce::jlimit(1, 7, si->get());
-        if (shuffleParam > 0 && shuffleParam != shuffleValue)
-        {
-            shuffleValue = shuffleParam;
-            shuffleModeMenu.setValue(shuffleValue);
-        }
-    }
+    // Playground reflects shuffle amount visually.
 
     // Dispatch minimal repaints
+    // Update popup animations (driven from editor timer so they pause when editor is suspended)
+    {
+        const double nowMs = juce::Time::getMillisecondCounterHiRes();
+        double dtMs = 16.6667;
+        if (lastUiUpdateMs > 0.0) dtMs = nowMs - lastUiUpdateMs;
+        lastUiUpdateMs = nowMs;
+        // Decay segment fade trail (~600ms to fully fade)
+        ///const float decayMs = 600.0f;
+        // Slow the decay slightly to improve visibility of the cyan trail.
+        // (Previous value 600ms made fades too brief; new 900ms extends trail.)
+        // NOTE: retain variable name for minimal change; adjust value only.
+        // (We keep original line for context; override below.)
+        
+    }
     if (needAll) { repaint(); return; }
     if (needRing) repaint(ringArea);
     // Trigger updates can affect the ring drawing (visual slice near trigger). Ensure
     // we repaint both the trigger rect and the ring area to avoid leftover artefacts.
     if (needTrigger)
     {
-        // repaint the union so overlapping pixels are correctly refreshed
-        repaint(triggerRect.getUnion(ringArea));
+        // Trigger updates can affect the ring drawing; repaint ring.
+        repaint(ringArea);
     }
 }
 
-// Overlay tooltip mouse handlers (defined after timerCallback to keep header tidy)
-void ClockSyncAudioProcessorEditor::OverlayTooltip::mouseEnter(const juce::MouseEvent& e)
-{
-    if (tooltipStr.isNotEmpty())
-    {
-        if (auto* p = dynamic_cast<ClockSyncAudioProcessorEditor*>(getParentComponent()))
-            p->showTransientTooltip(tooltipStr, e.getScreenPosition());
-    }
-}
-
-void ClockSyncAudioProcessorEditor::OverlayTooltip::mouseMove(const juce::MouseEvent& e)
-{
-    if (tooltipStr.isNotEmpty())
-    {
-        if (auto* p = dynamic_cast<ClockSyncAudioProcessorEditor*>(getParentComponent()))
-            p->showTransientTooltip(tooltipStr, e.getScreenPosition());
-    }
-}
-
-void ClockSyncAudioProcessorEditor::OverlayTooltip::mouseExit(const juce::MouseEvent&)
-{
-    if (auto* p = dynamic_cast<ClockSyncAudioProcessorEditor*>(getParentComponent()))
-        p->hideTransientTooltip();
-}
+// OverlayTooltip handlers unused.
 
 ClockSyncAudioProcessorEditor::~ClockSyncAudioProcessorEditor()
 {
     // Ensure vblank updater is destroyed before member animators go away
     vblankUpdater.reset();
-    clickLevelSlider.setLookAndFeel(nullptr);
+    
     deviceBox.setLookAndFeel(nullptr);
     refreshButton.setLookAndFeel(nullptr);
     nameBox.setLookAndFeel(nullptr);
     nameMidiSwitch.setLookAndFeel(nullptr);
-    // Clear tooltip look-and-feel to avoid dangling reference to themeLNF
-    tooltipWindow.setLookAndFeel(nullptr);
     // Clear help button look-and-feel
     helpToggle.setLookAndFeel(nullptr);
-}
-
-void ClockSyncAudioProcessorEditor::showTransientTooltip(const juce::String& text, juce::Point<int> screenPos)
-{
-    if (! transientTooltip) return;
-    if (! helpToggle.getToggleState()) return; // only show when help is enabled
-
-    // First try to show the real TooltipWindow; some hosts prevent top-level
-    // windows from appearing. If TooltipWindow becomes visible we won't show
-    // the transient in-window label.
-    tooltipWindow.displayTip(screenPos, text);
-    if (tooltipWindow.isVisible())
-    {
-        // ensure our transient fallback is hidden
-        transientTooltip->setVisible(false);
-        transientTooltipAlpha = transientTooltipTargetAlpha = 0.0f;
-        return;
-    }
-
-    // Fallback: use the editor transient label positioned near the cursor.
-    transientTooltip->setText(text, juce::dontSendNotification);
-    const juce::Point<int> local = getLocalPoint(nullptr, screenPos);
-    const int w = std::min(getWidth() - 16, 360);
-    const int h = 36;
-    int x = juce::jlimit(8, getWidth() - w - 8, local.x + 12);
-    int y = juce::jlimit(8, getHeight() - h - 8, local.y + 12);
-    transientTooltip->setBounds(x, y, w, h);
-    transientTooltipTargetAlpha = 1.0f;
-    transientTooltipHideAt = juce::Time::getMillisecondCounter() + 3000; // auto-hide after 3s
-    transientTooltip->setVisible(true);
-    transientTooltip->toFront(true);
-}
-
-void ClockSyncAudioProcessorEditor::hideTransientTooltip()
-{
-    if (transientTooltip) transientTooltip->setVisible(false);
 }
 
 void ClockSyncAudioProcessorEditor::mouseUp(const juce::MouseEvent& e)
 {
     // No-op: ringArea (run) toggling handled on mouseDown for more immediate response.
 
-    // Curved-label feature removed: no click handling here.
+    
+}
+
+void ClockSyncAudioProcessorEditor::mouseMove(const juce::MouseEvent& e)
+{
+    juce::Point<float> pf((float) e.x, (float) e.y);
+    bool did = false;
+    const bool submenuActive = (nameMidiSwitch.getToggleState() && (setupSubmenuTargetOn || setupSubmenuProgress > 0.0f));
+    if (submenuActive)
+    {
+        int forced = -1;
+        if (idleModeButton.isVisible() && idleModeButton.getBounds().contains(e.getPosition())) forced = 9; // maps to added hoverTexts entry
+        else if (legacyModernButton.isVisible() && legacyModernButton.getBounds().contains(e.getPosition())) forced = 10;
+        else if (sppButton.isVisible() && sppButton.getBounds().contains(e.getPosition())) forced = 11;
+        if (playgroundComp)
+        {
+            if (forced >= 0) playgroundComp->setForcedHoverIndex(forced); else playgroundComp->clearForcedHoverIndex();
+        }
+        // Block further hover propagation when submenu active
+        return;
+    }
+    else if (playgroundComp)
+    {
+        playgroundComp->clearForcedHoverIndex();
+        playgroundComp->setExternalHoverBlocked(false);
+    }
+    // Playground provides hover/tooltips; skip deprecated popup-ring hover handling.
+    if (! playgroundComp)
+    {
+        auto checkHoverComp = [&](const std::unique_ptr<PopupMenuRing>& pr, const juce::Component& c)
+        {
+            if (! pr) return;
+            auto b = c.getBounds().toFloat();
+            const float baseX = b.getCentreX();
+            const float baseY = b.getCentreY();
+            const float baseR = std::min(b.getWidth(), b.getHeight()) * 0.5f;
+            const int hi = pr->handleMouseMove(pf, baseX, baseY, baseR);
+            if (hi >= 0 || pr->isAnimating())
+            {
+                repaint(c.getBounds().expanded(80, 80));
+                did = true;
+            }
+        };
+
+        
+    }
+    if (popupRing0) { }
+
+    
+
+    // Forward hover info to the playground so its hoverText reflects the
+    // canonical visual circles even when native components sit on top.
+    if (playgroundComp && playgroundComp->baseCircles.size() > 0)
+    {
+        bool found = false;
+        for (int i = 0; i < playgroundComp->baseCircles.size(); ++i)
+        {
+            const auto& c = playgroundComp->baseCircles.getReference(i);
+            juce::Rectangle<int> r((int)std::round(c.x - c.r), (int)std::round(c.y - c.r),
+                                   (int)std::round(c.r * 2.0f), (int)std::round(c.r * 2.0f));
+            if (r.contains(e.getPosition())) { playgroundComp->setHoverIndexFromEditor(i); found = true; break; }
+        }
+        if (! found) playgroundComp->clearHoverFromEditor();
+    }
 }
 
 
 
 void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
 {
-    // Toggle run when clicking within the inner black circle (ringArea) on mouseDown
+    // Route clicks to any visible popup rings first.
+    juce::Point<float> pf((float) e.x, (float) e.y);
+    auto handlePopupClickAtComp = [&](const std::unique_ptr<PopupMenuRing>& pr, const juce::Component& c)->int
+    {
+        if (! pr) return -1;
+        auto b = c.getBounds().toFloat();
+        const float baseX = b.getCentreX();
+        const float baseY = b.getCentreY();
+        const float baseR = std::min(b.getWidth(), b.getHeight()) * 0.5f;
+        return pr->handleMouseDown(pf, baseX, baseY, baseR);
+    };
+
+    // Check popups in a reasonable visual order. If any handles the click,
+    // apply the corresponding parameter change and collapse the popup.
+    // Skip popup-ring click handling when playground active.
+    if (! playgroundComp)
+    {
+
+        
+    }
+
+    // Handle segment clicks on the main ring (circle idx 0): selecting a segment
+    // sets the resync offset step (1..16). Clicking the inner circle toggles Run.
     if (ringArea.contains(e.getPosition()))
     {
         const int cx = ringArea.getCentreX();
         const int cy = ringArea.getCentreY();
-        const int innerRadius = 60; // innerD/2
-        const float dx = (float) e.x - (float) cx;
-        const float dy = (float) e.y - (float) cy;
-        if ((dx*dx + dy*dy) <= (float) (innerRadius * innerRadius))
+        // same shrink values used by drawRing()
+        constexpr int outerShrink = 20;
+        constexpr int innerShrink = 20;
+        const float outerD = (float)(kRingOuterD - outerShrink);
+        const float innerD = (float)(kRingInnerD - (innerShrink - 8));
+        const float outerR = outerD * 0.5f;
+        const float innerR = innerD * 0.5f;
+        const float dx = (float)e.x - (float)cx;
+        const float dy = (float)e.y - (float)cy;
+        const float dist2 = dx*dx + dy*dy;
+        if (dist2 <= innerR * innerR)
         {
+            // Center click: toggle Run (chaselight). Use a proper gesture so hosts record automation cleanly.
             if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramRun))
             {
-                // Read the live param value to avoid races with timer cache
                 if (auto* rp = processor.getAPVTS().getRawParameterValue(ClockSyncAudioProcessor::paramRun))
                 {
                     const bool current = rp->load() > 0.5f;
                     const bool next = ! current;
+                    p->beginChangeGesture();
                     p->setValueNotifyingHost(next ? 1.0f : 0.0f);
-                    runParamCached = next; // reflect immediately in UI
+                    p->endChangeGesture();
+                    runParamCached = next;
+                    // Brief header LED pulse for feedback on click (stronger when starting, softer when stopping)
+                    ledPulseTarget = next ? 1.0f : 0.6f;
+                    ledAnimator.start();
                     repaint(ringArea);
                 }
             }
-            // If the click was inside the inner ring we don't want to treat it as a trigger region as well
             return;
         }
-    }
-    // Only respond to mouse-down inside the trigger circle
-    if (triggerRect.contains(e.getPosition()))
-    {
-        // Restart fade animator from full intensity
-        triggerFade = 1.0f;
-        triggerFadeAnimator.start();
-        repaint(triggerRect);
-        // If Run is currently disabled, enable it so the armed trigger will
-        // actually send a Start at the next grid; this arms/run without sending
-        // a Stop.
-        if (! runParamCached)
+        // Clicked in the ring donut -> map to a 1..16 LOGICAL segment (apply playground offset)
+        if (dist2 <= outerR * outerR && dist2 >= innerR * innerR)
         {
-            if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramRun))
+            const float angle = std::atan2(dy, dx); // -pi..pi
+            const float startAt12 = -juce::MathConstants<float>::halfPi;
+            const float twoPi = juce::MathConstants<float>::twoPi;
+            float rel = angle - startAt12;
+            while (rel < 0.0f) rel += twoPi;
+            const float slice = twoPi / 16.0f;
+            int rawIdx = (int) std::floor(rel / slice); // 0..15 (raw index as wedges are drawn)
+            // Convert raw index -> logical index (playground used offset=4)
+            const int offset = 4; // quarter-turn offset to match playground mapping
+            int logical0 = (rawIdx - offset + 16) % 16; // 0-based logical
+            int step = logical0 + 1; // 1..16
+            // Apply parameter change (set logical step)
+            if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramResyncOffsetStep))
             {
-                p->setValueNotifyingHost(1.0f);
-                runParamCached = true;
+                const auto& range = p->getNormalisableRange();
+                p->beginChangeGesture();
+                p->setValueNotifyingHost(range.convertTo0to1((float) juce::jlimit(1, 16, step)));
+                p->endChangeGesture();
+            }
+            processor.notifyResyncOffsetChanged();
+            selectedResyncStepCached = step;
+            repaint(ringArea.expanded(120, 120));
+            return;
+        }
+        // else fall through (click outside donut but inside bounding box)
+    }
+
+    // If no popup consumed the click, allow clicks on the base components to toggle their popups.
+    // This mirrors the playground behaviour: clicking a small circle opens the associated popup.
+    // Forward clicks that land on the playground's visual circles (indices 3 and 6)
+    // to the playground so its internal popups (`popup3` and `popup6`) can
+    // expand/collapse. The playground is rendered underneath native controls,
+    // so clicks may be intercepted — forward them explicitly.
+    if (playgroundComp)
+    {
+        if (playgroundComp->baseCircles.size() > 3)
+        {
+            const auto& c3 = playgroundComp->baseCircles.getReference(3);
+            juce::Rectangle<int> r3((int)std::round(c3.x - c3.r), (int)std::round(c3.y - c3.r),
+                                    (int)std::round(c3.r * 2.0f), (int)std::round(c3.r * 2.0f));
+            if (r3.contains(e.getPosition())) { playgroundComp->togglePopup3(); repaint(); return; }
+        }
+        // Trigger circle is canonical index 1 in the playground; clicking it
+        // should arm and request a one-shot trigger (same as triggerRect handler).
+        if (playgroundComp->baseCircles.size() > 1)
+        {
+            const auto& c1 = playgroundComp->baseCircles.getReference(1);
+            juce::Rectangle<int> r1((int)std::round(c1.x - c1.r), (int)std::round(c1.y - c1.r),
+                                    (int)std::round(c1.r * 2.0f), (int)std::round(c1.r * 2.0f));
+            if (r1.contains(e.getPosition()))
+            {
+                // Original behaviour: manual trigger does NOT auto-enable Run.
+                processor.requestTriggerOnce();
+                if (playgroundComp) (void) playgroundComp->handleExternalClickIndex(1);
+                // Manual trigger chase-light offset: compute & apply immediately
+                manualTriggerOffsetActive = true;
+                manualTriggerRelativeStepAtTrigger = juce::jlimit(1,16, relativeStepCached);
+                if (selectedResyncStepCached > 0)
+                    manualTriggerPlayheadDelta = (selectedResyncStepCached - manualTriggerRelativeStepAtTrigger + 16) % 16;
+                else
+                    manualTriggerPlayheadDelta = 0;
+                // Flash the segment corresponding to the current playhead step at trigger time (not the offset preview target)
+                if (playgroundComp)
+                {
+                    playgroundComp->flashSegmentLogical(manualTriggerRelativeStepAtTrigger);
+                }
+                repaint();
+                return;
             }
         }
-        // Request the one-shot trigger; the processor will only emit the Start
-        // at the next 1/16 if Run is enabled (or if ClockWhileStopped is allowed).
-        processor.requestTriggerOnce();
-    }
-}
-
-// Helpers
-void ClockSyncAudioProcessorEditor::drawRing(juce::Graphics& g)
-{
-    if (ringArea.isEmpty()) return;
-    const int cx = ringArea.getCentreX();
-    const int cy = ringArea.getCentreY();
-
-    // Reduce big ring diameter by 20px (10px radius) relative to kRingOuterD/InnerD.
-    constexpr int outerShrink = 20;
-    constexpr int innerShrink = 20;
-
-    juce::Rectangle<float> outer(
-        (float) (cx - (kRingOuterD - outerShrink) / 2),
-        (float) (cy - (kRingOuterD - outerShrink) / 2),
-        (float) (kRingOuterD - outerShrink),
-        (float) (kRingOuterD - outerShrink));
-
-    // Expand inner circle by 10px diameter (5px radius) compared to the previous shrink,
-    // so the visible ring thickness is reduced by 5px.
-    juce::Rectangle<float> inner(
-        (float) (cx - (kRingInnerD - (innerShrink - 8)) / 2),
-        (float) (cy - (kRingInnerD - (innerShrink - 8)) / 2),
-        (float) (kRingInnerD - (innerShrink - 8)),
-        (float) (kRingInnerD - (innerShrink - 8)));
-
-    // Base ring
-    g.setColour(UiThemeColours::accent()); g.fillEllipse(outer);
-    g.setColour(UiThemeColours::base());   g.fillEllipse(inner);
-
-    // Stop indicator
-    if (! runParamCached)
-    {
-        juce::Graphics::ScopedSaveState ss(g);
-        const float px = 1.0f / getDesktopScaleFactor();
-        juce::Path clip; clip.addEllipse(inner.expanded(px)); g.reduceClipRegion(clip);
-
-        const float barW = UiLayout::kBarWidth;
-        juce::Rectangle<float> bar(
-            (float) cx - barW * 0.5f,
-            (float) cy - inner.getHeight() * 0.5f,
-            barW,
-            inner.getHeight());
-
-        g.addTransform(juce::AffineTransform::rotation(
-            juce::MathConstants<float>::pi * 0.75f,
-            (float) cx, (float) cy));
-
-        g.setColour(UiThemeColours::accent()); g.fillRect(bar);
-    }
-
-    // Use the visualStepCached which is updated only when allowed by the
-    // idleClockToggle or when the plugin is actually running. This allows
-    // the wedge to freeze while background pulses continue.
-    const int active = juce::jlimit(1, 16, visualStepCached);
-    const float sliceAngle = juce::MathConstants<float>::twoPi / 16.0f;
-    const float startAt12  = -juce::MathConstants<float>::halfPi;
-    const int rotSlices    = 4;
-    const float startAngle = startAt12 + (float) ((active - 1 + rotSlices) % 16) * sliceAngle;
-    const float endAngle   = startAngle + sliceAngle;
-
-    const float innerRatio = inner.getWidth() / outer.getWidth();
-
-    juce::Path wedge;
-    wedge.addPieSegment(outer, startAngle, endAngle, innerRatio);
-    g.setColour(runParamCached ? UiThemeColours::cyan() : UiThemeColours::cyan().withAlpha(0.5f));
-    g.fillPath(wedge);
-
-    // Numbers hidden per request
-}
-
-static int mapRateIndexToPPQ(int idx)
-{
-    switch (idx)
-    {
-        case 0: return 48; // 1/32
-        case 1: return 24; // 1/16
-        case 2: return 12; // 1/8
-        case 3: return 6;  // 1/4
-        default: return 24;
-    }
-}
-
-void ClockSyncAudioProcessorEditor::drawDancer(juce::Graphics& g)
-{
-    if (ringArea.isEmpty()) return;
-    if (dancerFrames.empty()) return;
-
-    int frameIdx = dancerLastFrame;
-    const int count = (int) dancerFrames.size();
-
-    if (runParamCached && count > 1)
-    {
-        const auto pulses = processor.getUiClockCounter();
-        if (pulses != dancerLastDrawnClockCounter)
+        if (playgroundComp->baseCircles.size() > 6)
         {
-            const int ppq = mapRateIndexToPPQ(rateIndexCached);
-            const int pulsesPerTwoBeats = ppq * 2;
-            if (pulsesPerTwoBeats > 0)
+            const auto& c6 = playgroundComp->baseCircles.getReference(6);
+            juce::Rectangle<int> r6((int)std::round(c6.x - c6.r), (int)std::round(c6.y - c6.r),
+                                    (int)std::round(c6.r * 2.0f), (int)std::round(c6.r * 2.0f));
+            if (r6.contains(e.getPosition())) { playgroundComp->togglePopup6(); repaint(); return; }
+        }
+        // Forward clicks that land on other canonical circle areas to the playground
+        // so it can perform the expected visual/behavioral response (flashes,
+        // resync, small popups, etc.). Skip indices 3 and 6 because they're
+        // handled explicitly above.
+        const int bc = (int) playgroundComp->baseCircles.size();
+        for (int i = 0; i < bc; ++i)
+        {
+            if (i == 3 || i == 6) continue;
+            const auto& ci = playgroundComp->baseCircles.getReference(i);
+            juce::Rectangle<int> ri((int)std::round(ci.x - ci.r), (int)std::round(ci.y - ci.r),
+                                    (int)std::round(ci.r * 2.0f), (int)std::round(ci.r * 2.0f));
+            if (ri.contains(e.getPosition()))
             {
-                const int pInCycle = (int) (pulses % (unsigned long long) pulsesPerTwoBeats);
-                frameIdx = (pInCycle * count) / pulsesPerTwoBeats;
-                frameIdx = juce::jlimit(0, count - 1, frameIdx);
-                dancerLastFrame = frameIdx;
-                dancerLastDrawnClockCounter = pulses;
+                if (playgroundComp->handleExternalClickIndex(i)) { repaint(); return; }
             }
         }
     }
-
-    juce::Drawable* drawable = dancerFrames[(size_t) frameIdx].get();
-    if (drawable == nullptr)
-        return;
-
-    juce::Rectangle<float> inner((float) (ringArea.getCentreX() - kRingInnerD / 2),
-                                 (float) (ringArea.getCentreY() - kRingInnerD / 2),
-                                 (float) kRingInnerD, (float) kRingInnerD);
-    auto dest = inner.reduced(UiLayout::kInnerReduce);
-
-    // PNG layout scaling (original PNG canvas assumption kept for sizing math)
-    constexpr float dancerCanvasW = 355.0f;
-    constexpr float dancerCanvasH = 500.0f;
-    const float sxFull = dest.getWidth()  / dancerCanvasW;
-    const float syFull = dest.getHeight() / dancerCanvasH;
-    const float scale = std::min(sxFull  * 0.9f, syFull * 0.9f);
-    const float canvasScaledW = dancerCanvasW * scale;
-    const float canvasScaledH = dancerCanvasH * scale;
-    const float baseTx = dest.getCentreX() - canvasScaledW * 0.5f;
-    const float baseTy = dest.getCentreY() - canvasScaledH * 0.5f;
-
-    drawable->draw(g, 1.0f, juce::AffineTransform::scale(scale).translated(baseTx, baseTy));
+    
 }
 
-void ClockSyncAudioProcessorEditor::drawTrigger(juce::Graphics& g)
-{
-    if (triggerRect.isEmpty()) return;
-    juce::Colour base = UiThemeColours::accent();
-    juce::Colour active = UiThemeColours::cyan();
-    const float fadeNorm = juce::jlimit(0.0f, 1.0f, triggerFade);
-    juce::Colour fill = base.interpolatedWith(active, fadeNorm);
-
-    // Scale outward when freshly triggered (fadeNorm near 1), then ease back.
-    const float scale = 0.833f + 0.166f * fadeNorm; // ≈1.0 at rest, ~1.0 + 0.166 when bright
-    auto rfBase = triggerRect.toFloat();
-    auto c = rfBase.getCentre();
-    juce::Rectangle<float> rfScaled(c.x - rfBase.getWidth() * 0.5f * scale,
-                                    c.y - rfBase.getHeight() * 0.5f * scale,
-                                    rfBase.getWidth() * scale,
-                                    rfBase.getHeight() * scale);
-
-    // Outer scaled ellipse
-    g.setColour(fill);
-    g.fillEllipse(rfScaled);
-
-    // Inner core shrinks proportionally so ring thickness stays visually similar
-    g.setColour(UiThemeColours::base());
-    g.fillEllipse(rfScaled.reduced((12.0f * scale - 2.0f) + 5.0f));
-
-    // Step number centered; don't scale with trigger animation
-    const int stepNow = juce::jlimit(1, 16, stepNumberCached > 0 ? stepNumberCached : processor.getUiStep16());
-    g.setColour(UiThemeColours::cyan());
-    g.setFont(juce::Font(juce::FontOptions("Arial", 33.0f, juce::Font::bold)));
-    g.drawFittedText(juce::String(stepNow), rfBase.toNearestInt(), juce::Justification::centred, 1);
-}
-
-// Curved-label feature removed: no curved-label drawing function.
+// PlaygroundComponent ring & animations are authoritative.
 
 void ClockSyncAudioProcessorEditor::refreshDeviceList()
 {
@@ -1337,7 +1458,8 @@ void ClockSyncAudioProcessorEditor::refreshDeviceList()
     for (auto& d : arr) midiOutputs.push_back(d);
     deviceBox.clear(juce::dontSendNotification);
     int idx = 1;
-    deviceBox.addItem("Select...", idx++);
+    // First item acts as a placeholder; selection id 1 corresponds to 'no external port selected'.
+    deviceBox.addItem("select midi-out...", idx++);
     int selectionToSet = 1;
     const auto currentId = processor.getExternalDeviceId();
     for (const auto& d : midiOutputs)
@@ -1364,6 +1486,7 @@ void ClockSyncAudioProcessorEditor::loadInstrumentNamesFromState()
     }
 }
 
+// Restored instrument name persistence helpers.
 void ClockSyncAudioProcessorEditor::saveInstrumentNamesToState()
 {
     juce::String s = instrumentNames.joinIntoString("\n");
@@ -1388,12 +1511,8 @@ void ClockSyncAudioProcessorEditor::populateNameBox()
     }
     else
     {
-        // Do not pre-select the 'new...' action (id 1000) because selecting the same id
-        // won't emit onChange. Instead show a placeholder and let the user select 'new...'
-        // which will change the selected id and trigger the onChange handler.
+        // Show actionable hint when empty
         nameBox.setSelectedId(0, juce::dontSendNotification);
-        // When there are no saved names show the actionable hint 'new...' so
-        // users know they can add a name via the dropdown item.
         nameBox.setTextWhenNothingSelected("new...");
     }
 }
@@ -1433,8 +1552,6 @@ void ClockSyncAudioProcessorEditor::showNewNameDialog()
     nameEntryEditor->onEscapeKey = [this]() { nameEntryEditor.reset(); repaint(); };
     nameEntryEditor->onFocusLost = [this]() { nameEntryEditor.reset(); repaint(); };
 }
-
-// Curved-label editor removed.
 
 void ClockSyncAudioProcessorEditor::toggleNameEditorOrCommit()
 {
@@ -1492,47 +1609,6 @@ void ClockSyncAudioProcessorEditor::toggleNameEditorOrCommit()
     nameEntryEditor->onFocusLost = [this]() { nameEntryEditor.reset(); repaint(); };
 }
 
-// Curved-label editor removal: no-op.
-
-// NOTE: PNG dancer frames are loaded here from BinaryData (dancer_0_png ... dancer_20_png).
-// This function is still used (called in the editor constructor). Only SVG-related helpers were removed.
-void ClockSyncAudioProcessorEditor::loadDancerFrames()
-{
-    dancerFrames.clear();
-    dancerFrames.reserve(21);
-
-    auto addFrame = [this](const void* data, int size)
-    {
-        if (! data || size <= 0) return;
-        if (auto d = juce::Drawable::createFromImageData(data, size))
-            dancerFrames.push_back(std::move(d));
-    };
-
-    addFrame(BinaryData::dancer_0_png,  BinaryData::dancer_0_pngSize);
-    addFrame(BinaryData::dancer_1_png,  BinaryData::dancer_1_pngSize);
-    addFrame(BinaryData::dancer_2_png,  BinaryData::dancer_2_pngSize);
-    addFrame(BinaryData::dancer_3_png,  BinaryData::dancer_3_pngSize);
-    addFrame(BinaryData::dancer_4_png,  BinaryData::dancer_4_pngSize);
-    addFrame(BinaryData::dancer_5_png,  BinaryData::dancer_5_pngSize);
-    addFrame(BinaryData::dancer_6_png,  BinaryData::dancer_6_pngSize);
-    addFrame(BinaryData::dancer_7_png,  BinaryData::dancer_7_pngSize);
-    addFrame(BinaryData::dancer_8_png,  BinaryData::dancer_8_pngSize);
-    addFrame(BinaryData::dancer_9_png,  BinaryData::dancer_9_pngSize);
-    addFrame(BinaryData::dancer_10_png, BinaryData::dancer_10_pngSize);
-    addFrame(BinaryData::dancer_11_png, BinaryData::dancer_11_pngSize);
-    addFrame(BinaryData::dancer_12_png, BinaryData::dancer_12_pngSize);
-    addFrame(BinaryData::dancer_13_png, BinaryData::dancer_13_pngSize);
-    addFrame(BinaryData::dancer_14_png, BinaryData::dancer_14_pngSize);
-    addFrame(BinaryData::dancer_15_png, BinaryData::dancer_15_pngSize);
-    addFrame(BinaryData::dancer_16_png, BinaryData::dancer_16_pngSize);
-    addFrame(BinaryData::dancer_17_png, BinaryData::dancer_17_pngSize);
-    addFrame(BinaryData::dancer_18_png, BinaryData::dancer_18_pngSize);
-    addFrame(BinaryData::dancer_19_png, BinaryData::dancer_19_pngSize);
-    addFrame(BinaryData::dancer_20_png, BinaryData::dancer_20_pngSize);
-
-    dancerFrameCount = (int) dancerFrames.size();
-    dancerLastFrame = 0;
-    dancerLastDrawnClockCounter = std::numeric_limits<unsigned long long>::max();
-}
+// Dancer frame loading no longer used.
 
 

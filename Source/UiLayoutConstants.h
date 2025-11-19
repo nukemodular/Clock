@@ -57,18 +57,29 @@ namespace UiLayout
 
     // Backdrop (decorative) rings configuration
     // Sizes in pixels for each backdrop circle (largest -> smallest)
-    static constexpr std::array<int, 6> kBackdropSizes = { { 420, 350, 290, 240, 200, 170 } };
+     static constexpr float kBackdropMultiplier = 1.25f;
+
+    static constexpr float kBackdropBaseSize = 55.55f * kBackdropMultiplier;
+   
+    // Largest -> smallest
+    static constexpr std::array<float, 8> kBackdropSizes = [] {
+        std::array<float, 8> a{};
+        a[7] = kBackdropBaseSize;
+        for (int i = 6; i >= 0; --i)
+            a[i] = a[i + 1] * kBackdropMultiplier;
+        return a;
+    }();
 
     // Per-ring pulse scale increments (multiplied by progress 0..1)
-    static constexpr std::array<float, 6> kBackdropPulseScales = { { 0.12f, 0.12f, 0.12f, 0.12f, 0.12f, 0.12f } };
+    static constexpr std::array<float, 8> kBackdropPulseScales = { { 0.12f, 0.12f, 0.12f, 0.12f, 0.12f, 0.12f, 0.12f, 0.12f } };
 
     // Pulse decay per frame (multiply progress by this each timer tick). Values closer to 1.0 decay slower.
-    static constexpr float kBackdropPulseDecay = 0.95f;
+    static constexpr float kBackdropPulseDecay = 0.933f;
 
     // Minimum and maximum visual scale applied to backdrop circles (applied to base size)
-    static constexpr float kBackdropMinScale = 0.95f;
-    static constexpr float kBackdropMaxScale = 1.15f;
+    static constexpr float kBackdropMinScale = 0.90f;
+    static constexpr float kBackdropMaxScale = 1.2f;
 
     // Pulse timing helpers (ms) - useful if switching to an animator-driven pulse
-    static constexpr int kBackdropPulseDurationMs = 250; // nominal pulse duration
+    static constexpr float kBackdropPulseDurationMs = 333.333f; // nominal pulse duration
 }

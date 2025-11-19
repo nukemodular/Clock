@@ -91,10 +91,18 @@ public:
         g.setColour(UiThemeColours::base());
         g.fillRoundedRectangle(r.reduced(2.0f), 4.0f);
 
-        // ComboBox text is drawn by the component's internal text component.
-        // We avoid drawing the text here to prevent double-rendering with that internal label.
-        // The internal label is configured via `ComboBox::setJustificationType` and
-        // the font comes from `getComboBoxFont`.
+        // Draw ComboBox text (use ComboBox::textColourId if set) rather than
+        // relying on the internal label which can inherit an unreadable colour.
+        juce::String txt = box.getText();
+        if (txt.isNotEmpty())
+        {
+            juce::Colour textCol = box.findColour(juce::ComboBox::textColourId);
+            if (! textCol.isOpaque()) textCol = UiThemeColours::cyan();
+            g.setColour(textCol);
+            g.setFont(getComboBoxFont(box));
+            auto textR = r.reduced(6.0f, 2.0f);
+            g.drawFittedText(txt, textR.toNearestInt(), juce::Justification::centred, 1);
+        }
 
         // draw a small drop-arrow at the far right (respect arrow colour)
         juce::Colour arrowCol = box.findColour(juce::ComboBox::arrowColourId);
@@ -124,66 +132,7 @@ public:
         g.drawRect(0, 0, w, h, 1);
     }
 
-    // Custom tooltip drawing to match requested style: Arial Bold, cyan text,
-    // semi-transparent base background. Wraps long text to multiple lines and
-    // constrains width to a reasonable maximum so tooltips remain readable.
-    void drawTooltip(juce::Graphics& g, const juce::String& text, int width, int /*height*/) override
-    {
-        const float cornerSize = 6.0f;
-        const float paddingH = 8.0f;
-        const float paddingV = 6.0f;
-        const float tooltipFontSize = 13.0f;
-        const int maxTooltipWidth = 120; // cap width in pixels before wrapping
 
-        // Determine drawing width (respect provided width but cap at maxTooltipWidth)
-        const int drawW = std::min(width, maxTooltipWidth);
-
-        juce::AttributedString s;
-        s.setWordWrap(juce::AttributedString::WordWrap::byWord);
-        s.setJustification(juce::Justification::centred);
-        s.append(text, juce::FontOptions (tooltipFontSize, juce::Font::bold).withMetricsKind (getDefaultMetricsKind()), UiThemeColours::cyan());
-
-        juce::TextLayout tl;
-        tl.createLayoutWithBalancedLineLengths(s, (float) (drawW - (int) (paddingH * 2.0f)));
-
-        const float textH = tl.getHeight();
-        const float totalH = textH + paddingV * 2.0f;
-
-        juce::Rectangle<float> bg(0, 0, (float) drawW, totalH);
-
-        g.setColour(UiThemeColours::base().withAlpha(0.8f));
-        g.fillRoundedRectangle(bg, cornerSize);
-
-        // Draw text inside padded area
-        juce::Rectangle<float> textArea = bg.reduced(paddingH, paddingV);
-        tl.draw(g, textArea);
-    }
-
-    // Compute tooltip bounds so the TooltipWindow sizes itself to accommodate
-    // wrapped text using the same max width and padding as drawTooltip.
-    juce::Rectangle<int> getTooltipBounds (const juce::String& tipText, juce::Point<int> screenPos, juce::Rectangle<int> parentArea) override
-    {
-        const float paddingH = 8.0f;
-        const float paddingV = 6.0f;
-        const float tooltipFontSize = 13.0f;
-        const int maxTooltipWidth = 120;
-
-        juce::AttributedString s;
-        s.setWordWrap(juce::AttributedString::WordWrap::byWord);
-        s.setJustification(juce::Justification::centred);
-        s.append(tipText, juce::FontOptions (tooltipFontSize, juce::Font::bold).withMetricsKind (getDefaultMetricsKind()), UiThemeColours::cyan());
-
-        juce::TextLayout tl;
-        tl.createLayoutWithBalancedLineLengths(s, (float) (maxTooltipWidth - (int)(paddingH * 2.0f)));
-
-        const int w = (int) std::ceil(tl.getWidth() + paddingH * 2.0f);
-        const int h = (int) std::ceil(tl.getHeight() + paddingV * 2.0f);
-
-        auto x = screenPos.x > parentArea.getCentreX() ? screenPos.x - (w + 12) : screenPos.x + 24;
-        auto y = screenPos.y > parentArea.getCentreY() ? screenPos.y - (h + 6)  : screenPos.y + 6;
-
-        return juce::Rectangle<int>(x, y, w, h).constrainedWithin(parentArea);
-    }
 
     void drawPopupMenuItem(juce::Graphics& g, const juce::Rectangle<int>& area,
                            bool isSeparator, bool isActive, bool isHighlighted, bool isTicked, bool,
@@ -198,7 +147,7 @@ public:
 
         juce::Colour textCol;
         if (! isActive) textCol = UiThemeColours::accent().withAlpha(0.5f);
-        else if (isHighlighted) textCol = juce::Colours::black;
+        else if (isHighlighted) textCol = UiThemeColours::base();
         else if (isTicked) textCol = UiThemeColours::cyan();
         else textCol = UiThemeColours::accent();
 

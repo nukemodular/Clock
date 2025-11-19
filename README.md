@@ -53,6 +53,31 @@ DAW routing caveats:
 - Start (FA) is sent when playback begins from the start; Continue (FB) is sent on resume from a non-zero position; Stop (FC) when playback stops.
 - Song Position Pointer (F2) is not emitted by default, but can be added if needed.
 
+## Quantized Start, Resync Offset & Run/Stop Behavior
+
+The plugin schedules all Starts (whether from the Run toggle or a manual trigger in Trigger Mode) on a quantized boundary: the next bar at the EXACT selected Resync Offset Step (1..16). Selecting step 1 means the restart occurs at bar position 1 (no offset). Selecting step 3 means the restart occurs when the bar reaches 16th step 3 (or wraps to that step in the next bar if already passed). No "1 + offset" arithmetic is applied; the value selected is the absolute 1..16 target within a bar.
+
+Key points:
+- Resync Offset Step (idx6 popup in the playground UI) chooses which 1/16 slice inside the bar the next restart will land on. Step 1 = bar start; Step 5 = one quarter-note (4 sixteenths) into the bar, etc. (If the chosen step has already passed in the current bar, scheduling wraps to that step in the next bar.)
+- When you click Run ON while transport is already playing, we arm a restart and freeze outgoing clock pulses until the scheduled boundary is reached. At that boundary a MIDI Stop (gap) then MIDI Start is emitted, and clock pulses resume aligned to the chosen step.
+- When Run is OFF (Stop engaged) we immediately emit a MIDI Stop and suppress outgoing realtime Clock pulses, but we continue internal position & step tracking (using host transport position) so the next scheduled Start still quantizes correctly.
+- Clock pulses are emitted ONLY while Run is ON. The Clock While Stopped toggle (idx5) allows Start/Stop messages to still be sent, but does not force clock pulses while stopped—this avoids external devices drifting.
+- Trigger Mode (idx8) makes a manual trigger (circle idx1) schedule a full bar+offset restart instead of a plain grid-aligned Start. Manual triggers always wrap to the next bar, consuming any prior pending restart.
+- Changing the offset step re-arms a bar restart (NEXT indicator) modulo within the current bar: if the new step lies ahead this bar it uses it; otherwise it wraps to the next bar.
+
+Visual / chase light semantics:
+- The ring wedges/chase light advance only while actually running (post Start boundary). Before the restart is applied (ARMED/PENDING) the wedge is frozen to show the latched state.
+- After a restart the relative playhead resets so wedge numbering starts at logical step 1 again regardless of offset.
+
+Diagnostics:
+- Enable the Diagnostics parameter to log `[restart-pending]` lines (with sampleOffset and remaining delta) and a single `[restart-applied]` line when the boundary occurs. Extra `[restart-pending-remaining]` entries show the countdown in samples & quarter-notes.
+- Swing pulse distribution pairs are logged as `pair N (pre/post)` entries for a limited capture window.
+
+Edge cases & guarantees:
+- If the offset step is 1 and Run is toggled during the first block of a bar, restart may apply immediately (deltaQ=0.0) and clocks resume without a visible freeze.
+- Manual triggers while already pending simply update the restart target; only one restart boundary applies.
+- Clock pulses are never emitted on the same sample as a MIDI Start when suppression is active (avoids double-clock at boundary).
+
 ## Swing / Shuffle
 
 - Shuffle intensity has 7 discrete steps. Step 1 = straight; Step 7 = maximum.

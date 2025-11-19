@@ -36,7 +36,8 @@ ClockSyncAudioProcessor::ClockSyncAudioProcessor()
 
 void ClockSyncAudioProcessor::requestTriggerOnce()
 {
-    // Arm Start at next 1/16 grid boundary (immediate retrigger). Bar restart conditional.
+    // Original behaviour (clock_org): Arm Start at next 1/16 grid boundary (immediate retrigger).
+    // Whether a bar+offset restart follows is decided later based on triggerModeEnabled.
     triggerArmedForNextSixteenth.store(true, std::memory_order_relaxed);
 }
 
@@ -62,9 +63,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout ClockSyncAudioProcessor::cre
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         paramClickLevelDb, "Click Level (dB)", juce::NormalisableRange<float>(-12.0f, 0.0f), -6.0f));
 
-    // Click rate: discrete stages 0..4 (0 = off)
+    // Click rate: discrete stages 0..4 (0 = off). Default changed to 0 so rotary starts at OFF.
     params.push_back(std::make_unique<juce::AudioParameterInt>(
-        paramClickRate, "Click Rate", 0, 4, 1));
+        paramClickRate, "Click Rate", 0, 4, 0));
 
     // Click variant: false = 1-sample spike, true = 1ms pulse
     params.push_back(std::make_unique<juce::AudioParameterBool>(
@@ -105,6 +106,8 @@ void ClockSyncAudioProcessor::prepareToPlay(double sr, int /*samplesPerBlock*/)
     // Default: armed but not running; will emit Start at scheduled offset step (or bar start)
     pendingStart = true;
     runActive = false;
+    // No forced wrap to next bar in original behaviour
+    forceNextBarStart = false;
     // removed unused lastRunParam
     clickEnv = 0.0f;
     uiClockCounter.store(0, std::memory_order_relaxed);
@@ -115,9 +118,16 @@ void ClockSyncAudioProcessor::prepareToPlay(double sr, int /*samplesPerBlock*/)
     pendingBarRestart.store(false, std::memory_order_relaxed);
     // Initial trigger mode from parameter
     if (auto* tv = parameters.getRawParameterValue(paramTriggerModeEnabled))
-        triggerModeEnabled.store(tv->load() > 0.5f, std::memory_order_relaxed);
+    {
+        const bool tm = tv->load() > 0.5f;
+        triggerModeEnabled.store(tm, std::memory_order_relaxed);
+        lastTriggerModeEnabled = tm;
+    }
     else
+    {
         triggerModeEnabled.store(true, std::memory_order_relaxed);
+        lastTriggerModeEnabled = true;
+    }
     suppressUntilRestart = false;
     firstBlock = true;
     if (auto* pi = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramResyncOffsetStep)))
@@ -385,6 +395,7 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
     }
 
     const double bpm = (pos.bpm > 0.0 ? pos.bpm : 120.0);
+    uiBpm.store(bpm, std::memory_order_relaxed);
     samplesPerQuarter = currentSampleRate * 60.0 / juce::jmax(1e-6, bpm);
 
     const double ppqStart = pos.ppqPosition;
@@ -413,6 +424,18 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
         }
     }
     // removed unused lastRunParam
+
+    // Trigger mode rising edge while already running (engine active): schedule a bar+offset restart.
+    // Placed before host transport edge handling so NEXT indicator can appear immediately after user toggles.
+    {
+        const bool tmNow = triggerModeEnabled.load(std::memory_order_relaxed);
+        if (runActive && tmNow && ! lastTriggerModeEnabled)
+        {
+            pendingBarRestart.store(true, std::memory_order_relaxed);
+            uiNextRestartPending.store(true, std::memory_order_relaxed);
+        }
+        lastTriggerModeEnabled = tmNow;
+    }
 
     // Transport state transitions: emit Start/Continue/Stop when host play toggles
     int hostStartSampleThisBlock = -1; // if host started this block, mark sample 0 as a boundary (we'll allow a clock on this frame)
@@ -1053,6 +1076,7 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
 
         if (runWasActive && haveStart && ! haveBarRestart && ! haveRateChange)
             suppressClockAtBoundaryOnce = true;
+        // No extra diagnostics in original behaviour
     }
     return window;
 }

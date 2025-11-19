@@ -70,7 +70,6 @@ include CMakeFiles/DancerFrames.dir/progress.make
 include CMakeFiles/DancerFrames.dir/flags.make
 
 juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData1.cpp: juce_binarydata_DancerFrames/JuceLibraryCode/input_file_list
-juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData1.cpp: /Users/studio/Documents/PlugProcess/clock_plugin/dancer/dancer_all.svg
 juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData1.cpp: /Users/studio/Documents/PlugProcess/clock_plugin/dancer/png/dancer_0.png
 juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData1.cpp: /Users/studio/Documents/PlugProcess/clock_plugin/dancer/png/dancer_1.png
 juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData1.cpp: /Users/studio/Documents/PlugProcess/clock_plugin/dancer/png/dancer_2.png
@@ -95,7 +94,7 @@ juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData1.cpp: /Users/studio/Docu
 juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData1.cpp: /Users/studio/Documents/PlugProcess/clock_plugin/dancer/png/dancer_21.png
 juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData1.cpp: /Users/studio/Documents/PlugProcess/clock_plugin/dancer/png/dancer_22.png
 juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData1.cpp: /Users/studio/Documents/PlugProcess/clock_plugin/dancer/png/dancer_23.png
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --blue --bold --progress-dir=/Users/studio/Documents/PlugProcess/clock_plugin/build_main/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Generating juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData1.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData2.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData3.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData4.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData5.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData6.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData7.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData8.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData9.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData10.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData11.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData12.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData13.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData14.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData15.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData16.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData17.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData18.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData19.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData20.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData21.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData22.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData23.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData24.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData25.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData.h"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --blue --bold --progress-dir=/Users/studio/Documents/PlugProcess/clock_plugin/build_main/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Generating juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData1.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData2.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData3.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData4.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData5.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData6.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData7.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData8.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData9.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData10.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData11.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData12.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData13.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData14.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData15.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData16.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData17.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData18.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData19.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData20.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData21.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData22.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData23.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData24.cpp, juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData.h"
 	cd /Users/studio/Documents/PlugProcess/clock_plugin && /Users/studio/Documents/PlugProcess/clock_plugin/build_main/JUCE/tools/extras/Build/juceaide/juceaide_artefacts/Custom/juceaide binarydata BinaryData BinaryData.h /Users/studio/Documents/PlugProcess/clock_plugin/build_main/juce_binarydata_DancerFrames/JuceLibraryCode /Users/studio/Documents/PlugProcess/clock_plugin/build_main/juce_binarydata_DancerFrames/JuceLibraryCode/input_file_list
 
 juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData2.cpp: juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData1.cpp
@@ -166,9 +165,6 @@ juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData23.cpp: juce_binarydata_D
 
 juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData24.cpp: juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData1.cpp
 	@$(CMAKE_COMMAND) -E touch_nocreate juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData24.cpp
-
-juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData25.cpp: juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData1.cpp
-	@$(CMAKE_COMMAND) -E touch_nocreate juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData25.cpp
 
 juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData.h: juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData1.cpp
 	@$(CMAKE_COMMAND) -E touch_nocreate juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData.h
@@ -512,20 +508,6 @@ CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryD
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData24.cpp.s"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /Users/studio/Documents/PlugProcess/clock_plugin/build_main/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData24.cpp -o CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData24.cpp.s
 
-CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData25.cpp.o: CMakeFiles/DancerFrames.dir/flags.make
-CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData25.cpp.o: juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData25.cpp
-CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData25.cpp.o: CMakeFiles/DancerFrames.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/studio/Documents/PlugProcess/clock_plugin/build_main/CMakeFiles --progress-num=$(CMAKE_PROGRESS_26) "Building CXX object CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData25.cpp.o"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData25.cpp.o -MF CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData25.cpp.o.d -o CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData25.cpp.o -c /Users/studio/Documents/PlugProcess/clock_plugin/build_main/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData25.cpp
-
-CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData25.cpp.i: cmake_force
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData25.cpp.i"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /Users/studio/Documents/PlugProcess/clock_plugin/build_main/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData25.cpp > CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData25.cpp.i
-
-CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData25.cpp.s: cmake_force
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData25.cpp.s"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /Users/studio/Documents/PlugProcess/clock_plugin/build_main/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData25.cpp -o CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData25.cpp.s
-
 # Object files for target DancerFrames
 DancerFrames_OBJECTS = \
 "CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData1.cpp.o" \
@@ -551,8 +533,7 @@ DancerFrames_OBJECTS = \
 "CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData21.cpp.o" \
 "CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData22.cpp.o" \
 "CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData23.cpp.o" \
-"CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData24.cpp.o" \
-"CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData25.cpp.o"
+"CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData24.cpp.o"
 
 # External object files for target DancerFrames
 DancerFrames_EXTERNAL_OBJECTS =
@@ -581,10 +562,9 @@ libDancerFrames.a: CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/Juce
 libDancerFrames.a: CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData22.cpp.o
 libDancerFrames.a: CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData23.cpp.o
 libDancerFrames.a: CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData24.cpp.o
-libDancerFrames.a: CMakeFiles/DancerFrames.dir/juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData25.cpp.o
 libDancerFrames.a: CMakeFiles/DancerFrames.dir/build.make
 libDancerFrames.a: CMakeFiles/DancerFrames.dir/link.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/Users/studio/Documents/PlugProcess/clock_plugin/build_main/CMakeFiles --progress-num=$(CMAKE_PROGRESS_27) "Linking CXX static library libDancerFrames.a"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/Users/studio/Documents/PlugProcess/clock_plugin/build_main/CMakeFiles --progress-num=$(CMAKE_PROGRESS_26) "Linking CXX static library libDancerFrames.a"
 	$(CMAKE_COMMAND) -P CMakeFiles/DancerFrames.dir/cmake_clean_target.cmake
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/DancerFrames.dir/link.txt --verbose=$(VERBOSE)
 
@@ -614,7 +594,6 @@ CMakeFiles/DancerFrames.dir/depend: juce_binarydata_DancerFrames/JuceLibraryCode
 CMakeFiles/DancerFrames.dir/depend: juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData22.cpp
 CMakeFiles/DancerFrames.dir/depend: juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData23.cpp
 CMakeFiles/DancerFrames.dir/depend: juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData24.cpp
-CMakeFiles/DancerFrames.dir/depend: juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData25.cpp
 CMakeFiles/DancerFrames.dir/depend: juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData3.cpp
 CMakeFiles/DancerFrames.dir/depend: juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData4.cpp
 CMakeFiles/DancerFrames.dir/depend: juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData5.cpp

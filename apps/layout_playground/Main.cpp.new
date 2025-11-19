@@ -1,0 +1,473 @@
+#include <juce_gui_extra/juce_gui_extra.h>
+#include <functional>
+#include "LookAndFeels.h" // UiThemeColours
+
+// Simple on/off button component
+class OnOffButton : public juce::Component
+{
+public:
+    OnOffButton()
+    {
+        setSize (diameter, diameter);
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto bounds = getLocalBounds().toFloat();
+        auto c = bounds.getCentre();
+        g.setColour (UiThemeColours::accent());
+        g.fillEllipse (bounds);
+
+        const float innerR = 8.0f;
+        g.setColour (UiThemeColours::base());
+        g.fillEllipse (c.x - innerR, c.y - innerR, innerR*2.0f, innerR*2.0f);
+
+        if (isOn)
+        {
+            const float dotR = 5.0f;
+            g.setColour (UiThemeColours::cyan());
+            g.fillEllipse (c.x - dotR, c.y - dotR, dotR*2.0f, dotR*2.0f);
+        }
+    }
+
+    void mouseDown (const juce::MouseEvent&) override
+    {
+        isOn = ! isOn;
+        if (onToggled) onToggled (isOn);
+        repaint();
+    }
+
+    void mouseEnter (const juce::MouseEvent&) override { if (onHoverChanged) onHoverChanged (true); }
+    void mouseExit  (const juce::MouseEvent&) override { if (onHoverChanged) onHoverChanged (false); }
+
+    void setState (bool on) { isOn = on; repaint(); }
+    bool getState() const noexcept { return isOn; }
+
+    std::function<void(bool)> onToggled;
+    std::function<void(bool)> onHoverChanged;
+
+private:
+    static constexpr int diameter = 28;
+    bool isOn = false;
+};
+
+// 16-part ring component
+class Ring16Component : public juce::Component, private juce::Timer
+{
+public:
+    Ring16Component()
+    {
+        setSize ((int)(outerR*2), (int)(outerR*2));
+        masterStartMs = juce::Time::getMillisecondCounterHiRes();
+        startTimerHz (60);
+        globalRestartLogical = 0; // default to logical segment 1
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto boundsF = getLocalBounds().toFloat();
+        const float innerProp = innerR / outerR;
+        const float step = juce::MathConstants<float>::twoPi / 16.0f;
+        const float start0 = -juce::MathConstants<float>::halfPi;
+
+        for (int i = 0; i < 16; ++i)
+        {
+            const float a0 = start0 + i*step;
+            const float a1 = a0 + step;
+            juce::Path seg;
+            seg.addPieSegment (boundsF, a0, a1, innerProp);
+
+            juce::Colour col = UiThemeColours::accent().darker (0.20f);
+            if (i == hovered) col = UiThemeColours::accent().brighter (0.15f);
+            if (i == selected) col = UiThemeColours::cyan();
+            if (ringFlashes[i] > 0.0f)
+                col = col.interpolatedWith (UiThemeColours::cyan(), juce::jlimit (0.0f, 1.0f, ringFlashes[i]));
+
+            g.setColour (col.withAlpha (0.95f));
+            g.fillPath (seg);
+
+            // persistent global restart indicator
+            if (globalRestartLogical >= 0)
+            {
+                const int restartRaw = logicalToRaw (globalRestartLogical);
+                if (i == restartRaw)
+                {
+                    g.setColour (UiThemeColours::cyan().withAlpha (0.45f));
+                    g.strokePath (seg, juce::PathStrokeType (3.0f));
+                }
+            }
+        }
+
+        // center control
+        const auto c = boundsF.getCentre();
+        const float innerD = innerR*2.0f;
+        juce::Rectangle<float> innerCircle (c.x - innerR, c.y - innerR, innerD, innerD);
+        g.setColour (isPlaying ? UiThemeColours::cyan().withAlpha (0.25f) : UiThemeColours::accent().withAlpha (0.18f));
+        g.fillEllipse (innerCircle);
+        g.setColour (UiThemeColours::cyan().withAlpha (0.9f));
+        g.setFont (juce::Font (11.0f, juce::Font::bold));
+        g.drawFittedText (isPlaying ? "CHASE ON" : "CHASE OFF", innerCircle.toNearestInt(), juce::Justification::centred, 1);
+    }
+
+    void mouseMove (const juce::MouseEvent& e) override
+    {
+        const int h = hitSegment (e.position);
+        if (h != hovered)
+        {
+            hovered = h;
+            setMouseCursor (hovered >= 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+            if (onHoverChanged) onHoverChanged (rawToLogical (hovered));
+            repaint();
+        }
+    }
+
+    void mouseExit (const juce::MouseEvent&) override
+    {
+        if (hovered != -1)
+        {
+            hovered = -1;
+            setMouseCursor (juce::MouseCursor::NormalCursor);
+            if (onHoverChanged) onHoverChanged (-1);
+            repaint();
+        }
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (isInsideInner (e.position)) { togglePlay(); return; }
+        const int s = hitSegment (e.position);
+        if (s >= 0)
+        {
+            selected = s;
+            if (onClicked) onClicked (rawToLogical (selected));
+            repaint();
+        }
+    }
+
+    std::function<void(int)> onHoverChanged;
+    std::function<void(int)> onClicked;
+    std::function<void(bool)> onPlayStateChanged;
+
+    void requestRestartAtNextMasterBoundary() { pendingRestartAtNextBoundary = true; }
+    void setResyncOnBarOneEnabled (bool en) { resyncOnBarOneEnabled = en; }
+    void setGlobalRestartLogical (int logical) { if (logical >= 0 && logical < 16) globalRestartLogical = logical; }
+    int getGlobalRestartLogical() const noexcept { return globalRestartLogical; }
+
+private:
+    int hitSegment (juce::Point<float> p) const
+    {
+        auto boundsF = getLocalBounds().toFloat();
+        const float innerProp = innerR / outerR;
+        const float step = juce::MathConstants<float>::twoPi / 16.0f;
+        const float start0 = -juce::MathConstants<float>::halfPi;
+
+        const auto c = boundsF.getCentre();
+        const float dx = p.x - c.x;
+        const float dy = p.y - c.y;
+        const float d2 = dx*dx + dy*dy;
+        const float R2 = outerR*outerR;
+        const float r2 = innerR*innerR;
+        if (d2 < r2 || d2 > R2) return -1;
+
+        for (int i = 0; i < 16; ++i)
+        {
+            const float a0 = start0 + i*step;
+            const float a1 = a0 + step;
+            juce::Path seg; seg.addPieSegment (boundsF, a0, a1, innerProp);
+            if (seg.contains (p)) return i;
+        }
+        return -1;
+    }
+
+    bool isInsideInner (juce::Point<float> p) const
+    {
+        const auto c = getLocalBounds().toFloat().getCentre();
+        const float dx = p.x - c.x; const float dy = p.y - c.y;
+        return (dx*dx + dy*dy) <= (innerR*innerR);
+    }
+
+    static int rawToLogical (int raw) { if (raw < 0) return -1; constexpr int offset = 4; return (raw - offset + 16) % 16; }
+    static int logicalToRaw (int logical) { if (logical < 0) return -1; constexpr int offset = 4; return (logical + offset) % 16; }
+
+    void togglePlay()
+    {
+        isPlaying = ! isPlaying;
+        if (onPlayStateChanged) onPlayStateChanged (isPlaying);
+        if (isPlaying)
+        {
+            lastTickMs = juce::Time::getMillisecondCounterHiRes();
+            playStartMs = lastTickMs;
+            lastStepIndex = -1;
+        }
+        repaint();
+    }
+
+    void timerCallback() override
+    {
+        const double now = juce::Time::getMillisecondCounterHiRes();
+        const double dtMs = now - lastTickMs; lastTickMs = now;
+
+        const double barMs = (60.0 / bpm) * 4.0 * 1000.0;
+        const double masterElapsed = now - masterStartMs;
+        const double masterPhase = std::fmod (masterElapsed, barMs) / barMs;
+        int masterSeg = (int) std::floor (masterPhase * 16.0);
+        masterSeg = juce::jlimit (0, 15, masterSeg);
+        const bool masterAdvanced = (masterSeg != lastMasterSeg);
+
+        if (masterAdvanced)
+        {
+            const int restartLogical = (globalRestartLogical >= 0 && globalRestartLogical < 16) ? globalRestartLogical : 0;
+            if (pendingRestartAtNextBoundary)
+            {
+                const double stepMs = barMs / 16.0;
+                playStartMs = now - (restartLogical * stepMs);
+                lastStepIndex = -1;
+                pendingRestartAtNextBoundary = false;
+            }
+            if (resyncOnBarOneEnabled && masterSeg == 0)
+            {
+                const double stepMs = barMs / 16.0;
+                playStartMs = now - (restartLogical * stepMs);
+                lastStepIndex = -1;
+            }
+        }
+        lastMasterSeg = masterSeg;
+
+        // fade
+        const double fadeMs = 500.0;
+        const float step = (float) juce::jlimit (0.0, 1.0, dtMs / fadeMs);
+        for (int i = 0; i < 16; ++i)
+        {
+            float v = ringFlashes[i];
+            if (v > 0.0f) { v = juce::jmax (0.0f, v - step); ringFlashes.set (i, v); }
+        }
+
+        if (isPlaying)
+        {
+            const double elapsed = now - playStartMs;
+            const double phase = std::fmod (elapsed, barMs) / barMs;
+            int seg = (int) std::floor (phase * 16.0);
+            seg = juce::jlimit (0, 15, seg);
+            const int segRaw = (seg + logicalToRaw (0)) % 16;
+            if (segRaw != lastStepIndex)
+            {
+                lastStepIndex = segRaw;
+                ringFlashes.set (segRaw, 1.0f);
+            }
+        }
+
+        repaint();
+    }
+
+    bool isPlaying = false;
+    double bpm = 120.0;
+    double playStartMs = 0.0;
+    double lastTickMs = 0.0;
+    int lastStepIndex = -1;
+    juce::Array<float> ringFlashes { juce::Array<float> (16, 0.0f) };
+
+    double masterStartMs = 0.0;
+    int lastMasterSeg = -1;
+    bool pendingRestartAtNextBoundary = false;
+    bool resyncOnBarOneEnabled = false;
+    int globalRestartLogical = -1;
+
+    const float outerR = 70.0f;
+    const float innerR = 55.0f;
+    int hovered = -1;
+    int selected = -1;
+};
+
+// Playground component
+class PlaygroundComponent : public juce::Component, private juce::Timer
+{
+public:
+    PlaygroundComponent()
+    {
+        setSize (300, 240);
+
+        circles.add ({ 150.0f, 130.0f, 70.0f, juce::Colours::orangered });
+        circles.add ({ 245.0f, 85.0f, 35.0f, juce::Colours::goldenrod });
+        circles.add ({ 234.0f, 132.0f, 14.0f, juce::Colours::turquoise });
+        circles.add ({ 235.0f, 170.0f, 25.0f, juce::Colours::mediumpurple });
+        circles.add ({ 95.0f, 189.0f, 11.0f, juce::Colours::yellowgreen });
+        circles.add ({ 77.0f, 172.0f, 14.0f, juce::Colours::pink });
+        circles.add ({ 55.0f, 140.0f, 25.0f, juce::Colours::seagreen });
+        circles.add ({ 70.0f, 80.0f, 25.0f, juce::Colours::greenyellow });
+        circles.add ({ 115.0f, 55.0f, 14.0f, juce::Colours::blueviolet });
+
+        flashes.resize (circles.size());
+        for (int i = 0; i < flashes.size(); ++i) flashes.set (i, 0.0f);
+
+        hoverTexts = juce::StringArray {
+            "Stop and re-start next bar+offset", "Re-trigger quantized", "Re-sync at bar+offset on/off",
+            "Start offset step", "Shuffle Amount", "Switch shuffle type 909/linear",
+            "Set scale 1/32,1/16,1/8,1/4", "Audio Click Division: off,beat,8th,16th,24ppq", "Autofill on/off"
+        };
+
+        ring.reset (new Ring16Component());
+        if (circles.size() > 0)
+        {
+            const auto& c0 = circles.getReference (0);
+            const int size = 140;
+            ring->setBounds ((int)(c0.x - 70.0f), (int)(c0.y - 70.0f), size, size);
+        }
+        ring->onHoverChanged = [this](int logical){ ringHoverSegment = logical; repaint(); };
+        ring->onClicked = [this](int logical){ ringSelectedSegment = logical; if (ring) ring->setGlobalRestartLogical (logical); repaint(); };
+        addAndMakeVisible (ring.get());
+
+        auto makeButton = [this](int idx)
+        {
+            if (idx < 0 || idx >= circles.size()) return;
+            const auto& c = circles.getReference (idx);
+            auto* b = onOffButtons.add (new OnOffButton());
+            b->setBounds ((int)(c.x - 14.0f), (int)(c.y - 14.0f), 28, 28);
+            b->onHoverChanged = [this, idx](bool over){ hoverIndex = over ? idx : (hoverIndex == idx ? -1 : hoverIndex); repaint(); };
+            if (idx == 2) // circle 3 button controls resync
+                b->onToggled = [this](bool on){ if (ring) ring->setResyncOnBarOneEnabled (on); };
+            addAndMakeVisible (b);
+        };
+
+        makeButton (2);
+        makeButton (5);
+        makeButton (8);
+    }
+
+    ~PlaygroundComponent() override
+    {
+        if (ring) removeChildComponent (ring.get());
+        for (auto* b : onOffButtons) if (b) removeChildComponent (b);
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.fillAll (UiThemeColours::base());
+        g.setColour (UiThemeColours::cyan().withAlpha (0.1f));
+        for (int x = 0; x < getWidth(); x += 20) g.drawVerticalLine (x, 0.0f, (float)getHeight());
+        for (int y = 0; y < getHeight(); y += 20) g.drawHorizontalLine (y, 0.0f, (float)getWidth());
+
+        for (int i = 0; i < circles.size(); ++i)
+        {
+            if (i == 0 || i == 2 || i == 5 || i == 8) continue;
+            const auto& c = circles.getReference (i);
+            const float rr = c.r;
+            const float f = juce::jlimit (0.0f, 1.0f, flashes[i]);
+            juce::Colour fillCol = UiThemeColours::accent().interpolatedWith (UiThemeColours::cyan(), f).withAlpha (0.95f);
+            g.setColour (fillCol);
+            g.fillEllipse (c.x - rr, c.y - rr, rr*2.0f, rr*2.0f);
+            g.setColour (juce::Colours::white.withAlpha (0.3f));
+            g.drawEllipse (c.x - rr, c.y - rr, rr*2.0f, rr*2.0f, 1.0f);
+        }
+
+        g.setColour (UiThemeColours::cyan().withAlpha (0.8f));
+        g.setFont (juce::Font (14.0f, juce::Font::bold));
+        g.drawFittedText ("Layout Playground (300 x 240)", 8, 6, getWidth() - 16, 20, juce::Justification::left, 1);
+
+        juce::String label;
+        if (ringHoverSegment >= 0) label = "Segment " + juce::String (ringHoverSegment + 1);
+        else if (hoverIndex >= 0 && hoverIndex < hoverTexts.size()) label = juce::String (hoverIndex + 1) + ": " + hoverTexts[hoverIndex];
+        if (label.isNotEmpty())
+        {
+            auto area = juce::Rectangle<int> (8, getHeight() - 24, getWidth() - 16, 18);
+            g.setColour (UiThemeColours::cyan());
+            g.setFont (juce::Font (13.0f, juce::Font::bold));
+            g.drawFittedText (label, area, juce::Justification::centred, 1);
+        }
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        const int idx = hitTestIndex (e.position);
+        if (idx >= 0)
+        {
+            if (idx == 1 && ring) ring->requestRestartAtNextMasterBoundary();
+            else { flashes.set (idx, 1.0f); startFadeTimer(); repaint(); }
+        }
+    }
+
+    void mouseMove (const juce::MouseEvent& e) override
+    {
+        const int newH = hitTestIndex (e.position);
+        if (newH != hoverIndex) { hoverIndex = newH; setMouseCursor (hoverIndex >= 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor); repaint(); }
+    }
+
+    void mouseExit (const juce::MouseEvent&) override { if (hoverIndex != -1) { hoverIndex = -1; setMouseCursor (juce::MouseCursor::NormalCursor); repaint(); } }
+
+private:
+    struct Circle { float x, y, r; juce::Colour colour; };
+    juce::Array<Circle> circles;
+    juce::Array<float> flashes;
+    juce::StringArray hoverTexts;
+
+    std::unique_ptr<Ring16Component> ring;
+    juce::OwnedArray<OnOffButton> onOffButtons;
+    int hoverIndex = -1;
+    int ringHoverSegment = -1;
+    int ringSelectedSegment = -1;
+
+    int hitTestIndex (juce::Point<float> p) const
+    {
+        int best = -1; float bestd = std::numeric_limits<float>::max();
+        for (int i = 0; i < circles.size(); ++i)
+        {
+            const auto& c = circles.getReference (i);
+            const float dx = p.x - c.x, dy = p.y - c.y;
+            const float d2 = dx*dx + dy*dy;
+            if (d2 <= c.r * c.r && d2 < bestd) { best = i; bestd = d2; }
+        }
+        return best;
+    }
+
+    void startFadeTimer()
+    {
+        if (! isTimerRunning) { isTimerRunning = true; lastTickMs = juce::Time::getMillisecondCounterHiRes(); startTimerHz (60); }
+    }
+
+    void timerCallback() override
+    {
+        const double now = juce::Time::getMillisecondCounterHiRes();
+        const double dtMs = now - lastTickMs; lastTickMs = now;
+        const double fadeMs = 300.0; const float step = (float) juce::jlimit (0.0, 1.0, dtMs / fadeMs);
+        bool any = false;
+        for (int i = 0; i < flashes.size(); ++i)
+        {
+            float v = flashes[i]; if (v > 0.0f) { v = juce::jmax (0.0f, v - step); flashes.set (i, v); if (v > 0.0f) any = true; }
+        }
+        if (! any) { stopTimer(); isTimerRunning = false; }
+        repaint();
+    }
+
+    bool isTimerRunning = false;
+    double lastTickMs = 0.0;
+};
+
+class PlaygroundWindow : public juce::DocumentWindow
+{
+public:
+    PlaygroundWindow() : juce::DocumentWindow ("Layout Playground", juce::Colours::black, juce::DocumentWindow::allButtons)
+    {
+        setUsingNativeTitleBar (true);
+        setResizable (false, false);
+        setContentOwned (new PlaygroundComponent(), true);
+        centreWithSize (300, 240);
+        setVisible (true);
+    }
+    void closeButtonPressed() override { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }
+};
+
+class PlaygroundApplication : public juce::JUCEApplication
+{
+public:
+    const juce::String getApplicationName() override { return "Layout Playground"; }
+    const juce::String getApplicationVersion() override { return "1.0.0"; }
+    bool moreThanOneInstanceAllowed() override { return true; }
+    void initialise (const juce::String&) override { window.reset (new PlaygroundWindow()); }
+    void shutdown() override { window = nullptr; }
+    void systemRequestedQuit() override { quit(); }
+    void anotherInstanceStarted (const juce::String&) override {}
+private:
+    std::unique_ptr<PlaygroundWindow> window;
+};
+
+START_JUCE_APPLICATION (PlaygroundApplication)
