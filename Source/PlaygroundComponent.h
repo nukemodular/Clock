@@ -344,8 +344,10 @@ private:
         return (hitSegment (p) >= 0);
     }
 
-    static int rawToLogical (int raw) { if (raw < 0) return -1; constexpr int offset = 4; return (raw - offset + 16) % 16; }
-    static int logicalToRaw (int logical) { if (logical < 0) return -1; constexpr int offset = 4; return (logical + offset) % 16; }
+    // Adjusted mapping: remove prior +offset rotation so logical step 1 aligns with host step 1.
+    // Previously an offset of 4 rotated visuals; user requested direct alignment without +1 visual correction.
+    static int rawToLogical (int raw) { if (raw < 0) return -1; constexpr int offset = 0; return (raw - offset + 16) % 16; }
+    static int logicalToRaw (int logical) { if (logical < 0) return -1; constexpr int offset = 0; return (logical + offset) % 16; }
 
     void togglePlay()
     {

@@ -1262,7 +1262,17 @@ void ClockSyncAudioProcessorEditor::drawDancer(juce::Graphics& g)
     const unsigned long long pulses = processor.getUiClockCounter();
     if (runParamCached && dancerFrameCount > 1)
     {
-        const int pulsesInQuarter = 24; // fixed PPQ sync
+        // Map clock division (rateIndexCached) to dancer pulses-per-quarter:
+        // 32 -> 24 PPQ, 16 -> 12 PPQ, 8 -> 6 PPQ, 4 -> 6 PPQ
+        int pulsesInQuarter = 24; // default for 32
+        switch (rateIndexCached)
+        {
+            case 0: pulsesInQuarter = 24; break; // division 32
+            case 1: pulsesInQuarter = 12; break; // division 16
+            case 2: pulsesInQuarter = 6;  break; // division 8
+            case 3: pulsesInQuarter = 6;  break; // division 4
+            default: pulsesInQuarter = 24; break;
+        }
         const int pInQuarter = (int) (pulses % (unsigned long long) pulsesInQuarter);
         int frameIdx = (pInQuarter * dancerFrameCount) / pulsesInQuarter;
         frameIdx = juce::jlimit(0, dancerFrameCount - 1, frameIdx);
