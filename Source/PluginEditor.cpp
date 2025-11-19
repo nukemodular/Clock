@@ -413,6 +413,9 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     idleModeButton.setVisible(true);
     legacyModernButton.setVisible(true);
     sppButton.setVisible(true);
+    // Initialise processor legacy mode from current toggle state
+    processor.setLegacyMode(!legacyModernButton.getToggleState());
+    legacyModernButton.setButtonText(legacyModernButton.getToggleState() ? "MODERN" : "LEGACY");
     idleModeButton.onClick = [this]
     {
         const bool on = idleModeButton.getToggleState();
@@ -422,6 +425,8 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     {
         const bool on = legacyModernButton.getToggleState();
         legacyModernButton.setButtonText(on ? "MODERN" : "LEGACY");
+            // Update processor legacy gating mode: true => MODERN (continuous clock), false => LEGACY (emit Stop pre-Start & gate clocks)
+            processor.setLegacyMode(!on);
     };
     sppButton.onClick = [this]
     {

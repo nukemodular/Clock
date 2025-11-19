@@ -1017,21 +1017,27 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
             const double shiftQ = (double)(currentShuffleStep - 1) * (1.0 / 48.0);
             prevSixteenthLenQ = secondHalf ? (0.25 + shiftQ) : (0.25 - shiftQ); // length of the preceding 16th segment
         }
-        const int gapSamples = juce::jmax(1, fastRoundPositive(prevSixteenthLenQ * samplesPerQuarter) - 1);
-        int stopOffset = juce::jmax(0, sampleOffset - gapSamples);
-        if (stopOffset >= sampleOffset)
-            stopOffset = juce::jmax(0, sampleOffset - 1);
-
-        if (stopOffset < sampleOffset)
+        // Legacy mode emits a Stop a few ticks before Start and gates clocks between.
+        // Modern mode skips the pre-Stop (continuous clock, no gap) but still emits Start.
+        const bool legacy = legacyModeEnabled.load(std::memory_order_relaxed);
+        int stopOffset = -1;
+        if (legacy)
         {
-            const auto stopMsg = juce::MidiMessage::midiStop();
-            if (sendMidi)
+            const int gapSamples = juce::jmax(1, fastRoundPositive(prevSixteenthLenQ * samplesPerQuarter) - 1);
+            stopOffset = juce::jmax(0, sampleOffset - gapSamples);
+            if (stopOffset >= sampleOffset)
+                stopOffset = juce::jmax(0, sampleOffset - 1);
+            if (stopOffset < sampleOffset)
             {
-                midi.addEvent(stopMsg, stopOffset);
-                extBuffer.addEvent(stopMsg, stopOffset);
+                const auto stopMsg = juce::MidiMessage::midiStop();
+                if (sendMidi)
+                {
+                    midi.addEvent(stopMsg, stopOffset);
+                    extBuffer.addEvent(stopMsg, stopOffset);
+                }
             }
         }
-
+        // Always emit Start (both modes)
         const auto startMsg = juce::MidiMessage::midiStart();
         if (sendMidi)
         {
@@ -1070,8 +1076,16 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
             uiNextRestartPending.store(false, std::memory_order_relaxed);
         }
 
-        window.gapStart = stopOffset;
-        window.gapEnd = sampleOffset;
+        if (legacy && stopOffset >= 0)
+        {
+            window.gapStart = stopOffset;
+            window.gapEnd = sampleOffset;
+        }
+        else
+        {
+            window.gapStart = -1;
+            window.gapEnd = -1;
+        }
         window.startSample = sampleOffset;
 
         if (runWasActive && haveStart && ! haveBarRestart && ! haveRateChange)

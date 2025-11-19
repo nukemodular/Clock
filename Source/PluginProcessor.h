@@ -59,6 +59,11 @@ public:
     bool getUiNextRestartPending() const { return uiNextRestartPending.load(std::memory_order_relaxed); }
     double getUiBpm() const { return uiBpm.load(std::memory_order_relaxed); }
 
+    // Legacy mode: when enabled we emit a MIDI Stop a few ticks before each scheduled Start
+    // (trigger restart, bar restart, rate change) and gate MIDI clock pulses between the Stop
+    // and Start. Modern mode skips the pre‑Stop and allows continuous clock.
+    void setLegacyMode(bool legacy) { legacyModeEnabled.store(legacy, std::memory_order_relaxed); }
+
     // External MIDI device selection API (used by editor)
     void setExternalDeviceId(const juce::String& id);
     juce::String getExternalDeviceId() const { return externalDeviceId; }
@@ -132,6 +137,8 @@ private:
     std::atomic<bool> uiPendingStart { false };
     std::atomic<bool> uiNextRestartPending { false }; // show "NEXT" when a bar+offset restart is scheduled
     std::atomic<double> uiBpm { 120.0 }; // host tempo (fallback 120)
+    // Behaviour mode
+    std::atomic<bool> legacyModeEnabled { false }; // false => modern (default), true => legacy pre-stop gating
 
     // Helpers
     int getClockResolution() const; // returns 48/24/12/6 based on currentRateIndex
