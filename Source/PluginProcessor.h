@@ -82,6 +82,8 @@ public:
     static inline const juce::String paramResyncOffsetStep { "resyncOffsetStep" }; // 1..16, step within bar where (re)start happens
     static inline const juce::String paramShuffleStep { "shuffleStep" }; // 1..7 discrete swing amount (1 none .. 7 heavy)
     static inline const juce::String paramDiagnostics { "diagnostics" }; // enable brief timing logs
+    static inline const juce::String paramPatternBars { "patternBars" }; // OFF,1,2,4,8,16,32,64,RND
+    static inline const juce::String paramPatternSteps { "patternSteps" }; // 16-bit bitmask persisted
 
 private:
     //==============================================================================
@@ -139,6 +141,20 @@ private:
     std::atomic<double> uiBpm { 120.0 }; // host tempo (fallback 120)
     // Behaviour mode
     std::atomic<bool> legacyModeEnabled { false }; // false => modern (default), true => legacy pre-stop gating
+    // Pattern sequencer state
+    std::atomic<uint16_t> patternStepsMask { 0 }; // 16 bits
+    std::atomic<int> patternBarsMode { 0 }; // 0=OFF,1=1,2=2,3=4,4=8,5=16,6=32,7=64,8=RND
+    long long lastPatternFiredBar { -1 }; // last bar number pattern fired
+    long long nextRandomPatternTargetBar { -1 }; // target bar for random firing
+    long long lastPatternRestartScheduledBar { -1 }; // bar number where a trigger-mode restart was scheduled from pattern
+    std::vector<double> pendingPatternPPQ; // PPQ positions inside current bar to emit Start events for active steps
+    void updatePatternParams();
+    void preparePatternForBar(double barStartPPQ, double barLenQ);
+    void tryFirePattern(double ppqStart, double barLenQ, double barStartPPQ, int numSamples, juce::MidiBuffer& midi, juce::MidiBuffer& extClock);
+    int getPatternBarIntervalFromMode(int mode) const;
+    long long computeCurrentBar(double ppqStart, double barLenQ) const { return (long long) std::floor(ppqStart / juce::jmax(1e-9, barLenQ)); }
+    void setPatternSteps(uint16_t mask) { patternStepsMask.store(mask, std::memory_order_relaxed); }
+    void setPatternBarsMode(int mode) { patternBarsMode.store(mode, std::memory_order_relaxed); }
 
     // Helpers
     int getClockResolution() const; // returns 48/24/12/6 based on currentRateIndex

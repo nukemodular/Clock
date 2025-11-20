@@ -338,9 +338,9 @@ public:
         for (int i = 0; i < flashes.size(); ++i) flashes.set (i, 0.0f);
 
         hoverTexts = juce::StringArray {
-            "Stop and re-start next bar+offset", "Re-trigger quantized", "Re-sync at bar+offset on/off",
-            "Start offset step", "Shuffle Amount", "Switch shuffle type 909/linear",
-            "Set scale 1/32,1/16,1/8,1/4", "Audio Click Division: off,beat,8th,16th,24ppq", "Autofill on/off"
+            "Stop and re-start next bar + offset", "Re-trigger quantized", "Re-sync at bar + offset on/off",
+            "Start offset step", "Shuffle Amount", "Switch shuffle type 909 or linear",
+            "Set scale 1/32, 1/16, 1/8, 1/4", "Audio Click: off, 4th,8th, 16th, 24ppq", "Autofill on/off"
         };
 
         ring.reset (new Ring16Component());

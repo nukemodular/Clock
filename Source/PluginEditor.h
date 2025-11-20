@@ -7,6 +7,7 @@
 #include "RingToggle.h"
 #include "LookAndFeels.h" // theme colours
 #include "UiLayoutConstants.h"
+#include "Pattern.h"
 
 #include "PlaygroundComponent.h"
 
@@ -251,5 +252,15 @@ private:
     static constexpr int kDancerRefH = 500;  // reference design height
     // Option: divisor for clock pulses per frame advance (1 => every pulse; 24 => quarter-note cycle)
     int dancerPulseCyclePPQ { 24 };          // use 24 PPQ quarter-note cycle mapping
+    // Pattern ring (inner 16-step sequencer)
+    PatternRing pattern;
+    int patternHoverIndex { -1 };
+    bool patternEditMode { false }; // idx2 ON enables editing & visibility
+    bool patternDragActive { false }; // true while mouse dragging over pattern
+    bool patternDragSetState { false }; // desired state (on/off) applied to dragged wedges
+    bool patternDragTouched[16] { false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false }; // prevent re-applying
+    void pushPatternStateToProcessor();
+    void updatePatternParamFromPopup3(int popupIndex);
+    void mouseDrag(const juce::MouseEvent& e) override; // implement pattern drag
     
 };

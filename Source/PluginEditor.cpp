@@ -118,6 +118,10 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     deviceBox.toFront(true);
     nameBox.toFront(true);
     nameMidiSwitch.toFront(true);
+
+    // Initialise pattern ring visual state from persisted parameter before wiring callbacks
+    if (auto* psi = dynamic_cast<juce::AudioParameterInt*>(processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramPatternSteps)))
+        pattern.setBitmask((uint16_t) juce::jlimit(0, 65535, psi->get()));
     
     clickButton.setVisible(false);
     // Keep other small toggles non-intercepting so they don't block playground hovers
@@ -251,8 +255,34 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
             // whether manual triggers schedule a bar+offset restart.
         };
 
-        // Popup3 selection: not mapped to an APVTS param yet — leave as a no-op
-        playgroundComp->onPopup3Selected = [this](int){ /* no-op for now */ };
+        // Popup3 selection: map to pattern bar interval parameter (OFF,1,2,4,8,16,32,64,RND)
+        playgroundComp->onPopup3Selected = [this](int idx){ updatePatternParamFromPopup3(idx); };
+        // Pattern edit toggle (idx2) controls visibility/edit mode
+        playgroundComp->onPatternEditToggled = [this](bool on){
+            patternEditMode = on;
+            // When entering pattern edit mode, allow clicks to pass through the playground
+            // so the editor can handle wedge toggles. When leaving, restore interception.
+            if (playgroundComp)
+            {
+                // Regression fix: we need the editor to receive clicks for wedge toggling.
+                // Use (false,false) while editing so playground and its children both *do not* consume events.
+                // Outside edit mode revert to normal interception (true,true) so playground handles its UI.
+                if (on)
+                    playgroundComp->setInterceptsMouseClicks(false, false);
+                else
+                    playgroundComp->setInterceptsMouseClicks(true, true);
+            }
+            // Force explicit button visual state (two-state: enabled -> edit, disabled -> hidden)
+            if (playgroundComp)
+                playgroundComp->setPatternEditButtonState(on);
+            // Sync pattern ring visual from parameter when entering edit mode
+            if (on)
+            {
+                if (auto* psi = dynamic_cast<juce::AudioParameterInt*>(processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramPatternSteps)))
+                    pattern.setBitmask((uint16_t) juce::jlimit(0, 65535, psi->get()));
+            }
+            repaint(ringArea);
+        };
 
         // Initialise playground visual state from current parameters
         playgroundComp->setRunState(runParamCached);
@@ -594,6 +624,20 @@ void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
         }
     }
 
+    // Draw inward pattern sequencer when edit mode enabled (idx2 ON)
+    if (patternEditMode)
+    {
+        // Compute pattern ring geometry inside existing inner donut (kRingInnerD)
+        float innerHoleR = (float) kRingInnerD * 0.5f;
+        // Move inward 2px extra (original margin 6 -> 8) and halve thickness (~0.225 of outerR)
+        float patternOuterR = innerHoleR - 8.0f; // increased inward offset
+        float patternInnerR = patternOuterR * 0.775f; // 22.5% thickness (outer - inner)
+        juce::Point<float> centre((float) ringArea.getCentreX(), (float) ringArea.getCentreY());
+        // Draw pattern ring without semi-transparent backdrop circle (user request)
+        pattern.draw(g, centre, patternOuterR, patternInnerR,
+                 UiThemeColours::cyan(), UiThemeColours::accent(), false, patternHoverIndex);
+    }
+
     // Draw fixed header (30px) at top (on top of submenu).
     const int headerPaintH = 30;
     juce::Rectangle<float> headerRect(0.0f, 0.0f, (float) getWidth(), (float) headerPaintH);
@@ -828,6 +872,16 @@ void ClockSyncAudioProcessorEditor::mouseMove(const juce::MouseEvent& e)
             if (r.contains(e.getPosition())) { playgroundComp->setHoverIndexFromEditor(i); found = true; break; }
         }
         if (! found) playgroundComp->clearHoverFromEditor();
+    }
+    // Pattern hover detection (only when edit mode enabled)
+    if (patternEditMode && ringArea.contains(e.getPosition()))
+    {
+        float innerHoleR = (float) kRingInnerD * 0.5f;
+        float patternOuterR = innerHoleR - 8.0f; // inward shift
+        float patternInnerR = patternOuterR * 0.775f; // thinner ring
+        juce::Point<float> centre((float) ringArea.getCentreX(), (float) ringArea.getCentreY());
+        patternHoverIndex = pattern.hitTest(e.position.toFloat(), centre, patternOuterR, patternInnerR);
+        repaint(ringArea);
     }
 }
 #endif // disabled duplicate mouseMove
@@ -1273,8 +1327,11 @@ void ClockSyncAudioProcessorEditor::drawDancer(juce::Graphics& g)
             case 3: pulsesInQuarter = 6;  break; // division 4
             default: pulsesInQuarter = 24; break;
         }
-        const int pInQuarter = (int) (pulses % (unsigned long long) pulsesInQuarter);
-        int frameIdx = (pInQuarter * dancerFrameCount) / pulsesInQuarter;
+        // Apply global dancer speed scale (0.25x) by enlarging the effective cycle length.
+        // Equivalent to dividing frame advancement by 4.
+        const int scaledCycle = pulsesInQuarter * 4; // slower cycle
+        const int pInCycle = (int) (pulses % (unsigned long long) scaledCycle);
+        int frameIdx = (pInCycle * dancerFrameCount) / scaledCycle;
         frameIdx = juce::jlimit(0, dancerFrameCount - 1, frameIdx);
         dancerLastFrame = frameIdx;
         dancerLastDrawnClockCounter = pulses;
@@ -1314,12 +1371,7 @@ ClockSyncAudioProcessorEditor::~ClockSyncAudioProcessorEditor()
     helpToggle.setLookAndFeel(nullptr);
 }
 
-void ClockSyncAudioProcessorEditor::mouseUp(const juce::MouseEvent& e)
-{
-    // No-op: ringArea (run) toggling handled on mouseDown for more immediate response.
-
-    
-}
+// Existing mouseUp earlier (original stub) removed; consolidated into final mouseUp below.
 
 void ClockSyncAudioProcessorEditor::mouseMove(const juce::MouseEvent& e)
 {
@@ -1390,6 +1442,24 @@ void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
 {
     // Route clicks to any visible popup rings first.
     juce::Point<float> pf((float) e.x, (float) e.y);
+    // If pattern edit is active and user clicks circle idx3 region, close edit mode immediately
+    // so subsequent click can open its menu without interference.
+    if (patternEditMode && playgroundComp && playgroundComp->baseCircles.size() > 3)
+    {
+        const auto& c3 = playgroundComp->baseCircles.getReference(3); // idx3
+        juce::Rectangle<float> r3(c3.x - c3.r, c3.y - c3.r, c3.r * 2.0f, c3.r * 2.0f);
+        if (r3.contains(pf))
+        {
+            patternEditMode = false;
+            // Restore interception so playground regains normal behaviour.
+            playgroundComp->setInterceptsMouseClicks(true, true);
+            playgroundComp->setPatternEditButtonState(false);
+            patternHoverIndex = -1;
+            repaint(ringArea);
+            // Swallow this click (acts only to close editor); user re-click opens menu.
+            return;
+        }
+    }
     auto handlePopupClickAtComp = [&](const std::unique_ptr<PopupMenuRing>& pr, const juce::Component& c)->int
     {
         if (! pr) return -1;
@@ -1413,6 +1483,41 @@ void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
     // sets the resync offset step (1..16). Clicking the inner circle toggles Run.
     if (ringArea.contains(e.getPosition()))
     {
+        // Pattern editing: detect wedge toggles first when edit mode enabled.
+        if (patternEditMode)
+        {
+            float innerHoleR = (float) kRingInnerD * 0.5f;
+            float patternOuterR = innerHoleR - 8.0f; // inward shift
+            float patternInnerR = patternOuterR * 0.775f; // thinner ring
+            juce::Point<float> centre((float) ringArea.getCentreX(), (float) ringArea.getCentreY());
+            int pw = pattern.hitTest(e.position.toFloat(), centre, patternOuterR, patternInnerR);
+            if (pw >= 0)
+            {
+                // Begin drag mode: determine uniform target state from initial wedge.
+                bool current = pattern.getStep(pw);
+                patternDragActive = true;
+                patternDragSetState = ! current; // invert first wedge; subsequent wedges adopt same state
+                std::fill(std::begin(patternDragTouched), std::end(patternDragTouched), false);
+                patternDragTouched[pw] = true;
+                pattern.setStep(pw, patternDragSetState);
+                pushPatternStateToProcessor();
+                repaint(ringArea);
+                return;
+            }
+            // If click lies within the pattern ring bounds (even if gap) while editing, block underlying
+            // idx0 run toggle and offset step selection to avoid accidental transport changes.
+            const float dxP = e.position.x - centre.x;
+            const float dyP = e.position.y - centre.y;
+            const float dist2P = dxP*dxP + dyP*dyP;
+            if (dist2P <= patternOuterR*patternOuterR && dist2P >= patternInnerR*patternInnerR)
+            {
+                // Inside pattern ring donut but not on an active wedge (gap area): swallow.
+                return;
+            }
+            // Also block central run toggle while in edit mode.
+            if (dist2P < patternInnerR*patternInnerR)
+                return;
+        }
         const int cx = ringArea.getCentreX();
         const int cy = ringArea.getCentreY();
         // same shrink values used by drawRing()
@@ -1428,6 +1533,11 @@ void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
         if (dist2 <= innerR * innerR)
         {
             // Center click: toggle Run (chaselight). Use a proper gesture so hosts record automation cleanly.
+            if (patternEditMode)
+            {
+                // Block run toggling while editing pattern.
+                return;
+            }
             if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramRun))
             {
                 if (auto* rp = processor.getAPVTS().getRawParameterValue(ClockSyncAudioProcessor::paramRun))
@@ -1449,6 +1559,11 @@ void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
         // Clicked in the ring donut -> map to a 1..16 LOGICAL segment (apply playground offset)
         if (dist2 <= outerR * outerR && dist2 >= innerR * innerR)
         {
+            if (patternEditMode)
+            {
+                // While in pattern edit mode block offset step selection changes within main ring.
+                return;
+            }
             const float angle = std::atan2(dy, dx); // -pi..pi
             const float startAt12 = -juce::MathConstants<float>::halfPi;
             const float twoPi = juce::MathConstants<float>::twoPi;
@@ -1484,6 +1599,31 @@ void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
     // so clicks may be intercepted — forward them explicitly.
     if (playgroundComp)
     {
+        // Pattern edit toggle circle (idx2) should still be clickable while in edit mode to exit.
+        if (playgroundComp->baseCircles.size() > 2)
+        {
+            const auto& c2 = playgroundComp->baseCircles.getReference(2);
+            juce::Rectangle<int> r2((int)std::round(c2.x - c2.r), (int)std::round(c2.y - c2.r),
+                                    (int)std::round(c2.r * 2.0f), (int)std::round(c2.r * 2.0f));
+            if (r2.contains(e.getPosition()))
+            {
+                // Emulate a simple two-state toggle: delegate state flip and visual to playground callback
+                bool next = ! patternEditMode;
+                patternEditMode = next;
+                if (playgroundComp)
+                {
+                    playgroundComp->setInterceptsMouseClicks(!next, !next);
+                    playgroundComp->setPatternEditButtonState(next);
+                }
+                if (next)
+                {
+                    if (auto* psi = dynamic_cast<juce::AudioParameterInt*>(processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramPatternSteps)))
+                        pattern.setBitmask((uint16_t) juce::jlimit(0, 65535, psi->get()));
+                }
+                repaint(ringArea);
+                return;
+            }
+        }
         if (playgroundComp->baseCircles.size() > 3)
         {
             const auto& c3 = playgroundComp->baseCircles.getReference(3);
@@ -1500,7 +1640,24 @@ void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
                                     (int)std::round(c1.r * 2.0f), (int)std::round(c1.r * 2.0f));
             if (r1.contains(e.getPosition()))
             {
-                // Original behaviour: manual trigger does NOT auto-enable Run.
+                // In pattern edit mode repurpose trigger as step recorder: add current logical step to pattern (set ON, additive).
+                // Pattern edit mode: record current logical step AND still perform live trigger behaviour.
+                if (patternEditMode)
+                {
+                    int logicalStep = juce::jlimit(1,16, relativeStepCached);
+                    constexpr int visualRotation = 4;
+                    int storedIndex = ((logicalStep - 1) + visualRotation) & 15;
+                    if (! pattern.getStep(storedIndex))
+                    {
+                        pattern.setStep(storedIndex, true);
+                        pushPatternStateToProcessor();
+                        repaint(ringArea);
+                    }
+                    if (playgroundComp)
+                        playgroundComp->flashSegmentLogical(logicalStep);
+                    // Fall through to original trigger action (no early return) so user hears immediate Start.
+                }
+                // Manual trigger one-shot (does NOT auto-enable Run).
                 processor.requestTriggerOnce();
                 if (playgroundComp) (void) playgroundComp->handleExternalClickIndex(1);
                 // Manual trigger chase-light offset: compute & apply immediately
@@ -1544,6 +1701,59 @@ void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
         }
     }
     
+}
+
+void ClockSyncAudioProcessorEditor::mouseDrag(const juce::MouseEvent& e)
+{
+    if (! patternEditMode || ! patternDragActive) return;
+    if (! ringArea.contains(e.getPosition())) return;
+    float innerHoleR = (float) kRingInnerD * 0.5f;
+    float patternOuterR = innerHoleR - 8.0f;
+    float patternInnerR = patternOuterR * 0.775f;
+    juce::Point<float> centre((float) ringArea.getCentreX(), (float) ringArea.getCentreY());
+    int pw = pattern.hitTest(e.position.toFloat(), centre, patternOuterR, patternInnerR);
+    if (pw >= 0 && ! patternDragTouched[pw])
+    {
+        patternDragTouched[pw] = true;
+        pattern.setStep(pw, patternDragSetState);
+        pushPatternStateToProcessor();
+        repaint(ringArea);
+    }
+}
+
+void ClockSyncAudioProcessorEditor::mouseUp(const juce::MouseEvent& e)
+{
+    if (patternDragActive)
+    {
+        patternDragActive = false;
+        patternDragSetState = false;
+        std::fill(std::begin(patternDragTouched), std::end(patternDragTouched), false);
+    }
+}
+
+// Map popup3 selection index -> patternBars parameter index (OFF,1,2,4,8,16,32,64,RND)
+void ClockSyncAudioProcessorEditor::updatePatternParamFromPopup3(int popupIndex)
+{
+    // popup order: RND(0),64(1),32(2),16(3),8(4),4(5),2(6),1(7),OFF(8)
+    static const int map[9] = { 8,7,6,5,4,3,2,1,0 };
+    if (popupIndex < 0 || popupIndex > 8) return;
+    int paramIdx = map[popupIndex];
+    if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramPatternBars))
+    {
+        p->beginChangeGesture();
+        p->setValueNotifyingHost(p->getNormalisableRange().convertTo0to1((float) paramIdx));
+        p->endChangeGesture();
+    }
+}
+
+void ClockSyncAudioProcessorEditor::pushPatternStateToProcessor()
+{
+    uint16_t mask = pattern.getBitmask();
+    if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramPatternSteps))
+    {
+        float norm = p->getNormalisableRange().convertTo0to1((float) mask);
+        p->setValueNotifyingHost(norm);
+    }
 }
 
 // PlaygroundComponent ring & animations are authoritative.

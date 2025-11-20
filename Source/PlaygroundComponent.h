@@ -344,10 +344,11 @@ private:
         return (hitSegment (p) >= 0);
     }
 
-    // Adjusted mapping: remove prior +offset rotation so logical step 1 aligns with host step 1.
-    // Previously an offset of 4 rotated visuals; user requested direct alignment without +1 visual correction.
-    static int rawToLogical (int raw) { if (raw < 0) return -1; constexpr int offset = 0; return (raw - offset + 16) % 16; }
-    static int logicalToRaw (int logical) { if (logical < 0) return -1; constexpr int offset = 0; return (logical + offset) % 16; }
+    // Visual rotation mapping: apply +4 offset so the chase/playhead starts at 12 o'clock instead of 9 o'clock.
+    // raw indices (0..15) are rotated forward by 4 when converted to logical step numbers.
+    // logical step 1 now appears at the 12 o'clock position for improved orientation.
+    static int rawToLogical (int raw) { if (raw < 0) return -1; constexpr int offset = 4; return (raw - offset + 16) % 16; }
+    static int logicalToRaw (int logical) { if (logical < 0) return -1; constexpr int offset = 4; return (logical + offset) % 16; }
 
     void togglePlay()
     {
@@ -629,6 +630,7 @@ public:
     std::function<void(bool)> onClickPulseRequested;
     std::function<void(bool)> onTriggerModeRequested;
     std::function<void(int)> onPopup3Selected;
+    std::function<void(bool)> onPatternEditToggled; // idx2 edit/autofill toggle
 
     // canonical circle structure and member containers used throughout
     struct Circle { float x, y, r; juce::Colour colour; };
@@ -933,6 +935,24 @@ public:
         return true;
     }
 
+    // Explicitly set the toggle state for the pattern edit control (circle idx2)
+    // to avoid accidental tri-state behaviour when the editor temporarily disables
+    // mouse interception for pattern wedge editing.
+    void setPatternEditButtonState(bool enabled)
+    {
+        // onOffButtonIdxs holds mapping from onOffButtons vector indices -> circle indices
+        for (int i = 0; i < onOffButtons.size(); ++i)
+        {
+            if (! onOffButtons[i]) continue;
+            int circleIdx = (i < onOffButtonIdxs.size()) ? onOffButtonIdxs.getReference(i) : i;
+            if (circleIdx == 2) // pattern edit control
+            {
+                onOffButtons[i]->setState(enabled);
+                onOffButtons[i]->repaint();
+            }
+        }
+    }
+
     // If the plugin editor uses a fixed header overlay (e.g. top 30px), call
     // this to apply a Y-offset to the playground's layout so the playground
     // visuals sit under the header without being shifted by the editor.
@@ -1214,6 +1234,30 @@ public:
                 repaint();
                 return;
             }
+        }
+
+        // If popup3 (bar interval / pattern menu) is open, suppress all shuffle clicks
+        // so selecting entries like RND or 64 is not misinterpreted as a shuffle selection.
+        // We intentionally skip the shuffle region logic entirely while visible; the
+        // popup3 handleMouseDown below will consume valid menu item clicks. Non-item
+        // clicks are ignored (treated as no-op) which avoids accidental shuffle changes.
+        const bool popup3Open = (circles.size() > 3) && (popup3.isVisible() || popup3.isAnimating());
+        if (popup3Open)
+        {
+            // Attempt to process a menu selection immediately; if none chosen, simply return.
+            const auto& base3ForPopup = circles.getReference (3);
+            const int clickedPopup3 = popup3.handleMouseDown (e.position, base3ForPopup.x, base3ForPopup.y, base3ForPopup.r);
+            if (clickedPopup3 >= 0)
+            {
+                const auto labs = popup3.getLabels();
+                if (clickedPopup3 < labs.size()) mainCircle3Label = labs.getReference (clickedPopup3);
+                popup3.startCollapse();
+                if (3 >= 0 && 3 < flashes.size()) flashes.set (3, 1.0f);
+                startFadeTimer();
+                if (onPopup3Selected) onPopup3Selected (clickedPopup3);
+                repaint();
+            }
+            return; // Always return while popup3 open to block shuffle interaction beneath.
         }
 
         // Shuffle region: enable dragging in both linear and discrete modes
@@ -1500,7 +1544,21 @@ public:
             };
         else if (idx == 5)
             b->onToggled = [this](bool on){ linearShuffleMode = on; if (! linearShuffleMode && shufflePositions.size() > 1) linearShufflePos = (selectedShuffle - 1) / (float)(shufflePositions.size() - 1); repaint(); };
+        else if (idx == 2)
+            b->onToggled = [this](bool on){ if (onPatternEditToggled) onPatternEditToggled(on); };
         addAndMakeVisible (b);
+    }
+
+    bool getOnOffStateForCircle(int circleIdx) const
+    {
+        for (int i = 0; i < onOffButtons.size(); ++i)
+        {
+            if (i < onOffButtonIdxs.size() && onOffButtonIdxs[i] == circleIdx)
+            {
+                if (auto* b = onOffButtons[i]) return b->getState();
+            }
+        }
+        return false;
     }
 
     // Minimal shuffle data used by painting code
