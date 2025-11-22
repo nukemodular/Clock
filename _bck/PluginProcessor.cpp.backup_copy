@@ -150,8 +150,6 @@ void ClockSyncAudioProcessor::prepareToPlay(double sr, int /*samplesPerBlock*/)
     diagLastSample = -1;
     updateDerivedParams();
     updateExternalOut();
-    // Reset persistent accumulators on prepare (sample-rate change / reinitialise)
-    resetAccumulators();
 }
 
 void ClockSyncAudioProcessor::releaseResources() {}
@@ -232,13 +230,6 @@ void ClockSyncAudioProcessor::updateDerivedParams()
         triggerModeEnabled.store(tv->load() > 0.5f, std::memory_order_relaxed);
 
     updatePatternParams();
-}
-
-void ClockSyncAudioProcessor::resetAccumulators()
-{
-    fracAccPrimaryBefore = 0.0;
-    fracAccPrimaryAfter = 0.0;
-    lastBpmForAcc = -1.0;
 }
 
 void ClockSyncAudioProcessor::updateExternalOut()
@@ -353,40 +344,49 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                                                     juce::MidiBuffer& midi)
 {
     const int numSamples = buffer.getNumSamples();
-    // Clear per-block pattern/bar-start markers
-    lastPatternStartSampleInBlock = -1;
-    lastBarRestartStartSampleInBlock = -1;
+
     // Update derived params (fast, read atomics)
     updateDerivedParams();
-
-    // Centralized external MIDI buffer: collect all external messages here and send once at function end.
-    juce::MidiBuffer extClock;
-
-    // --- Cache parameter reads to avoid repeated dynamic_casts and lookups in inner loops ---
-    auto* clickRateParam = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramClickRate));
-    const int clickRateCached = clickRateParam ? juce::jlimit(0, 4, clickRateParam->get()) : 0;
-    const bool clickEnabled = (clickRateCached > 0);
-    const bool clickPulseCached = parameters.getRawParameterValue(paramClickPulse)->load() > 0.5f;
-    const bool diagnosticsParam = parameters.getRawParameterValue(paramDiagnostics)->load() > 0.5f;
-
-    auto* choiceParam = dynamic_cast<juce::AudioParameterChoice*>(parameters.getParameter(paramClockRateIndex));
-    if (choiceParam)
+    int clickRate = 0;
+    if (auto* cri = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramClickRate)))
+        clickRate = juce::jlimit(0, 4, cri->get());
+    const bool clickEnabled = (clickRate > 0);
+    const bool clickPulse = parameters.getRawParameterValue(paramClickPulse)->load() > 0.5f;
+    // Diagnostics toggle (arm a short capture window when enabled)
+    if (parameters.getRawParameterValue(paramDiagnostics)->load() > 0.5f)
     {
-        const int desired = choiceParam->getIndex();
+        if (! diagnosticsEnabled)
+        {
+            diagnosticsEnabled = true;
+            diagPairsRemaining = 4; // capture next 4 pairs
+            diagLastLoggedPair = std::numeric_limits<long long>::min();
+            diagLastSample = -1;
+            // diagnostics armed message removed per user request
+        }
+    }
+    else
+    {
+        diagnosticsEnabled = false;
+    }
+    // Pull desired rate index; defer application to the next scheduled restart ("NEXT")
+    if (auto* choice = dynamic_cast<juce::AudioParameterChoice*>(parameters.getParameter(paramClockRateIndex)))
+    {
+        const int desired = choice->getIndex();
         if (desired != currentRateIndex && pendingRateIndex != desired)
         {
             pendingRateIndex = desired;
             uiNextRestartPending.store(true, std::memory_order_relaxed);
         }
     }
-
     // Capture the resolution (locked to 24 for MIDI clock)
     const int resolutionBefore = getClockResolution();
 
     // Run control param
-    const bool runParamCached = parameters.getRawParameterValue(paramRun)->load() > 0.5f;
-    const bool keepClockStoppedCached = parameters.getRawParameterValue(paramClockWhileStopped)->load() > 0.5f;
-    bool allowMidiOut = runParamCached || keepClockStoppedCached;
+    const bool runParam = parameters.getRawParameterValue(paramRun)->load() > 0.5f;
+    const bool keepClockStopped = parameters.getRawParameterValue(paramClockWhileStopped)->load() > 0.5f;
+    // Allow MIDI emission when Run is on, when the user enabled clock while stopped,
+    // or when the host transport is playing. We'll include isPlaying shortly.
+    bool allowMidiOut = runParam || keepClockStopped;
 
     
 
@@ -394,15 +394,19 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
     // MIDI Stop to external devices when user turns Run off. This makes the
     // UI Run toggle reliably stop external drum machines even if host
     // transport/clock settings would otherwise keep running.
-    if (lastRunParam != runParamCached)
+    if (lastRunParam != runParam)
     {
-        if (! runParamCached)
+        if (! runParam)
         {
             // Send an immediate Stop message at the start of this block.
             const auto stopMsg = juce::MidiMessage::midiStop();
             midi.addEvent(stopMsg, 0);
-            // Queue Stop for external output; will be flushed once at end of this function.
-            extClock.addEvent(stopMsg, 0);
+            if (externalMidiOut)
+            {
+                juce::MidiBuffer extStop;
+                extStop.addEvent(stopMsg, 0);
+                externalMidiOut->sendBlockOfMessages(extStop, juce::Time::getMillisecondCounterHiRes(), currentSampleRate);
+            }
             // Clear running state
             runActive = false;
             pendingStart = false;
@@ -410,18 +414,10 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
             uiPendingStart.store(false, std::memory_order_relaxed);
         }
         // Keep original behaviour on Run==true: arm a pendingStart handled later in the main logic.
-        lastRunParam = runParamCached;
+        lastRunParam = runParam;
     }
 
     const double bpm = (pos.bpm > 0.0 ? pos.bpm : 120.0);
-    // If BPM changed since last block, conservatively reset accumulators to avoid stale carry.
-    if (lastBpmForAcc < 0.0)
-        lastBpmForAcc = bpm;
-    else if (std::fabs(bpm - lastBpmForAcc) > 1e-6)
-    {
-        resetAccumulators();
-        lastBpmForAcc = bpm;
-    }
     uiBpm.store(bpm, std::memory_order_relaxed);
     samplesPerQuarter = currentSampleRate * 60.0 / juce::jmax(1e-6, bpm);
 
@@ -432,7 +428,7 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
     allowMidiOut = allowMidiOut || isPlaying;
 
     // Robust run state handling: don't miss edges that occur between blocks
-    if (! runParamCached)
+    if (! runParam)
     {
         if (runActive || pendingStart)
         {
@@ -444,7 +440,7 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
             // When user has Run==off, suppress sending any MIDI stop messages.
         }
     }
-    else // runParamCached == true
+    else // runParam == true
     {
         if (! runActive && ! pendingStart)
         {
@@ -506,8 +502,6 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
         hostStartSampleThisBlock = 0;
         uiStep16.store(1, std::memory_order_relaxed);
         firstBlock = false;
-        // Reset accumulators on a host transport START
-        resetAccumulators();
     }
     else if (! isPlaying && lastWasPlaying)
     {
@@ -515,16 +509,18 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
         if (allowMidiOut || hostForcedAllowMidiOut)
         {
             midi.addEvent(stopMsg, 0);
-            // queue external stop for one-shot flush at end
-            extClock.addEvent(stopMsg, 0);
+            if (externalMidiOut)
+            {
+                juce::MidiBuffer extStop;
+                extStop.addEvent(stopMsg, 0);
+                externalMidiOut->sendBlockOfMessages(extStop, juce::Time::getMillisecondCounterHiRes(), currentSampleRate);
+            }
         }
         // When host stops, also clear run-active state
         runActive = false;
         pendingStart = false;
         uiIsRunning.store(false, std::memory_order_relaxed);
         uiPendingStart.store(false, std::memory_order_relaxed);
-        // Reset accumulators on host STOP
-        resetAccumulators();
     }
 
     // Generate clock ticks aligned to transport when playing
@@ -573,7 +569,7 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
         }
 
         // Handle immediate retrigger (1/16) and bar-aligned changes (swing applied when computing sample offsets)
-        // extClock is declared at function scope to collect external messages from all branches.
+        juce::MidiBuffer extClock;
         int gapStart = -1, gapEnd = -1, startSampleAtBoundary = -1;
         int forbiddenClockSample = -1; // do not emit clock on this exact sample (Start sample)
 
@@ -623,8 +619,6 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                 {
                     const auto startMsg = juce::MidiMessage::midiStart();
                     addBoth(midi, extClock, startMsg, nextGridOffset);
-                        // record that we emitted a Start from a manual trigger at this sample
-                        lastPatternStartSampleInBlock = nextGridOffset;
                     // triggerArmed diagnostic message removed per user request
                     // Consume arm; optional bar restart if trigger mode enabled
                     triggerArmedForNextSixteenth.store(false, std::memory_order_relaxed);
@@ -640,17 +634,13 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
             }
         }
 
+        auto barWindow = handleBarAlignedChanges(pos, numSamples, midi, extClock);
+
         // Pattern scheduling: at bar boundaries decide if pattern fires; then emit Start events at active step PPQ times as they fall in this block.
         tryFirePattern(ppqStart, barLenQ, lastBar, numSamples, midi, extClock);
-
-        auto barWindow = handleBarAlignedChanges(pos, numSamples, midi, extClock);
         gapStart = barWindow.gapStart;
         gapEnd = barWindow.gapEnd;
         startSampleAtBoundary = barWindow.startSample;
-        // Re-run pattern scheduling after applying bar-aligned changes in case a restart or Run state
-        // was enabled by `handleBarAlignedChanges` earlier in this block. tryFirePattern is idempotent
-        // because it consumes pendingPatternPPQ and checks lastPatternFiredBar.
-        tryFirePattern(ppqStart, barLenQ, lastBar, numSamples, midi, extClock);
 
         // If host just started this block (sample 0), mark the boundary at sample 0
         if (startSampleAtBoundary < 0 && hostStartSampleThisBlock >= 0)
@@ -667,23 +657,10 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
         const bool boundaryInBlock = (startSampleAtBoundary >= 0);
         const int resolutionAfter = getClockResolution(); // may change if rate applied at boundary
 
-        // Precompute several constants used inside the tick loops to reduce per-tick overhead.
+        // Ensure lastTickIndex is initialised once per stream
         const double ppqBlockEnd = ppqStart + (double) (numSamples - 1) * ppqPerSample;
         if (lastTickIndex == std::numeric_limits<long long>::min())
             lastTickIndex = tickAt(ppqStart, resolutionBefore) - 1;
-
-        // Precompute swing/pulse mapping constants for the "before" resolution
-        const double pairLenQBefore = 0.5;
-        const double shiftQBefore = (currentShuffleStep <= 1) ? 0.0 : (double)(currentShuffleStep - 1) * (1.0 / 48.0);
-        const long long pulsesPerPairBefore = (long long) std::llround(pairLenQBefore * (double) resolutionBefore);
-        const int pulsesPer16thBefore = (int) (pulsesPerPairBefore / 2);
-        const double firstLenBefore = 0.25 + shiftQBefore;
-        const double secondLenBefore = 0.25 - shiftQBefore;
-        const double spacingFirstBefore = pulsesPer16thBefore > 0 ? (firstLenBefore / (double) pulsesPer16thBefore) : 0.0;
-        const double spacingSecondBefore = pulsesPer16thBefore > 0 ? (secondLenBefore / (double) pulsesPer16thBefore) : 0.0;
-
-        // Use persistent per-primary fractional accumulator (declared in header).
-        // Note: conservative persistence (carries across blocks) but reset on transport/bpm/sample-rate/rate changes.
 
         // Phase 1: ticks before a restart boundary (or whole block if no restart boundary). May include a mid-block shuffle activation.
         const int preEndSample = boundaryInBlock ? (startSampleAtBoundary - 1) : (numSamples - 1);
@@ -706,49 +683,41 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                     uiNextRestartPending.store(false, std::memory_order_relaxed);
                 }
 
-                // Optimised swing mapping using precomputed constants (reduces per-tick overhead)
-                long long pairIndex = 0;
-                int indexInPair = 0;
-                if (pulsesPerPairBefore > 0)
-                {
-                    pairIndex = t / pulsesPerPairBefore;
-                    indexInPair = (int) (t % pulsesPerPairBefore);
-                }
-                double tickPPQ;
-                if (currentShuffleStep <= 1)
-                {
-                    tickPPQ = (double) t / (double) resolutionBefore;
-                }
-                else
-                {
-                    double pairStart = (double) pairIndex * pairLenQBefore;
-                    if (indexInPair < pulsesPer16thBefore)
-                        tickPPQ = pairStart + (double) indexInPair * spacingFirstBefore;
+                // Pulse-distribution swing mapping:
+                // We distribute the 12 clock pulses inside each 1/8 pair across two 16ths whose lengths vary with swing.
+                // firstLen = 0.25 + shiftQ, secondLen = 0.25 - shiftQ, shiftQ max ~= 1/32 (0.03125 QN) for conservative timing.
+                auto mapSwingPulse = [&](long long tickIndex, int step) -> double {
+                    if (step <= 1) return (double) tickIndex / (double) resolutionBefore; // no swing
+                    // Exact linear mapping: shiftQ = (step-1) * (1/48) QN so step 7 => 6/48 = 0.125
+                    const double shiftQ = (double)(step - 1) * (1.0 / 48.0);
+                    const double pairLenQ = 0.5; // length of two 16ths
+                    const long long pulsesPerQuarter = resolutionBefore;
+                    const long long pulsesPerPair = (long long) std::llround(pairLenQ * (double) pulsesPerQuarter); // 12 at 24 PPQN
+                    const long long pairIndex = tickIndex / pulsesPerPair;
+                    const long long indexInPair = tickIndex % pulsesPerPair; // 0..11
+                    const double firstLen = 0.25 + shiftQ;
+                    const double secondLen = 0.25 - shiftQ;
+                    // Uniform spacing within each half
+                    const int pulsesPer16th = pulsesPerPair / 2; // 6
+                    double pairStart = pairIndex * pairLenQ;
+                    if (indexInPair < pulsesPer16th)
+                    {
+                        // First 16th
+                        const double spacing = firstLen / (double) pulsesPer16th;
+                        return pairStart + (double) indexInPair * spacing;
+                    }
                     else
                     {
-                        const int idxSecond = indexInPair - pulsesPer16thBefore;
-                        tickPPQ = pairStart + firstLenBefore + (double) idxSecond * spacingSecondBefore;
+                        // Second 16th
+                        const double spacing = secondLen / (double) pulsesPer16th;
+                        const long long idxSecond = indexInPair - pulsesPer16th; // 0..5
+                        return pairStart + firstLen + (double) idxSecond * spacing;
                     }
-                }
-                const double deltaQuarter = tickPPQ - ppqStart;
-                const double exactSample = deltaQuarter * samplesPerQuarter;
+                };
 
-                // Treat the first pulse inside each pair as a primary and apply a tiny per-block fractional accumulator
-                // to stabilise rounding on these primaries (clamped per-block, no carry across blocks).
-                int mappedOffset;
-                if (indexInPair == 0)
-                {
-                    double adj = exactSample + fracAccPrimaryBefore;
-                    mappedOffset = fastRoundPositive(adj);
-                    fracAccPrimaryBefore = adj - (double) mappedOffset;
-                    // clamp carry to avoid large spikes
-                    if (fracAccPrimaryBefore > 0.5) fracAccPrimaryBefore = 0.5;
-                    if (fracAccPrimaryBefore < -0.5) fracAccPrimaryBefore = -0.5;
-                }
-                else
-                {
-                    mappedOffset = fastRoundPositive(exactSample);
-                }
+                double tickPPQ = mapSwingPulse(t, currentShuffleStep);
+                const double deltaQuarter = tickPPQ - ppqStart;
+                const int mappedOffset = fastRoundPositive(deltaQuarter * samplesPerQuarter);
                 // If mapped clock lands beyond this pre-boundary region, carry it to next block (do not clamp/emit)
                 if (mappedOffset > preEndSample)
                 {
@@ -787,7 +756,7 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                     if (clickEnabled)
                     {
                         int stepSpan = 1;
-                        switch (clickRateCached)
+                        switch (clickRate)
                         {
                             case 1: stepSpan = resolutionBefore; break;                 // quarter note
                             case 2: stepSpan = juce::jmax(1, resolutionBefore / 2); break; // eighth
@@ -801,7 +770,7 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                             const float baseLevel = quarterBoundary ? 1.0f : 0.7f;
                             const float outLevel = baseLevel * clickGainLinear;
                             const int pulseSamples = (int) juce::jmax(1, (int) std::round(0.001 * currentSampleRate));
-                            if (! clickPulseCached)
+                            if (! clickPulse)
                             {
                                 // 1-sample spike
                                 if (sampleOffset >= 0 && sampleOffset < numSamples)
@@ -832,16 +801,6 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
             lastTickIndex = lastProcessedT;
         }
 
-        // Precompute 'after' resolution swing/pulse mapping constants for use in the post-boundary loop
-        const double pairLenQAfter = 0.5;
-        const double shiftQAfter = (currentShuffleStep <= 1) ? 0.0 : (double)(currentShuffleStep - 1) * (1.0 / 48.0);
-        const long long pulsesPerPairAfter = (long long) std::llround(pairLenQAfter * (double) resolutionAfter);
-        const int pulsesPer16thAfter = (int) (pulsesPerPairAfter > 0 ? (pulsesPerPairAfter / 2) : 0);
-        const double firstLenAfter = 0.25 + shiftQAfter;
-        const double secondLenAfter = 0.25 - shiftQAfter;
-        const double spacingFirstAfter = pulsesPer16thAfter > 0 ? (firstLenAfter / (double) pulsesPer16thAfter) : 0.0;
-        const double spacingSecondAfter = pulsesPer16thAfter > 0 ? (secondLenAfter / (double) pulsesPer16thAfter) : 0.0;
-
         // Phase 2: ticks after a restart boundary using the (possibly) new resolution.
         if (boundaryInBlock)
         {
@@ -870,40 +829,33 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                     applyShuffleAtPPQ = -1.0;
                     uiNextRestartPending.store(false, std::memory_order_relaxed);
                 }
-                double tickPPQ = 0.0;
-                int indexInPair = 0;
-                if (currentShuffleStep <= 1 || pulsesPerPairAfter <= 0)
-                {
-                    tickPPQ = (double) t / (double) resolutionAfter;
-                }
-                else
-                {
-                    const long long pairIndex = t / pulsesPerPairAfter;
-                    indexInPair = (int) (t % pulsesPerPairAfter);
-                    double pairStart = (double) pairIndex * pairLenQAfter;
-                    if (indexInPair < pulsesPer16thAfter)
-                        tickPPQ = pairStart + (double) indexInPair * spacingFirstAfter;
+                auto mapSwingPulsePost = [&](long long tickIndex, int step) -> double {
+                    if (step <= 1) return (double) tickIndex / (double) resolutionAfter;
+                    const double shiftQ = (double)(step - 1) * (1.0 / 48.0);
+                    const double pairLenQ = 0.5;
+                    const long long pulsesPerQuarter = resolutionAfter;
+                    const long long pulsesPerPair = (long long) std::llround(pairLenQ * (double) pulsesPerQuarter);
+                    const long long pairIndex = tickIndex / pulsesPerPair;
+                    const long long indexInPair = tickIndex % pulsesPerPair;
+                    const double firstLen = 0.25 + shiftQ;
+                    const double secondLen = 0.25 - shiftQ;
+                    const int pulsesPer16th = pulsesPerPair / 2;
+                    double pairStart = pairIndex * pairLenQ;
+                    if (indexInPair < pulsesPer16th)
+                    {
+                        const double spacing = firstLen / (double) pulsesPer16th;
+                        return pairStart + (double) indexInPair * spacing;
+                    }
                     else
                     {
-                        const int idxSecond = indexInPair - pulsesPer16thAfter;
-                        tickPPQ = pairStart + firstLenAfter + (double) idxSecond * spacingSecondAfter;
+                        const double spacing = secondLen / (double) pulsesPer16th;
+                        const long long idxSecond = indexInPair - pulsesPer16th;
+                        return pairStart + firstLen + (double) idxSecond * spacing;
                     }
-                }
+                };
+                double tickPPQ = mapSwingPulsePost(t, currentShuffleStep);
                 const double deltaQuarter = tickPPQ - ppqStart;
-                const double exactSample = deltaQuarter * samplesPerQuarter;
-                int mappedOffset;
-                if (currentShuffleStep > 1 && pulsesPerPairAfter > 0 && indexInPair == 0)
-                {
-                    double adj = exactSample + fracAccPrimaryAfter;
-                    mappedOffset = fastRoundPositive(adj);
-                    fracAccPrimaryAfter = adj - (double) mappedOffset;
-                    if (fracAccPrimaryAfter > 0.5) fracAccPrimaryAfter = 0.5;
-                    if (fracAccPrimaryAfter < -0.5) fracAccPrimaryAfter = -0.5;
-                }
-                else
-                {
-                    mappedOffset = fastRoundPositive(exactSample);
-                }
+                const int mappedOffset = fastRoundPositive(deltaQuarter * samplesPerQuarter);
                 if (mappedOffset > numSamples - 1)
                 {
                     break; // carry into next block; do not advance lastTickIndex
@@ -934,7 +886,7 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                     if (clickEnabled)
                     {
                         int stepSpan = 1;
-                        switch (clickRateCached)
+                        switch (clickRate)
                         {
                             case 1: stepSpan = resolutionAfter; break;
                             case 2: stepSpan = juce::jmax(1, resolutionAfter / 2); break;
@@ -948,7 +900,7 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                             const float baseLevel = quarterBoundary ? 1.0f : 0.7f;
                             const float outLevel = baseLevel * clickGainLinear;
                             const int pulseSamples = (int) juce::jmax(1, (int) std::round(0.001 * currentSampleRate));
-                            if (! clickPulseCached)
+                            if (! clickPulse)
                             {
                                 if (mappedOffset >= 0 && mappedOffset < numSamples)
                                 {
@@ -979,12 +931,9 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
             suppressClockAtBoundaryOnce = false;
         }
 
-        // extClock will be flushed once after scheduling (below)
+        if (externalMidiOut && extClock.getNumEvents() > 0)
+            externalMidiOut->sendBlockOfMessages(extClock, juce::Time::getMillisecondCounterHiRes(), currentSampleRate);
     }
-
-    // Flush any queued external MIDI messages gathered while scheduling.
-    if (externalMidiOut && extClock.getNumEvents() > 0)
-        externalMidiOut->sendBlockOfMessages(extClock, juce::Time::getMillisecondCounterHiRes(), currentSampleRate);
 
     // Per-tick clicks are written directly into the audio buffer in the scheduling loops above.
 
@@ -1066,11 +1015,7 @@ void ClockSyncAudioProcessor::preparePatternForBar(double barStartPPQ, double ba
 
 void ClockSyncAudioProcessor::tryFirePattern(double ppqStart, double barLenQ, double barStartPPQ, int numSamples, juce::MidiBuffer& midi, juce::MidiBuffer& extClock)
 {
-    // Allow pattern-driven Starts to fire even when the internal `runActive` flag
-    // is false. This makes pattern behaviour consistent with manual triggers: when
-    // a pattern step issues a Start it should put the engine into the running
-    // state immediately so any scheduled bar-aligned restarts take effect in
-    // the same block. We still honour the Pattern Bars mode being OFF below.
+    if (! runActive) return; // only when running
     const int mode = patternBarsMode.load(std::memory_order_relaxed);
     if (mode == 0) return; // OFF
     const bool rnd = (mode == 8);
@@ -1160,54 +1105,14 @@ void ClockSyncAudioProcessor::tryFirePattern(double ppqStart, double barLenQ, do
         int sampleOffset = fastRoundPositive(deltaQ * samplesPerQuarter);
         if (sampleOffset < 0 || sampleOffset >= numSamples) { remaining.push_back(targetPPQ); continue; }
         const auto startMsg = juce::MidiMessage::midiStart();
-        // If the bar-restart path already emitted/consumed a Start at this sample,
-        // avoid sending a duplicate and consume the pending indicators so UI/state
-        // reflect the applied restart.
-        if (sampleOffset == lastBarRestartStartSampleInBlock)
-        {
-            pendingBarRestart.store(false, std::memory_order_relaxed);
-            uiNextRestartPending.store(false, std::memory_order_relaxed);
-            // Clear any deferred pattern restart target to avoid re-scheduling.
-            pendingPatternRestartTargetBar.store(-1, std::memory_order_relaxed);
-            continue;
-        }
         midi.addEvent(startMsg, sampleOffset);
         extClock.addEvent(startMsg, sampleOffset);
-        // record this sample so the bar-restart handler can avoid emitting a duplicate Start
-        lastPatternStartSampleInBlock = sampleOffset;
-        // When a pattern issues a Start we want the processor/UI internal
-        // state to reflect that Start immediately so the visual step and
-        // subsequent scheduling align with the emitted Start (matches manual trigger).
-        // Compute the logical step (1..16) inside the bar for this targetPPQ and
-        // update UI/run state accordingly.
-        if (barLenQ > 0.0)
-        {
-            double posInBar = targetPPQ - barStartPPQ;
-            // wrap into 0..barLenQ range
-            while (posInBar < 0.0) posInBar += barLenQ;
-            while (posInBar >= barLenQ) posInBar -= barLenQ;
-            const double frac = posInBar / barLenQ;
-            int stepNumber = (int) std::floor(frac * 16.0) + 1;
-            if (stepNumber < 1) stepNumber = 1;
-            if (stepNumber > 16) stepNumber = 16;
-            uiStep16.store(stepNumber, std::memory_order_relaxed);
-        }
-        // Make the processor consider itself running so any restart/modifiers take effect.
-        runActive = true;
-        pendingStart = false;
-        uiIsRunning.store(true, std::memory_order_relaxed);
-        uiPendingStart.store(false, std::memory_order_relaxed);
         // tryFirePattern diagnostic logging removed per user request
         // Respect trigger mode: schedule a bar+offset restart (same semantics as manual trigger idx1)
         const long long patternBar = computeCurrentBar(targetPPQ, barLenQ);
         if (triggerModeEnabled.load(std::memory_order_relaxed) && lastPatternRestartScheduledBar != patternBar)
         {
-            // Defer actual restart application until the pattern play finishes.
-            // Compute a target bar where the restart should occur: prefer the pattern's
-            // configured bars interval if available; otherwise schedule next bar.
-            int interval = getPatternBarIntervalFromMode(mode);
-            long long targetBar = patternBar + (interval > 0 ? (long long) interval : 1LL);
-            pendingPatternRestartTargetBar.store(targetBar, std::memory_order_relaxed);
+            pendingBarRestart.store(true, std::memory_order_relaxed);
             uiNextRestartPending.store(true, std::memory_order_relaxed);
             lastPatternRestartScheduledBar = patternBar;
         }
@@ -1229,7 +1134,7 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
 
     const double lastBar = pos.ppqPositionOfLastBarStart;
     const double barLenQ = (pos.timeSigNumerator > 0 && pos.timeSigDenominator > 0)
-        ? (4.0 * (double) pos.timeSigNumerator / (double) pos.timeSigDenominator)
+        ? (4.0 * (double) pos.timeSigumerator / (double) pos.timeSigDenominator)
         : 4.0;
     const double ppqStart = pos.ppqPosition;
     const double posInBar = juce::jlimit(0.0, barLenQ, ppqStart - lastBar);
@@ -1243,8 +1148,7 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
     const bool haveShuffleChange = (pendingShuffleStep > 0); // shuffle by itself should NOT force a restart now
     const bool haveStart = pendingStart;
     const bool haveBarRestart = pendingBarRestart.load(std::memory_order_relaxed);
-    const bool havePatternDeferred = (pendingPatternRestartTargetBar.load(std::memory_order_relaxed) >= 0);
-    const bool applyShuffleWithBoundary = haveShuffleChange && (haveRateChange || haveStart || haveBarRestart || havePatternDeferred);
+    const bool applyShuffleWithBoundary = haveShuffleChange && (haveRateChange || haveStart || haveBarRestart);
 
     // Compute the next occurrence of the selected step (1..16) at or after 'now'.
     // If the selected step lies ahead in the current bar, use it; otherwise target the same step in the next bar.
@@ -1265,12 +1169,7 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
         stepQWithinBar = secondHalf ? (pairStart + 0.25 + shiftQ) : pairStart;
     }
 
-    // Local flag to record whether a deferred pattern-requested restart matches
-    // the scheduled boundary calculated below.
-    bool deferredMatches = false;
-    long long scheduledRestartBar = -1;
-
-    if (haveStart || haveBarRestart || haveRateChange || havePatternDeferred) // exclude pure shuffle change
+    if (haveStart || haveBarRestart || haveRateChange) // exclude pure shuffle change
     {
         // Schedule at the next occurrence of the selected step within the bar (modulo behavior)
         double deltaQ = stepQWithinBar - posInBar;
@@ -1280,17 +1179,9 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
             deltaQ = 0.0; // allow immediate restart at bar start when offset=1
 
         sampleOffset = fastRoundPositive(deltaQ * samplesPerQuarter);
-        // Determine which bar this scheduled restart will fall into. If a pattern
-        // previously requested a deferred restart for that bar, mark the deferred
-        // match so the restart is applied (and consume the deferred request).
-        const long long scheduledRestartBar = computeCurrentBar(ppqStart + deltaQ + 1e-9, barLenQ);
-        const long long pendingTarget = pendingPatternRestartTargetBar.load(std::memory_order_relaxed);
-        const bool deferredMatches = (pendingTarget >= 0 && pendingTarget == scheduledRestartBar);
-        if (deferredMatches)
-            pendingPatternRestartTargetBar.store(-1, std::memory_order_relaxed);
     }
 
-    if (sampleOffset <= numSamples - 1 && (haveRateChange || haveStart || haveBarRestart || deferredMatches))
+    if (sampleOffset <= numSamples - 1 && (haveRateChange || haveStart || haveBarRestart))
     {
         jassert(sampleOffset >= 0); // debug-only: ensure non-negative scheduling
         // Gap length: use actual preceding 16th length under swing if possible (approx samples spanning previous half).
@@ -1324,33 +1215,10 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
         }
         // Always emit Start (both modes)
         const auto startMsg = juce::MidiMessage::midiStart();
-        // If a pattern already emitted a Start at this exact sample earlier in
-        // the block, avoid sending a duplicate Start here. Consume the pending
-        // restart flags so the UI/state reflects the applied restart.
-        if (sampleOffset == lastPatternStartSampleInBlock)
+        if (sendMidi)
         {
-            // Pattern already emitted a Start at this sample earlier in the block.
-            // Mark that the bar-restart path observed/consumed the restart so
-            // subsequent pattern handling (if it runs later) can skip emitting
-            // a duplicate Start. Also clear the pending indicators so UI/state
-            // reflect the applied restart.
-            lastBarRestartStartSampleInBlock = sampleOffset;
-            pendingBarRestart.store(false, std::memory_order_relaxed);
-            uiNextRestartPending.store(false, std::memory_order_relaxed);
-            // Also clear any deferred pattern-requested restart so it isn't
-            // rescheduled to another bar/step.
-            pendingPatternRestartTargetBar.store(-1, std::memory_order_relaxed);
-        }
-        else
-        {
-            if (sendMidi)
-            {
-                midi.addEvent(startMsg, sampleOffset);
-                extBuffer.addEvent(startMsg, sampleOffset);
-            }
-            // Record that the bar-restart emitted a Start at this sample so
-            // pattern-driven code running later in the block can avoid a duplicate.
-            lastBarRestartStartSampleInBlock = sampleOffset;
+            midi.addEvent(startMsg, sampleOffset);
+            extBuffer.addEvent(startMsg, sampleOffset);
         }
         // Reflect selected step in UI at restart
         uiStep16.store(juce::jlimit(1, 16, offsetStep), std::memory_order_relaxed);
@@ -1359,8 +1227,6 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
         {
             currentRateIndex = pendingRateIndex;
             pendingRateIndex = -1;
-            // changing resolution invalidates prior fractional carries -> reset
-            resetAccumulators();
         }
         if (applyShuffleWithBoundary)
         {
@@ -1368,11 +1234,11 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
             pendingShuffleStep = -1;
             // shuffle applied as part of boundary: clear NEXT indicator if no other pending restart remain
         }
-        if (haveStart || haveBarRestart || deferredMatches)
+        if (haveStart || haveBarRestart)
         {
             runActive = true;
             pendingStart = false;
-            if (haveBarRestart || deferredMatches)
+            if (haveBarRestart)
                 pendingBarRestart.store(false, std::memory_order_relaxed);
             
             uiIsRunning.store(true, std::memory_order_relaxed);
@@ -1439,7 +1305,6 @@ void ClockSyncAudioProcessor::setStateInformation(const void* data, int sizeInBy
 }
 
 //==============================================================================
-// This creates new instances of the plugin
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new ClockSyncAudioProcessor();

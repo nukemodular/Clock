@@ -84,18 +84,28 @@ public:
         const bool fullCircle = std::fabs (spanRad - juce::MathConstants<float>::twoPi) < 0.001f;
         const int n = values.size();
         const float denom = fullCircle ? (float) n : (n > 1 ? (float)(n - 1) : 1.0f);
+        constexpr float baseHitScale = 1.20f; // enlarge hit radius to include shadow PNG feather area
 
         for (int i = 0; i < n; ++i)
         {
             const float ang = startAngRad + ((float)i / denom) * spanRad;
             const float prog = (i < progress.size()) ? progress.getReference(i) : 1.0f;
-            if (prog < 0.6f) continue;
+            // Remove strict early threshold: allow immediate interaction even during initial expansion.
+            // Clamp a minimum visual radius so tiny prog doesn't make hit impossible.
+            const float effectiveProg = juce::jlimit (0.25f, 1.0f, prog); // minimum quarter size for hit math
             const float px = baseX + std::cos (ang) * (finalDist * prog);
             const float py = baseY + std::sin (ang) * (finalDist * prog);
             const float dx = pos.x - px; const float dy = pos.y - py;
-            const float baseScale = 0.7f + 0.3f * prog;
+            const float baseScale = 0.7f + 0.3f * effectiveProg;
             const float hoverMult = (i < hoverScale.size()) ? hoverScale.getReference(i) : 1.0f;
-            const float curR = itemR * baseScale * hoverMult;
+            float hitScale = baseHitScale;
+            if (i < labels.size())
+            {
+                const juce::String lab = labels.getReference(i);
+                if (lab.equalsIgnoreCase("RND") || lab.equalsIgnoreCase("OFF"))
+                    hitScale *= 1.33f; // boost small labels specific hit footprint
+            }
+            const float curR = itemR * baseScale * hoverMult * hitScale;
             if (dx*dx + dy*dy <= curR * curR)
                 return i;
         }
@@ -112,19 +122,27 @@ public:
         const bool fullCircle = std::fabs (spanRad - juce::MathConstants<float>::twoPi) < 0.001f;
         const int n = values.size();
         const float denom = fullCircle ? (float) n : (n > 1 ? (float)(n - 1) : 1.0f);
+        constexpr float baseHitScale = 1.20f;
 
         int newHover = -1;
         for (int i = 0; i < n; ++i)
         {
             const float ang = startAngRad + ((float)i / denom) * spanRad;
             const float prog = (i < progress.size()) ? progress.getReference(i) : 1.0f;
-            if (prog < 0.6f) continue;
+            const float effectiveProg = juce::jlimit (0.25f, 1.0f, prog); // ensure reasonable footprint during early animation
             const float px = baseX + std::cos (ang) * (finalDist * prog);
             const float py = baseY + std::sin (ang) * (finalDist * prog);
             const float dx = pos.x - px; const float dy = pos.y - py;
-            const float baseScale = 0.7f + 0.3f * prog;
+            const float baseScale = 0.7f + 0.3f * effectiveProg;
             const float hoverMult = (i < hoverScale.size()) ? hoverScale.getReference(i) : 1.0f;
-            const float curR = itemR * baseScale * hoverMult;
+            float hitScale = baseHitScale;
+            if (i < labels.size())
+            {
+                const juce::String lab = labels.getReference(i);
+                if (lab.equalsIgnoreCase("RND") || lab.equalsIgnoreCase("OFF"))
+                    hitScale *= 1.33f; // enlarge hover footprint for small labels
+            }
+            const float curR = itemR * baseScale * hoverMult * hitScale;
             if (dx*dx + dy*dy <= curR * curR) { newHover = i; break; }
         }
 
@@ -152,6 +170,24 @@ public:
         const bool fullCircle = std::fabs (spanRad - juce::MathConstants<float>::twoPi) < 0.001f;
         const float denom = fullCircle ? (float) values.size() : (values.size() > 1 ? (float)(values.size() - 1) : 1.0f);
 
+        // PNG-only shadow (SVG blur unsupported). Lazy load once.
+        static juce::Image shadowPng;
+        static bool shadowLoaded = false;
+        if (! shadowLoaded)
+        {
+            shadowLoaded = true;
+            juce::File assetsDir = juce::File::getSpecialLocation(juce::File::currentApplicationFile).getParentDirectory().getChildFile("assets");
+            juce::File pngFile = assetsDir.getChildFile("shadow.png");
+            if (! pngFile.existsAsFile())
+                pngFile = juce::File ("/Users/studio/Documents/PlugProcess/clock_plugin/assets/shadow.png");
+            if (pngFile.existsAsFile())
+            {
+                juce::FileInputStream fis (pngFile);
+                if (fis.openedOk())
+                    shadowPng = juce::PNGImageFormat().decodeImage (fis);
+            }
+        }
+
         for (int i = 0; i < values.size(); ++i)
         {
             if (i == hoverIndex) continue;
@@ -165,7 +201,19 @@ public:
             float r = itemR * scale;
             const float hoverMult = (i < hoverScale.size()) ? hoverScale.getReference(i) : 1.0f;
             r *= hoverMult;
-            g.setColour (UiThemeColours::accent());
+            // Draw per-item SVG shadow beneath the circle
+            // Draw shadow (SVG preferred; else PNG fallback). Slightly oversize to allow feather.
+            const float shadowScale = 1.8f; // enlarge target for softer edge
+            juce::Rectangle<float> target (px - r * shadowScale, py - r * shadowScale, r * 2.0f * shadowScale, r * 2.0f * shadowScale);
+            if (! shadowPng.isNull())
+            {
+                const float shadowAlpha = 0.7f * prog; // animate shadow opacity with expand progress (0 -> 0.7)
+                g.setOpacity (shadowAlpha);
+                g.drawImage (shadowPng, target); // assumes PNG already contains blur & transparent padding
+                g.setOpacity (1.0f);
+            }
+            // Fade fill with progress for smoother appearance (0 -> full)
+            g.setColour (UiThemeColours::accent().withAlpha (prog));
             g.fillEllipse (px - r, py - r, r*2.0f, r*2.0f);
             if (i < labels.size())
             {
@@ -194,7 +242,16 @@ public:
                 float r = itemR * scale;
                 const float hoverMult = (i < hoverScale.size()) ? hoverScale.getReference(i) : 1.0f;
                 r *= hoverMult;
-                g.setColour (UiThemeColours::cyan());
+                const float shadowScale = 1.8f;
+                juce::Rectangle<float> target (px - r * shadowScale, py - r * shadowScale, r * 2.0f * shadowScale, r * 2.0f * shadowScale);
+                if (! shadowPng.isNull())
+                {
+                    const float shadowAlpha = 0.7f * prog; // animate shadow opacity on hover as well
+                    g.setOpacity (shadowAlpha);
+                    g.drawImage (shadowPng, target);
+                    g.setOpacity (1.0f);
+                }
+                g.setColour (UiThemeColours::cyan().withAlpha (prog));
                 g.fillEllipse (px - r, py - r, r*2.0f, r*2.0f);
                 if (i < labels.size())
                 {

@@ -148,16 +148,6 @@ private:
     long long nextRandomPatternTargetBar { -1 }; // target bar for random firing
     long long lastPatternRestartScheduledBar { -1 }; // bar number where a trigger-mode restart was scheduled from pattern
     std::vector<double> pendingPatternPPQ; // PPQ positions inside current bar to emit Start events for active steps
-    // When a pattern requests a restart while the pattern is playing we defer the
-    // actual bar+offset restart until the pattern finishes; this atomic stores
-    // the bar number where the restart should be applied. -1 means none.
-    std::atomic<long long> pendingPatternRestartTargetBar { -1 };
-    // Per-block scratch: sample index where the last pattern-originated Start was emitted.
-    // Used to avoid emitting duplicate Starts from both pattern and bar-restart codepaths.
-    int lastPatternStartSampleInBlock { -1 };
-    // Per-block scratch: sample index where the last bar-restart Start was emitted
-    // (or consumed). Used to avoid emitting duplicate Starts from both codepaths.
-    int lastBarRestartStartSampleInBlock { -1 };
     void updatePatternParams();
     void preparePatternForBar(double barStartPPQ, double barLenQ);
     void tryFirePattern(double ppqStart, double barLenQ, double barStartPPQ, int numSamples, juce::MidiBuffer& midi, juce::MidiBuffer& extClock);
@@ -171,13 +161,6 @@ private:
     void updateDerivedParams();
     void generateClockAndClick(const juce::AudioPlayHead::CurrentPositionInfo& pos,
                                juce::AudioBuffer<float>&, juce::MidiBuffer&);
-    // Persistent fractional accumulators for primary pulses (conservative persistence)
-    // These carry fractional rounding remainders across blocks to reduce ±1-sample jitter
-    // but are reset conservatively on transport/tempo/sample-rate/rate changes.
-    double fracAccPrimaryBefore { 0.0 };
-    double fracAccPrimaryAfter  { 0.0 };
-    double lastBpmForAcc { -1.0 };
-    void resetAccumulators();
     struct BarRestartWindow { int gapStart{-1}; int gapEnd{-1}; int startSample{-1}; bool hasBoundary() const { return startSample >= 0; } };
     BarRestartWindow handleBarAlignedChanges(const juce::AudioPlayHead::CurrentPositionInfo& pos,
                                              int numSamples,

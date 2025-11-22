@@ -5,46 +5,7 @@
 // Centralized UI layout constants used by multiple menu components.
 namespace UiLayout
 {
-    // Base button diameters
-    static constexpr float kBaseD = 50.0f;        // default center button diameter
-
-    // Option item sizes
-    static constexpr float kOptionItemD = 20.0f;  // option item diameter for GridScaleMenu
-    static constexpr float kStepOptionItemD = 15.0f; // option item diameter for StepOffsetMenu (small circles ~15px)
-
-    // GridScale specific
-    static constexpr float kGridOuterD = 53.0f;   // outer accent diameter used when drawing grid button
-    static constexpr float kGridOuterR = 30.0f;   // click radius for the central button (px)
-    static constexpr float kGridBaseD  = 60.0f;   // base diameter used for radius math in GridScaleMenu
-    static constexpr float kGridS0 = 1.33f;        // hover scale multiplier for grid items
-    static constexpr float kGridS1 = 1.1f;        // adjacent-item scale multiplier
-    static constexpr float kGridTighten = 8.0f;   // tightening margin used in grid radial math
-    static constexpr float kGridOuterMargin = 12.0f; // outer margin used to avoid accidental collapse
-    static constexpr float kGridInnerReduce = 10.0f; // inner reduction used when drawing the central base circle
-
-    // Hover / scale
-    static constexpr float kHoverScale = 1.3f;   // hovered scale multiplier used in hover math
-
-    // Ring placement tweaks
-    static constexpr float kInwardWhenOpen = 7.0f; // px the option ring pulls inward at full open (GridScale)
-    static constexpr float kHoverOutward = 0.0f;  // px hovered item moves outward at full open (GridScale)
-
-    // StepOffsetMenu specific defaults
-    static constexpr float kBaseInward = 13.0f;        // px overall ring inward at full open
-    // StepOffsetMenu outward/inward tuning
-    // Small shift pulls non-hover items slightly inward to compact the ring (px)
-    static constexpr float kInwardSmallShift = 1.5f;
-    // Hover extra pushes hovered item outward from the base ring (px). Keep small values here
-    // so we can tune the visual feel centrally. Suggested default ~3.0f (adjacent will be half).
-    static constexpr float kInwardHoverExtra = 3.0f; // px hovered item pushes outward
-
-    // Mouse interaction tuning
-    static constexpr float kMouseTightenMul = 2.0f;  // tighten multiplier applied to s0
-    static constexpr float kDistanceFactor = 3.0f;   // used when computing outer interactive radius
-
-    static constexpr float kInnerBaseRadius = 25.0f;  // px: block hover inside this inner radius
-    static constexpr float kHoverExtraRadius = 12.0f; // px: hover selection extra radius
-    static constexpr float kOuterBaseR = 20.0f;       // px: base click radius when closed
+    // (Legacy GridScaleMenu / StepOffsetMenu constants removed – playground & new UI no longer reference them.)
 
     // General UI metrics
     static constexpr float kFontSmall = 10.0f;

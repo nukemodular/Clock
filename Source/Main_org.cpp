@@ -593,7 +593,7 @@ public:
 
         juce::String label;
         if (ringHoverSegment >= 0)
-            label = "Offset start & trigger to step " + juce::String (ringHoverSegment + 1);
+            label = "Re-sync at step " + juce::String (ringHoverSegment + 1);
         else if (hoverIndex >= 0 && hoverIndex < hoverTexts.size())
             label = juce::String (hoverIndex + 1) + ": " + hoverTexts[hoverIndex];
 
@@ -602,7 +602,7 @@ public:
         if (clickToPulseHover)
         {
             if (label.isNotEmpty()) label += " — ";
-            label += "Switch Click to Pulse";
+            label += "Click - Pulse";
         }
 
         if (label.isNotEmpty())

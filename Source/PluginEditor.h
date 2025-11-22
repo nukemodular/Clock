@@ -10,9 +10,8 @@
 #include "Pattern.h"
 
 #include "PlaygroundComponent.h"
-
-// Forward-declare popup ring
-class PopupMenuRing;
+#include "StatusBarComponent.h"
+#include "HitRouting.h" // unified hit-test
 
 class ClockSyncAudioProcessorEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
@@ -114,9 +113,8 @@ private:
     RingToggle idleClockToggle;
     // New: shuffle scale toggle at (65,195) size 40x40
 
-    // Popup ring(s)
-    std::unique_ptr<PopupMenuRing> popupRing0;
-    std::unique_ptr<PopupMenuRing> popupRing1;
+    // Legacy popup ring components removed – PlaygroundComponent owns all popup menu UI now.
+    // (If a non-playground fallback mode is reintroduced, restore PopupMenuRing members.)
     // Shared playground component (migrated UI)
     std::unique_ptr<PlaygroundComponent> playgroundComp;
 
@@ -139,8 +137,16 @@ private:
     // Inline entry editor
     std::unique_ptr<juce::TextEditor> nameEntryEditor;
 
-    // Help toggle
-    juce::TextButton helpToggle { "?" };
+    // Minimal help toggle: transparent background, only draws bold '?' text.
+    class HelpButton : public juce::TextButton {
+    public:
+        HelpButton() : juce::TextButton("?") {}
+        void paintButton(juce::Graphics& g, bool, bool) override {
+            g.setColour(UiThemeColours::cyan());
+            g.setFont(juce::Font(juce::FontOptions("Arial", 18.0f, juce::Font::bold)));
+            g.drawFittedText(getButtonText(), getLocalBounds(), juce::Justification::centred, 1);
+        }
+    } helpToggle;
     
 
     // LED animation
@@ -153,11 +159,10 @@ private:
     bool pendingStartCached { false };
     bool engineRunningCached { true };
 
-    // Custom rotary & button LookAndFeels (now using global definitions from LookAndFeels.h)
-    std::unique_ptr<ClickRotaryLNF> clickRotaryLNF;
+    // Theme look-and-feel (ClickRotaryLNF unused; helpButtonLNF removed) – keep only ThemeLNF.
     std::unique_ptr<ThemeLNF> themeLNF;
-    // Small LookAndFeel for the help '?' button to avoid drawing any border
-    std::unique_ptr<juce::LookAndFeel_V4> helpButtonLNF;
+    // Status bar (LED + status string abstraction)
+    std::unique_ptr<StatusBarComponent> statusBar;
 
     // Layout cache for ring visualisation
     juce::Rectangle<int> ringArea;
@@ -262,5 +267,10 @@ private:
     void pushPatternStateToProcessor();
     void updatePatternParamFromPopup3(int popupIndex);
     void mouseDrag(const juce::MouseEvent& e) override; // implement pattern drag
+
+    // Build HitContext and derive InteractionMode for routing.
+    HitContext buildHitContext() const;
+    InteractionMode getInteractionMode() const;
+    HitResult routeHit(const juce::MouseEvent& e, bool isHover);
     
 };

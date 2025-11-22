@@ -10,38 +10,7 @@ struct UiThemeColours
 };
 
 // Rotary (click level) look-and-feel
-class ClickRotaryLNF : public juce::LookAndFeel_V4
-{
-public:
-    void drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h,
-                          float sliderPos, float startAng, float endAng, juce::Slider& s) override
-    {
-        juce::ignoreUnused(s);
-        auto bounds = juce::Rectangle<float>(x, y, w, h).reduced(4.0f);
-        const float radius = std::min(bounds.getWidth(), bounds.getHeight()) * 0.5f;
-        const auto centre = bounds.getCentre();
-        const float ringThickness = 8.0f;
-        const float innerReduce = ringThickness;
-
-        g.setColour(UiThemeColours::accent());
-        g.fillEllipse(bounds);
-        g.setColour(UiThemeColours::base());
-        g.fillEllipse(bounds.reduced(innerReduce));
-
-        const float angle = (startAng + sliderPos * (endAng - startAng))
-                            - (juce::MathConstants<float>::pi * 0.60f);
-        const float needleLen = radius - innerReduce * 0.5f - 2.0f;
-        const float nx = centre.x + needleLen * std::cos(angle);
-        const float ny = centre.y + needleLen * std::sin(angle);
-
-        juce::Colour needleCol = UiThemeColours::accent().interpolatedWith(UiThemeColours::cyan(), sliderPos);
-        g.setColour(needleCol);
-        g.drawLine(centre.x, centre.y, nx, ny, 3.0f);
-
-        g.setColour(UiThemeColours::accent());
-        g.fillEllipse(centre.x - 5.0f, centre.y - 5.0f, 10.0f, 10.0f);
-    }
-};
+// ClickRotaryLNF removed (rotary visual migrated to PlaygroundComponent). Re-add if a standalone Slider is reintroduced.
 
 // General button / popup look-and-feel
 class ThemeLNF : public juce::LookAndFeel_V4

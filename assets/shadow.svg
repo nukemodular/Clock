@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<filter id="gaussian-blur-filter-0" color-interpolation-filters="sRGB" x="-50%" y="-50%" width="200%" height="200%">
+<feGaussianBlur stdDeviation="4 4" edgeMode="none"/>
+</filter>
+</defs>
+<path d="M 57 32 C 57 45.807 45.807 57 32 57 C 18.193 57 7 45.807 7 32 C 7 18.193 18.193 7 32 7 C 45.807 7 57 18.193 57 32 Z" style="filter: url('#gaussian-blur-filter-0'); fill: rgb(38, 38, 38);" transform="matrix(1, 0, 0, 1, -7.105427357601002e-15, 3.552713678800501e-15)"/>
+</svg>
