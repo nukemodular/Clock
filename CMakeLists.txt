@@ -123,36 +123,4 @@ if (APPLE)
         COMPONENT "toolBoy Clock v3_au")
 endif()
 
-# ---------------------------------------------
-# Standalone layout playground (non-plugin app)
-# ---------------------------------------------
-
-juce_add_gui_app(LayoutPlayground
-    COMPANY_NAME "toolBoy"
-    PRODUCT_NAME "Layout Playground"
-    BUNDLE_ID com.toolBoy.layoutPlayground
-)
-
-target_sources(LayoutPlayground
-    PRIVATE
-        apps/layout_playground/Main.cpp
-)
-
-target_compile_definitions(LayoutPlayground
-    PRIVATE
-        JUCE_WEB_BROWSER=0
-        JUCE_USE_CURL=0
-)
-
-target_link_libraries(LayoutPlayground
-    PRIVATE
-        juce::juce_gui_extra
-        juce::juce_graphics
-        juce::juce_core
-)
-
-target_include_directories(LayoutPlayground
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/Source
-)
 
