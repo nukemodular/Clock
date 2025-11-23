@@ -7,6 +7,7 @@
 #include "LookAndFeels.h" // Use centralised LookAndFeel & theme colours
 #include "Tooltips.h"
 #include "UiLayoutConstants.h"
+#include "LayoutOffsets.h"
 #include <array>
 #include <optional>
 
@@ -470,13 +471,13 @@ void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
             status = idleClockToggle.getToggleState() ? "IDLE" : "STOP";
     g.setFont(juce::Font(juce::FontOptions("Arial", 11.0f, juce::Font::bold)));
     g.setColour(UiThemeColours::cyan());
-    // Shift status text slightly right (+4px) per request
-    g.drawFittedText(status, juce::Rectangle<int>(getWidth() - 73, (int)header.getY(), 50, (int)header.getHeight()),
+    // Shift status text slightly right by shared offset
+    g.drawFittedText(status, juce::Rectangle<int>(getWidth() - 73 + kHeaderShiftX, (int)header.getY(), 50, (int)header.getHeight()),
                      juce::Justification::centred, 1);
 
     const float ledRadius = UiLayout::kLedRadius;
-    // Move LED slightly right (+8px)
-    auto ledCenter = juce::Point<float>(getWidth() - 17.0f, header.getCentreY());
+    // Move LED slightly right by shared offset
+    auto ledCenter = juce::Point<float>(getWidth() - 17.0f + kHeaderShiftX, header.getCentreY());
     const float a = juce::jlimit(0.0f, 1.0f, ledLevel);
     auto ledColour = UiThemeColours::cyan().withAlpha(0.10f).interpolatedWith(UiThemeColours::cyan().withAlpha(0.97f), a);
     g.setColour(juce::Colours::black.withAlpha(0.5f));
@@ -1210,11 +1211,16 @@ void ClockSyncAudioProcessorEditor::drawRing(juce::Graphics& g)
             barW,
             inner.getHeight());
 
+        // TEMP DEBUG: disable rotated stop indicator bar to test for stray-rectangle artefacts
+        // The stop indicator uses UiLayout::kBarWidth and draws a rotated filled rect
+        // inside the inner circle. Disable it temporarily while we diagnose the UI.
+    #if 0
         g.addTransform(juce::AffineTransform::rotation(
             juce::MathConstants<float>::pi * 0.75f,
             (float) cx, (float) cy));
 
         g.setColour(UiThemeColours::accent()); g.fillRect(bar);
+    #endif
     }
 
     // Use the visualStepCached which is updated only when allowed by the

@@ -10,6 +10,7 @@
 #include "PopupMenuRing.h"
 #include "Pattern.h" // PatternRing for edit mode
 #include "PatternGeometry.h"
+#include "../apps/layout_playground/runButton.h"
 
 // Debug overlay toggle macro (only compiled/enabled in debug builds)
 #if JUCE_DEBUG
@@ -83,6 +84,10 @@ public:
     void setPatternEditMode(bool enabled){ patternEditMode = enabled; }
     // callbacks
     std::function<void(int)> onHoverChanged; std::function<void(int)> onClicked; std::function<void(bool)> onPlayStateChanged; std::function<void(int)> onStepChanged; std::function<void(bool)> onInnerHover;
+    // centre click callback: invoked when the inner ring center is clicked.
+    // Playground will wire this to forward a Run toggle request so the APVTS/host
+    // path is used for authoritative run toggles.
+    std::function<void()> onCenterClicked;
 
     void paint (juce::Graphics& g) override
     {
@@ -225,7 +230,18 @@ public:
             if (isInsideInner(e.position)) return;
             // Allow wedge selection only if not inside inner hole (normal behaviour) so offset selection still available.
         }
-        if (isInsideInner(e.position)){ togglePlay(); return; }
+        if (isInsideInner(e.position)){
+            // Prefer the playground/editor path for center clicks so the APVTS run
+            // parameter is changed via the editor and the processor/host sees an
+            // authoritative toggle. If no callback wired, fall back to local toggle.
+            if (onCenterClicked)
+            {
+                onCenterClicked();
+                return;
+            }
+            togglePlay();
+            return;
+        }
         int s = hitSegment(e.position);
         #if JUCE_DEBUG
         if (s>=0)
@@ -364,7 +380,7 @@ private:
     void runRoutingSanityTest(); // minimal synthetic routing assertions (logs only)
 #endif
     struct Circle { float x,y,r; juce::Colour colour; }; struct ShufflePos { int id; float x,y,r; }; struct ShuffleTextOffset { float dx, dy; };
-    juce::Array<Circle> baseCircles; juce::Array<Circle> circles; int headerHeight=0; juce::Array<float> flashes; juce::Array<double> scheduledPulseAtMs; double basePulseDelayMs=11.0; juce::StringArray hoverTexts; std::unique_ptr<Ring16Component> ring; juce::OwnedArray<OnOffButton> onOffButtons; juce::Array<int> onOffButtonIdxs; int hoverIndex=-1; int ringHoverSegment=-1; int ringSelectedSegment=-1; int forcedHoverIndex=-1; bool externalHoverBlocked=false; bool linearShuffleMode=false; bool isDraggingLinear=false; bool isDraggingShuffle=false; float linearShufflePos=0.0f; float linearShuffleAmount=0.5f; static constexpr int offsetRotarySteps=5; bool isDraggingOffsetRotary=false; juce::Point<float> offsetDragStart{0,0}; float offsetRotaryStartT=0.0f; float offsetRotaryT=0.0f; bool clickToPulseOn=false; bool clickToPulseHover=false; bool hoverTextEnabled=true; bool expanded6=false; int hoverExtra6=-1; int extra6Count=4; static constexpr float extra6R=12.0f; juce::Array<float> extra6Progress; juce::Array<float> extra6HoverScale; juce::Array<float> extra6HoverTarget; PopupMenuRing popup6; PopupMenuRing popup3; juce::String mainCircle3Label{"OFF"}; juce::StringArray extra6Labels; juce::Array<int> extra6Values; int mainCircle6Value=16; float extra6StartAngleDeg=100.0f; float extra6EndAngleDeg=-120.0f; double extra6AnimStartMs=0.0; float extra6AnimDurationMs=166.0f; float extra6StaggerMs=25.0f; bool extra6Animating=false; bool extra6ExpandingTarget=false; double lastTickMs=0.0; bool isTimerRunning=true; int externalStepForDisplay=-1; bool runState=false; bool speedCommitInitialised=false; double committedSpeedMultiplier=1.0; double pendingSpeedMultiplier=-1.0; juce::Array<ShufflePos> shufflePositions; juce::Array<ShuffleTextOffset> shuffleTextOffsets; int selectedShuffle=1; PatternRing pattern; int patternHoverIndex=-1; bool patternDragActive=false; int lastPatternDragWedge=-1; bool patternDragPaintState=false;
+    juce::Array<Circle> baseCircles; juce::Array<Circle> circles; int headerHeight=0; juce::Array<float> flashes; juce::Array<double> scheduledPulseAtMs; double basePulseDelayMs=11.0; juce::StringArray hoverTexts; std::unique_ptr<Ring16Component> ring; std::unique_ptr<RunButton> runIndicator; juce::OwnedArray<OnOffButton> onOffButtons; juce::Array<int> onOffButtonIdxs; int hoverIndex=-1; int ringHoverSegment=-1; int ringSelectedSegment=-1; int forcedHoverIndex=-1; bool externalHoverBlocked=false; bool linearShuffleMode=false; bool isDraggingLinear=false; bool isDraggingShuffle=false; float linearShufflePos=0.0f; float linearShuffleAmount=0.5f; static constexpr int offsetRotarySteps=5; bool isDraggingOffsetRotary=false; juce::Point<float> offsetDragStart{0,0}; float offsetRotaryStartT=0.0f; float offsetRotaryT=0.0f; bool clickToPulseOn=false; bool clickToPulseHover=false; bool hoverTextEnabled=true; bool expanded6=false; int hoverExtra6=-1; int extra6Count=4; static constexpr float extra6R=12.0f; juce::Array<float> extra6Progress; juce::Array<float> extra6HoverScale; juce::Array<float> extra6HoverTarget; PopupMenuRing popup6; PopupMenuRing popup3; juce::String mainCircle3Label{"OFF"}; juce::StringArray extra6Labels; juce::Array<int> extra6Values; int mainCircle6Value=16; float extra6StartAngleDeg=100.0f; float extra6EndAngleDeg=-120.0f; double extra6AnimStartMs=0.0; float extra6AnimDurationMs=166.0f; float extra6StaggerMs=25.0f; bool extra6Animating=false; bool extra6ExpandingTarget=false; double lastTickMs=0.0; bool isTimerRunning=true; int externalStepForDisplay=-1; bool runState=false; bool speedCommitInitialised=false; double committedSpeedMultiplier=1.0; double pendingSpeedMultiplier=-1.0; juce::Array<ShufflePos> shufflePositions; juce::Array<ShuffleTextOffset> shuffleTextOffsets; int selectedShuffle=1; PatternRing pattern; int patternHoverIndex=-1; bool patternDragActive=false; int lastPatternDragWedge=-1; bool patternDragPaintState=false;
     int hoverShuffleId = -1; // current shuffle point hovered (for glow accent)
 public:
     // Auto pattern trigger scheduling (popup3). Interval in bars (16 steps). 0 = OFF.
@@ -414,6 +430,16 @@ inline PlaygroundComponent::PlaygroundComponent()
     // User interactions (clicking idx0) drive parameter changes; host transport should
     // only affect the engine/playhead without mutating UI button state.
     ring->onPlayStateChanged=[this](bool on){ if (patternEditMode) return; runState = on; /* do not call onRunToggleRequested here */ repaint(); };
+    // Forward center clicks through the playground so editor can perform the
+    // authoritative APVTS toggle (host-aware). If pattern edit active, the
+    // playground will ignore this callback.
+    ring->onCenterClicked = [this]() {
+        if (patternEditMode) return; // block center toggles while editing
+        // Reuse existing external click handler for idx0 which toggles runState,
+        // updates the ring playing state and invokes onRunToggleRequested (editor-wired).
+        (void) handleExternalClickIndex(0);
+        repaint();
+    };
     ring->onStepChanged=[this](int logical){
         // Beat pulse every quarter note
         if ((logical % 4) == 0)
@@ -510,6 +536,7 @@ inline void PlaygroundComponent::setRunState(bool on, bool notifyParam){
         if (ring) ring->setPlaying(on);
     }
     if (on && ring) ring->triggerFullRingFlash(ringSelectedSegment>=0?1.25f:1.0f);
+    if (runIndicator) runIndicator->setRunning(on);
     repaint();
 }
 inline void PlaygroundComponent::flashCurrentStepSegment(){ if (ring) ring->flashCurrentSegment(); }
@@ -633,7 +660,38 @@ inline void PlaygroundComponent::setClickToPulseHoverFromEditor(bool hover)
 }
 inline void PlaygroundComponent::paint(juce::Graphics& g)
 {
-    if (circles.size()>0){ const auto& c0=circles.getReference(0); float maskOuter=ring? ring->getOuterRadius():70.0f; float maskInner=ring? ring->getInnerRadius():55.0f; juce::Path donut; donut.addEllipse(c0.x-maskOuter,c0.y-maskOuter,maskOuter*2,maskOuter*2); donut.addEllipse(c0.x-maskInner,c0.y-maskInner,maskInner*2,maskInner*2); donut.setUsingNonZeroWinding(false); g.setColour(UiThemeColours::accent()); g.fillPath(donut); }
+    // Draw run-state indicator behind the donut: compute its bounds and draw
+    // it here BEFORE the donut so the donut will paint on top (visually
+    // occluding the indicator), which guarantees the indicator sits "behind"
+    // the red donut in z-order. Keep the magenta diagnostic outline visible
+    // in Release builds.
+    juce::Rectangle<float> runRectFloat;
+    if (circles.size() > 0)
+    {
+        const auto& c0 = circles.getReference(0);
+        auto r = RunButton::suggestedBoundsForCentre((int)std::round(c0.x), (int)std::round(c0.y));
+        runRectFloat = r.toFloat();
+        // Draw the rotated run indicator here (static draw) so it is painted
+        // before the donut and thus visually behind it.
+        RunButton::drawAt(g, (int)std::round(c0.x), (int)std::round(c0.y), runState);
+
+        // (Diagnostics removed per user request)
+    }
+    // Draw the red donut (outer ring minus inner hole) so it paints on top of
+    // the statically drawn run indicator above. This restores the original
+    // visual where the run indicator sits behind the donut.
+    if (circles.size() > 0)
+    {
+        const auto& c0 = circles.getReference(0);
+        float maskOuter = ring ? ring->getOuterRadius() : 70.0f;
+        float maskInner = ring ? ring->getInnerRadius() : 55.0f;
+        juce::Path donut;
+        donut.addEllipse(c0.x - maskOuter, c0.y - maskOuter, maskOuter * 2.0f, maskOuter * 2.0f);
+        donut.addEllipse(c0.x - maskInner, c0.y - maskInner, maskInner * 2.0f, maskInner * 2.0f);
+        donut.setUsingNonZeroWinding(false);
+        g.setColour(UiThemeColours::accent());
+        g.fillPath(donut);
+    }
     // Pattern ring (inward) when edit mode active
     if (patternEditMode && ring && circles.size()>0)
     {
@@ -746,9 +804,26 @@ inline void PlaygroundComponent::paint(juce::Graphics& g)
             g.drawFittedText(juce::String(pos.id),(int)(pos.x-innerR+offX),(int)(pos.y-innerR+offY),(int)(innerR*2),(int)(innerR*2),juce::Justification::centred,1);
         }}
     juce::String label;
-    if (forcedHoverIndex>=0 && forcedHoverIndex<hoverTexts.size()) label=hoverTexts[forcedHoverIndex];
-    else if (ringHoverSegment>=0) label = "Re-sync at step " + juce::String(ringHoverSegment+1);
-    else if (hoverIndex>=0 && hoverIndex<hoverTexts.size()) label = juce::String(hoverIndex+1) + ": " + hoverTexts[hoverIndex];
+    // Prefer forced/editor-driven hover or ring/small-circle hover over shuffle text
+    // so moving from a shuffle point into the ring or inner-circle will show the
+    // appropriate context help (wedge/resync/inner circle) instead of sticking
+    // on the shuffle label.
+    if (forcedHoverIndex>=0 && forcedHoverIndex<hoverTexts.size())
+        label = hoverTexts[forcedHoverIndex];
+    else if (ringHoverSegment>=0)
+        label = "Re-sync at step " + juce::String(ringHoverSegment+1);
+    else if (hoverIndex>=0 && hoverIndex<hoverTexts.size())
+        label = juce::String(hoverIndex+1) + ": " + hoverTexts[hoverIndex];
+    else if (hoverShuffleId != -1)
+    {
+        // If the linear shuffle mode (toggled by circle idx 5) is active,
+        // show the linear percentage range. Otherwise show the discrete 1..7
+        // intensity help text.
+        if (linearShuffleMode && shufflePositions.size() > 1)
+            label = "Shuffle intensity 50% - 75%";
+        else
+            label = "Shuffle intensity 1 (off) - 7";
+    }
     if (clickToPulseHover){ if (label.isNotEmpty()) label += " — "; label += "Click - Pulse"; }
     if (hoverTextEnabled && label.isNotEmpty())
     {
@@ -765,7 +840,7 @@ inline void PlaygroundComponent::paintOverChildren(juce::Graphics& g)
 
     // (Shuffle debug overlay removed)
     // Status LED (top-right)
-    const float ledR = 6.0f; float cx = (float)getWidth() - 12.0f; float cy = 12.0f;
+    const float ledR = 6.0f; float cx = (float)getWidth() - 6.0f; float cy = 12.0f;
     juce::Colour ledColour;
     juce::String statusLabel;
     switch (statusState)
@@ -781,17 +856,16 @@ inline void PlaygroundComponent::paintOverChildren(juce::Graphics& g)
         float pulseA = 0.5f + 0.35f * std::sin(statusPulse);
         ledColour = ledColour.withAlpha(juce::jlimit(0.0f,1.0f,pulseA));
     }
-    // Draw subtle outer glow for contrast
+    // Draw subtle outer glow for contrast (LED and status text moved +5px in X)
     g.setColour(UiThemeColours::cyan().withAlpha(0.12f));
     g.fillEllipse(cx - (ledR + 3.0f), cy - (ledR + 3.0f), (ledR + 3.0f) * 2, (ledR + 3.0f) * 2);
     g.setColour(ledColour); g.fillEllipse(cx-ledR, cy-ledR, ledR*2, ledR*2);
     // Thin outer stroke for crisp edge visibility
     g.setColour(UiThemeColours::base().withAlpha(0.9f)); g.drawEllipse(cx-ledR, cy-ledR, ledR*2, ledR*2, 1.2f);
-    // Text to left of LED
+    // Text to left of LED (moved right along with LED)
     juce::Font sf(juce::FontOptions("Arial", 11.0f, juce::Font::bold)); g.setFont(sf);
-    float textRight = cx - ledR - 4.0f;
-    // shift status text area to the right by +3px
-    juce::Rectangle<float> txtArea(11.0f, cy - 8.0f, textRight - 11.0f, 16.0f);
+    float textRight = cx - ledR + 2.0f;
+    juce::Rectangle<float> txtArea(11.0f + 5.0f, cy - 8.0f, textRight - (11.0f + 5.0f), 16.0f);
     g.setColour(UiThemeColours::cyan());
     g.drawFittedText(statusLabel, txtArea.toNearestInt(), juce::Justification::right, 1);
 }
@@ -1155,7 +1229,14 @@ inline void PlaygroundComponent::timerCallback()
     if (!any){ stopTimer(); isTimerRunning=false; }
     repaint();
 }
-inline void PlaygroundComponent::resized(){ if (ring) ring->toBack(); }
+inline void PlaygroundComponent::resized()
+{
+    // Position children; the run indicator is now drawn statically in paint()
+    // so there is no persistent visible child to position. Keep ring frontmost
+    // among children so wedges/chase render above other UI children.
+    if (ring)
+        ring->toFront(false);
+}
 inline void PlaygroundComponent::makeButton(int idx)
 {
     if (idx<0 || idx>=circles.size()) return;
@@ -1192,6 +1273,10 @@ inline void PlaygroundComponent::makeButton(int idx)
             }
             repaint();
         };
+        // Run indicator is drawn statically in PlaygroundComponent::paint()
+        // so we no longer create a persistent visible child here. Clicks are
+        // handled via the ring center callback which forwards to the editor
+        // (APVTS) path.
     }
     else if (idx==2)
     {

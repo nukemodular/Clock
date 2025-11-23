@@ -70,6 +70,23 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     playgroundComp->setHeaderHeight(30);
     playgroundComp->toBack();
 
+    // Help toggle ("?") - restore visibility and behaviour so users can enable/disable tooltips.
+    // Wire directly to the playground's hover text API rather than a separate applyTooltips helper.
+    addAndMakeVisible(helpToggle);
+    helpToggle.setClickingTogglesState(true);
+    helpToggle.setColour(juce::TextButton::textColourOffId, UiThemeColours::cyan().darker(0.45f));
+    helpToggle.setColour(juce::TextButton::textColourOnId, UiThemeColours::cyan());
+    helpToggle.setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+    helpToggle.setColour(juce::TextButton::buttonOnColourId, juce::Colours::transparentBlack);
+    // Initialize toggle from playground state if available
+    if (playgroundComp)
+        helpToggle.setToggleState(playgroundComp->getHoverTextEnabled(), juce::dontSendNotification);
+    helpToggle.onClick = [this]() {
+        const bool on = helpToggle.getToggleState();
+        if (playgroundComp) playgroundComp->setHoverTextEnabled(on);
+        repaint(0, getHeight()-40, 120, 40);
+    };
+
     // Status bar (LED + status string) – painted above playground
     statusBar = std::make_unique<StatusBarComponent>();
     addAndMakeVisible(*statusBar);
@@ -328,6 +345,9 @@ void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
         // Hide dancer while pattern edit mode is active to reduce visual clutter.
         if (!patternEditMode)
             drawDancer(g);
+        // Run-state indicator is now drawn by the PlaygroundComponent so it can
+        // sit between the dancer and the ring wedges with correct z-order. The
+        // editor no longer draws it here to avoid duplicate/ misplaced renders.
     }
     // Pattern ring drawn in paintOverChildren when edit mode active (to appear above playground).
 }
