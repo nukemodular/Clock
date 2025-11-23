@@ -142,7 +142,9 @@ private:
     public:
         HelpButton() : juce::TextButton("?") {}
         void paintButton(juce::Graphics& g, bool, bool) override {
-            g.setColour(UiThemeColours::cyan());
+            // Use toggle state to choose colour: when ON -> cyan, when OFF -> darker cyan
+            juce::Colour col = getToggleState() ? UiThemeColours::cyan() : UiThemeColours::cyan().darker(1.0f);
+            g.setColour(col);
             g.setFont(juce::Font(juce::FontOptions("Arial", 18.0f, juce::Font::bold)));
             g.drawFittedText(getButtonText(), getLocalBounds(), juce::Justification::centred, 1);
         }

@@ -10,7 +10,7 @@
 #include "PopupMenuRing.h"
 #include "Pattern.h" // PatternRing for edit mode
 #include "PatternGeometry.h"
-#include "../apps/layout_playground/runButton.h"
+#include "RunButton.h"
 
 // Debug overlay toggle macro (only compiled/enabled in debug builds)
 #if JUCE_DEBUG
@@ -809,11 +809,25 @@ inline void PlaygroundComponent::paint(juce::Graphics& g)
     // appropriate context help (wedge/resync/inner circle) instead of sticking
     // on the shuffle label.
     if (forcedHoverIndex>=0 && forcedHoverIndex<hoverTexts.size())
-        label = hoverTexts[forcedHoverIndex];
+    {
+        // If the editor forced hover points to the small click/pulse control (idx 7),
+        // show the concise help text only.
+        if (forcedHoverIndex == 7)
+            label = "Sample-click or pulse";
+        else
+            label = hoverTexts[forcedHoverIndex];
+    }
     else if (ringHoverSegment>=0)
         label = "Re-sync at step " + juce::String(ringHoverSegment+1);
     else if (hoverIndex>=0 && hoverIndex<hoverTexts.size())
-        label = juce::String(hoverIndex+1) + ": " + hoverTexts[hoverIndex];
+    {
+        // When hovering the small circle (idx 7) we want a concise single-line
+        // help text instead of the numbered long description + appended suffix.
+        if (hoverIndex == 7)
+            label = "Sample-click or pulse";
+        else
+            label = juce::String(hoverIndex+1) + ": " + hoverTexts[hoverIndex];
+    }
     else if (hoverShuffleId != -1)
     {
         // If the linear shuffle mode (toggled by circle idx 5) is active,
@@ -824,7 +838,14 @@ inline void PlaygroundComponent::paint(juce::Graphics& g)
         else
             label = "Shuffle intensity 1 (off) - 7";
     }
-    if (clickToPulseHover){ if (label.isNotEmpty()) label += " — "; label += "Click - Pulse"; }
+    // Do not append the generic "Click - Pulse" suffix when the small click/pulse
+    // control (idx 7) is the source of the hover label — it already displays the
+    // intended concise help text above.
+    if (clickToPulseHover && hoverIndex != 7 && forcedHoverIndex != 7)
+    {
+        if (label.isNotEmpty()) label += " — ";
+        label += "Click - Pulse";
+    }
     if (hoverTextEnabled && label.isNotEmpty())
     {
         // move hover text up 1px for tighter layout
