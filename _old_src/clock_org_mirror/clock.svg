@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg viewBox="0 0 500 500" xmlns="http://www.w3.org/2000/svg" xmlns:bx="https://boxy-svg.com">
+<defs>
+<bx:grid x="0" y="0" width="10" height="10"/>
+<radialGradient gradientUnits="userSpaceOnUse" cx="575" cy="225" r="15" id="gradient-0" gradientTransform="matrix(1.16704, 0, 0, 1.2099, -96.04604, -47.22962)">
+<stop offset="0" style="stop-color: rgb(250, 56, 6);"/>
+<stop offset="1" style="stop-color: rgb(59, 253, 245);"/>
+</radialGradient>
+<linearGradient gradientUnits="userSpaceOnUse" x1="575" y1="230" x2="575" y2="260" id="gradient-1">
+<stop offset="0" style="stop-color: rgb(23.137% 99.216% 96.078%)"/>
+<stop offset="1" style="stop-color: rgb(0% 57.947% 55.951%)"/>
+</linearGradient>
+<radialGradient gradientUnits="userSpaceOnUse" cx="575" cy="245" r="15" id="gradient-2" gradientTransform="matrix(1.19706, 0, 0, 1.19706, -113.35418, -70.32176)" spreadMethod="pad">
+<stop offset="0" style="stop-color: rgba(59, 253, 245, 0);"/>
+<stop offset="1" style="stop-color: rgb(59, 253, 245);"/>
+</radialGradient>
+</defs>
+<circle style="fill: rgba(20, 20, 19, 0.81); stroke: rgb(255, 57, 4); vector-effect: non-scaling-stroke; stroke-width: 32px;" transform="matrix(1, 0, 0, 0.99999, -184.53923, -91.02329)" cx="420" cy="324" r="74"/>
+<circle style="fill: rgba(20, 20, 19, 0.81); stroke: rgb(255, 57, 4); vector-effect: non-scaling-stroke; stroke-width: 24px; fill-opacity: 0.66;" transform="matrix(1, 0, 0, 0.99999, -80.27503, -150.63434)" cx="420" cy="324" r="33"/>
+<circle style="fill: rgba(20, 20, 19, 0.81); stroke: rgb(255, 57, 4); vector-effect: non-scaling-stroke; stroke-width: 24px;" transform="matrix(1, 0, 0, 0.99999, -79.90608, -91.42395)" cx="420" cy="324" r="15"/>
+<circle style="fill: rgba(20, 20, 19, 0.81); stroke: rgb(255, 57, 4); vector-effect: non-scaling-stroke; stroke-width: 24px; fill-opacity: 0.56;" transform="matrix(1, 0, 0, 0.99999, -82.9381, -40.24736)" cx="420" cy="324" r="24"/>
+<circle style="fill: rgba(20, 20, 19, 0.81); stroke: rgb(255, 57, 4); vector-effect: non-scaling-stroke; stroke-width: 24px;" transform="matrix(1, 0, 0, 0.99999, -126.47364, -4.99694)" cx="420" cy="324" r="17"/>
+<circle style="fill: rgba(20, 20, 19, 0.81); stroke: rgb(255, 57, 4); vector-effect: non-scaling-stroke; stroke-width: 24px; fill-opacity: 0.58;" transform="matrix(1, 0, 0, 0.99999, -295.00001, -68.42196)" cx="420" cy="324" r="27"/>
+<circle style="fill: rgba(20, 20, 19, 0.81); stroke: rgb(255, 57, 4); vector-effect: non-scaling-stroke; stroke-width: 24px;" transform="matrix(1, 0, 0, 0.99999, -264.38151, -22.23469)" cx="420" cy="324" r="15"/>
+<circle style="fill: rgba(20, 20, 19, 0.81); stroke: rgb(255, 57, 4); vector-effect: non-scaling-stroke; stroke-width: 24px;" transform="matrix(1, 0, 0, 0.99999, -213.66579, -189.65775)" cx="420" cy="324" r="15"/>
+<circle style="fill: rgba(20, 20, 19, 0.81); stroke: rgb(255, 57, 4); vector-effect: non-scaling-stroke; stroke-width: 24px;" transform="matrix(1, 0, 0, 0.99999, -262.98047, -171.72251)" cx="420" cy="324" r="24"/>
+<circle style="fill: rgba(20, 20, 19, 0.81); stroke: rgb(255, 57, 4); stroke-width: 8px;" cx="575" cy="175" r="25"/>
+<circle style="fill: rgba(20, 20, 19, 0.81); stroke: rgb(255, 57, 4); vector-effect: non-scaling-stroke; stroke-width: 18px;" cx="675" cy="175" r="25"/>
+<circle style="fill: rgba(20, 20, 19, 0.81); stroke: rgb(255, 57, 4); vector-effect: non-scaling-stroke; stroke-width: 18px;" cx="775" cy="175" r="25"/>
+<circle style="fill: rgba(20, 20, 19, 0.81); stroke: rgb(255, 57, 4); vector-effect: non-scaling-stroke; stroke-width: 18px;" cx="875" cy="175" r="25"/>
+<circle style="fill: rgba(20, 20, 19, 0.81); stroke: rgb(255, 57, 4); vector-effect: non-scaling-stroke; stroke-width: 18px;" cx="975" cy="175" r="25"/>
+<circle style="fill: rgba(20, 20, 19, 0.81); stroke-width: 6px; stroke: rgb(250, 56, 6);" cx="575" cy="223" r="15"/>
+<circle style="fill: rgba(20, 20, 19, 0.81); stroke: rgb(255, 57, 4); stroke-width: 6px;" cx="613" cy="196" r="13"/>
+<path style="fill: rgb(216, 216, 216); stroke-width: 8px; stroke: rgb(250, 56, 6);" d="M 560 160 L 590 190"/>
+<text style="fill: rgb(0, 255, 245); font-family: Arial, sans-serif; font-size: 13.9px; font-weight: 700; text-anchor: middle; white-space: pre;" x="613" y="201">1</text>
+<text style="fill: rgb(0, 255, 245); font-family: Arial, sans-serif; font-size: 16px; font-weight: 700; text-anchor: middle; white-space: pre;" x="575" y="229">1</text>
+<circle style="fill: rgba(20, 20, 19, 0.81); stroke: rgb(255, 57, 4); stroke-width: 6px;" cx="594" cy="208" r="8"/>
+<circle style="fill: rgba(20, 20, 19, 0.81); stroke: rgb(255, 57, 4); stroke-width: 6px;" cx="556" cy="208" r="8"/>
+<circle style="fill: rgba(20, 20, 19, 0.81); stroke: rgb(255, 57, 4); stroke-width: 6px;" cx="537" cy="171" r="8"/>
+<circle style="fill: rgba(20, 20, 19, 0.81); stroke: rgb(255, 57, 4); stroke-width: 6px;" cx="613" cy="171" r="8"/>
+<circle style="fill: rgba(20, 20, 19, 0.81); stroke: rgb(255, 57, 4); stroke-width: 6px;" cx="575" cy="115" r="8"/>
+<circle style="fill: rgba(20, 20, 19, 0.81); stroke: rgb(255, 57, 4); stroke-width: 6px;" cx="608" cy="146" r="13"/>
+<text style="fill: rgb(0, 255, 245); font-family: Arial, sans-serif; font-size: 13.9px; font-weight: 700; text-anchor: middle; white-space: pre;" x="608" y="151">1</text>
+<circle style="fill: rgba(20, 20, 19, 0.81); stroke: rgb(255, 57, 4); stroke-width: 6px;" cx="542" cy="146" r="13"/>
+<text style="fill: rgb(0, 255, 245); font-family: Arial, sans-serif; font-size: 13.9px; font-weight: 700; text-anchor: middle; white-space: pre;" x="542" y="151">1</text>
+<circle style="fill: rgba(20, 20, 19, 0.81); stroke: rgb(255, 57, 4); stroke-width: 6px;" cx="537" cy="196" r="13"/>
+<text style="fill: rgb(0, 255, 245); font-family: Arial, sans-serif; font-size: 13.8px; font-weight: 700; text-anchor: middle; white-space: pre;" x="537" y="201">16</text>
+<circle style="stroke-width: 6px; fill: url('#gradient-2'); paint-order: fill; transform-box: fill-box; transform-origin: 50% 50%;" cx="575" cy="223" r="18"/>
+</svg>

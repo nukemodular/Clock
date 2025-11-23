@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"path": "../../tr909/id"
+		},
+		{
+			"path": "../../clock_org/clock_org"
+		}
+	],
+	"settings": {}
+}
