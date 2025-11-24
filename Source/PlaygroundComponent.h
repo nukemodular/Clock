@@ -6,11 +6,11 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 #include <cmath>
 #include <vector>
-#include "LookAndFeels.h"
+#include "UiTheme.h"
 #include "PopupMenuRing.h"
 #include "Pattern.h" // PatternRing for edit mode
 #include "PatternGeometry.h"
-#include "RunButton.h"
+#include "UiComponents.h"
 
 // Debug overlay toggle macro (only compiled/enabled in debug builds)
 #if JUCE_DEBUG

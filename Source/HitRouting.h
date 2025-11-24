@@ -35,7 +35,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "Pattern.h"
 #include "PlaygroundComponent.h" // require full definition for member access
-#include "PatternGeometry.h"
+#include "UiTheme.h"
 
 // Interaction modes gate which zones are considered during hit-test.
 enum class InteractionMode { Normal, PatternEdit, Popup3Open, Popup6Open, SubmenuActive };

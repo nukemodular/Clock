@@ -7,8 +7,7 @@
 #include "PluginProcessor.h"
 #include "build_info.h"
 #include "BinaryData.h"
-#include "LookAndFeels.h" // theme colours
-#include "UiLayoutConstants.h"
+#include "UiTheme.h"
 #include "HitRouting.h"
 #include <array>
 #include <optional>
@@ -307,6 +306,20 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     nameBox.onChange = [this]{ const int id = nameBox.getSelectedId(); if (id == 1000) showNewNameDialog(); else if (id == 1001){ instrumentNames.clear(); saveInstrumentNamesToState(); populateNameBox(); } };
 
     refreshDeviceList();
+
+    // When the user selects an item from the device combo, map selection id -> device identifier
+    // Selection id mapping: 1 => no device selected (placeholder), 2.. => midiOutputs[selId-2]
+    deviceBox.onChange = [this]() {
+        const int selId = deviceBox.getSelectedId();
+        if (selId <= 1)
+        {
+            processor.setExternalDeviceId({});
+        }
+        else if (selId - 2 >= 0 && selId - 2 < (int) midiOutputs.size())
+        {
+            processor.setExternalDeviceId(midiOutputs[(size_t) (selId - 2)].identifier);
+        }
+    };
 
     // Backdrop animators (decorative circles)
     for (size_t i = 0; i < backdropAnimators.size(); ++i)

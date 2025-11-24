@@ -5,12 +5,11 @@
 #include <juce_animation/juce_animation.h>
 #include "PluginProcessor.h"
 #include "RingToggle.h"
-#include "LookAndFeels.h" // theme colours
-#include "UiLayoutConstants.h"
+#include "UiTheme.h"
 #include "Pattern.h"
 
 #include "PlaygroundComponent.h"
-#include "StatusBarComponent.h"
+#include "UiComponents.h"
 #include "HitRouting.h" // unified hit-test
 
 class ClockSyncAudioProcessorEditor : public juce::AudioProcessorEditor, private juce::Timer

@@ -1,14 +1,7 @@
-// UiTheme.h
 #pragma once
-
 #include <juce_gui_basics/juce_gui_basics.h>
-#include <juce_core/juce_core.h>
-#include <array>
 
-// Consolidated UI theme and layout constants.
-// Merges LookAndFeels.h and UiLayoutConstants.h into a single include to
-// reduce the number of tiny headers and keep theme + layout tightly coupled.
-
+// Shared theme colours (extern declarations if needed elsewhere)
 struct UiThemeColours
 {
     static juce::Colour accent() { return juce::Colour::fromRGB(0xFF, 0x4E, 0x5B); }
@@ -16,7 +9,10 @@ struct UiThemeColours
     static juce::Colour cyan()   { return juce::Colour::fromRGB(0x00, 0xD7, 0xFF); }
 };
 
-// General look-and-feel class used across the editor
+// Rotary (click level) look-and-feel
+// ClickRotaryLNF removed (rotary visual migrated to PlaygroundComponent). Re-add if a standalone Slider is reintroduced.
+
+// General button / popup look-and-feel
 class ThemeLNF : public juce::LookAndFeel_V4
 {
 public:
@@ -45,7 +41,10 @@ public:
     void drawToggleButton(juce::Graphics& g, juce::ToggleButton& b, bool isMouseOverButton, bool isButtonDown) override
     {
         juce::ignoreUnused(isMouseOverButton, isButtonDown);
+        // Draw same background as regular buttons
         drawButtonBackground(g, b, juce::Colours::transparentBlack, isMouseOverButton, isButtonDown);
+
+        // Draw the label centred
         g.setColour(UiThemeColours::base());
         g.setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)));
         g.drawFittedText(b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, 1);
@@ -55,11 +54,14 @@ public:
     {
         juce::ignoreUnused(w, h);
         auto r = box.getLocalBounds().toFloat();
+        // background
         g.setColour(UiThemeColours::accent());
         g.fillRoundedRectangle(r, 5.0f);
         g.setColour(UiThemeColours::base());
         g.fillRoundedRectangle(r.reduced(2.0f), 4.0f);
 
+        // Draw ComboBox text (use ComboBox::textColourId if set) rather than
+        // relying on the internal label which can inherit an unreadable colour.
         juce::String txt = box.getText();
         if (txt.isNotEmpty())
         {
@@ -71,6 +73,7 @@ public:
             g.drawFittedText(txt, textR.toNearestInt(), juce::Justification::centred, 1);
         }
 
+        // draw a small drop-arrow at the far right (respect arrow colour)
         juce::Colour arrowCol = box.findColour(juce::ComboBox::arrowColourId);
         if (arrowCol.isOpaque())
         {
@@ -97,6 +100,8 @@ public:
         g.setColour(UiThemeColours::accent());
         g.drawRect(0, 0, w, h, 1);
     }
+
+
 
     void drawPopupMenuItem(juce::Graphics& g, const juce::Rectangle<int>& area,
                            bool isSeparator, bool isActive, bool isHighlighted, bool isTicked, bool,
@@ -132,47 +137,3 @@ public:
         }
     }
 };
-
-// ---------------- UiLayout constants (from UiLayoutConstants.h) ----------------
-namespace UiLayout
-{
-    static constexpr float kFontSmall = 10.0f;
-    static constexpr float kFontMedium = 16.0f;
-    static constexpr float kFontTooltip = 13.0f;
-    static constexpr float kCornerRadius = 6.0f;
-    static constexpr float kLedRadius = 6.0f;
-    static constexpr float kBarWidth = 18.0f;
-    static constexpr float kInnerReduce = 6.0f;
-
-    static constexpr float kBackdropMultiplier = 1.25f;
-    static constexpr float kBackdropBaseSize = 55.55f * kBackdropMultiplier;
-
-    static constexpr std::array<float, 8> kBackdropSizes = [] {
-        std::array<float, 8> a{};
-        a[7] = kBackdropBaseSize;
-        for (int i = 6; i >= 0; --i)
-            a[i] = a[i + 1] * kBackdropMultiplier;
-        return a;
-    }();
-
-    static constexpr std::array<float, 8> kBackdropPulseScales = { { 0.12f, 0.12f, 0.12f, 0.12f, 0.12f, 0.12f, 0.12f, 0.12f } };
-    static constexpr float kBackdropPulseDecay = 0.933f;
-    static constexpr float kBackdropMinScale = 0.90f;
-    static constexpr float kBackdropMaxScale = 1.2f;
-    static constexpr float kBackdropPulseDurationMs = 333.333f;
-}
-
-// Pattern geometry constants (previously in PatternGeometry.h)
-namespace UiLayout
-{
-    static constexpr float kPatternInset = 8.0f;            // inward inset from ring inner radius
-    static constexpr float kPatternOutwardShift = 5.0f;     // net outward visual shift applied
-    static constexpr float kPatternThicknessRatio = 0.775f; // inner radius = outer * ratio
-}
-
-// Backwards-compatibility mapping for code that referenced PatternGeometry::*
-namespace PatternGeometry {
-    static constexpr float kPatternInset = UiLayout::kPatternInset;
-    static constexpr float kPatternOutwardShift = UiLayout::kPatternOutwardShift;
-    static constexpr float kPatternThicknessRatio = UiLayout::kPatternThicknessRatio;
-}
