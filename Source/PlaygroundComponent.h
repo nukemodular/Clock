@@ -9,7 +9,6 @@
 #include "UiTheme.h"
 #include "PopupMenuRing.h"
 #include "Pattern.h" // PatternRing for edit mode
-#include "PatternGeometry.h"
 #include "UiComponents.h"
 
 // Debug overlay toggle macro (only compiled/enabled in debug builds)
