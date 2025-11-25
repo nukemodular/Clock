@@ -108,6 +108,7 @@ private:
         juce::Colour off { juce::Colours::red };
         juce::Colour on  { juce::Colours::cyan };
     } clickButton;
+    // Pattern start fine-tune UI removed
     // Idle clock toggle
     RingToggle idleClockToggle;
     // New: shuffle scale toggle at (65,195) size 40x40
@@ -261,6 +262,7 @@ private:
     // Pattern ring (inner 16-step sequencer)
     PatternRing pattern;
     int patternHoverIndex { -1 };
+    int patternParamCached { 0 }; // cached APVTS patternSteps value to keep UI in sync
     bool patternEditMode { false }; // idx2 ON enables editing & visibility
     bool patternDragActive { false }; // true while mouse dragging over pattern
     bool patternDragSetState { false }; // desired state (on/off) applied to dragged wedges

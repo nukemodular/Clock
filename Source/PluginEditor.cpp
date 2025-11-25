@@ -49,18 +49,35 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     rateParam = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(ClockSyncAudioProcessor::paramClockRateIndex));
     if (rateParam) rateIndexCached = rateParam->getIndex();
 
-    // Lightweight pattern round-trip sanity (non-fatal; debug aid, inline to avoid linkage issues)
-#if JUCE_DEBUG
+    // Load persisted UI-only flags from APVTS state (if present). These are
+    // non-parameter values we store in the same ValueTree so the editor
+    // appearance (pattern-edit, name/midi mode, selected instrument, submenu)
+    // is restored when a project is reloaded.
     {
-        PatternRing prTest;
-        uint16_t mask = 0; for (int i=0;i<16;++i){ bool on=(i%2==0); if (i==3||i==9) on=true; if (on) mask |= (uint16_t(1)<<i); }
-        prTest.setBitmask(mask); uint16_t round=prTest.getBitmask();
-        if (round != mask)
-            juce::Logger::writeToLog("PatternRing inline test FAILED");
-        else
-            juce::Logger::writeToLog("PatternRing inline test passed");
+        auto& st = apvts.state;
+        // NAME/MIDI toggle (default: current widget state)
+        if (st.hasProperty("ui.showNameMode"))
+            nameMidiSwitch.setToggleState((bool) st.getProperty("ui.showNameMode"), juce::dontSendNotification);
+        // Pattern edit mode (default: false)
+        if (st.hasProperty("ui.patternEditMode"))
+        {
+            patternEditMode = (bool) st.getProperty("ui.patternEditMode");
+            if (playgroundComp) playgroundComp->setPatternEditButtonState(patternEditMode);
+            if (playgroundComp) playgroundComp->setInterceptsMouseClicks(!patternEditMode, !patternEditMode);
+        }
+        // Setup submenu open state (default: false)
+        if (st.hasProperty("ui.setupSubmenuOn"))
+        {
+            setupSubmenuTargetOn = (bool) st.getProperty("ui.setupSubmenuOn");
+            setupButton.setToggleState(setupSubmenuTargetOn, juce::dontSendNotification);
+            setupSubmenuProgress = setupSubmenuTargetOn ? 1.0f : 0.0f;
+            setupSubmenuAnimatingHide = ! setupSubmenuTargetOn;
+        }
+        // Load instrument names early so populateNameBox can restore selection
+        loadInstrumentNamesFromState();
     }
-#endif
+
+
 
     // Create playground component (owns popups & ring visuals)
     playgroundComp = std::make_unique<PlaygroundComponent>();
@@ -68,6 +85,13 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     playgroundComp->setBounds(0, 0, getWidth(), getHeight());
     playgroundComp->setHeaderHeight(30);
     playgroundComp->toBack();
+
+    // Ensure playground reflects any persisted pattern-edit state loaded earlier
+    if (playgroundComp)
+    {
+        playgroundComp->setPatternEditButtonState(patternEditMode);
+        playgroundComp->setInterceptsMouseClicks(!patternEditMode, !patternEditMode);
+    }
 
     // Help toggle ("?") - restore visibility and behaviour so users can enable/disable tooltips.
     // Wire directly to the playground's hover text API rather than a separate applyTooltips helper.
@@ -85,6 +109,16 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         if (playgroundComp) playgroundComp->setHoverTextEnabled(on);
         repaint(0, getHeight()-40, 120, 40);
     };
+
+    // Restore selected instrument index if present in state
+    {
+        auto& st = processor.getAPVTS().state;
+        int sel = (int) st.getProperty("ui.selectedInstrument", 0);
+        if (sel > 0 && sel <= (int) instrumentNames.size())
+            nameBox.setSelectedId(sel, juce::dontSendNotification);
+    }
+
+    // Pattern start fine-tune slider removed
 
     // Status bar (LED + status string) – painted above playground
     statusBar = std::make_unique<StatusBarComponent>();
@@ -119,7 +153,13 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
 
     // Initialise pattern ring visual state from persisted parameter
     if (auto* psi = dynamic_cast<juce::AudioParameterInt*>(apvts.getParameter(ClockSyncAudioProcessor::paramPatternSteps)))
-        pattern.setBitmask((uint16_t) juce::jlimit(0, 65535, psi->get()));
+    {
+        int v = (int) juce::jlimit(0, 65535, psi->get());
+        pattern.setBitmask((uint16_t) v);
+        patternParamCached = v;
+        if (playgroundComp)
+            playgroundComp->setPatternBitmask((uint16_t) v);
+    }
 
     // --- Wire PlaygroundComponent callbacks to APVTS ---
     if (playgroundComp)
@@ -155,6 +195,8 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
             int idx = 1; if (val == 32) idx = 0; else if (val == 16) idx = 1; else if (val == 8) idx = 2; else if (val == 4) idx = 3;
             if (auto* pParam = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramClockRateIndex))
                 pParam->setValueNotifyingHost(pParam->getNormalisableRange().convertTo0to1((float) idx));
+            // Persist main circle 6 / clock-rate UI choice so it is restored on reload
+            processor.getAPVTS().state.setProperty("ui.mainCircle6Value", val, nullptr);
         };
         playgroundComp->onShuffleStepRequested = [this](int v){
             if (auto* pParam = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramShuffleStep))
@@ -163,6 +205,8 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
                 pParam->beginChangeGesture();
                 pParam->setValueNotifyingHost(range.convertTo0to1((float) juce::jlimit(1,7,v)));
                 pParam->endChangeGesture();
+                // Remember last selected shuffle (visual) so we can restore it
+                processor.getAPVTS().state.setProperty("ui.selectedShuffle", v, nullptr);
             }
         };
         playgroundComp->onClockWhileStoppedRequested = [this](bool on){
@@ -202,6 +246,8 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
                 if (auto* psi = dynamic_cast<juce::AudioParameterInt*>(processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramPatternSteps)))
                     pattern.setBitmask((uint16_t) juce::jlimit(0,65535, psi->get()));
             }
+            // Persist editor-only pattern edit flag
+            processor.getAPVTS().state.setProperty("ui.patternEditMode", on, nullptr);
             repaint(ringArea);
         };
         // Initialise playground visual state
@@ -214,6 +260,37 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
             playgroundComp->setClickPulseState(cp->load() > 0.5f);
         if (auto* tm = apvts.getRawParameterValue(ClockSyncAudioProcessor::paramTriggerModeEnabled))
             playgroundComp->setTriggerModeState(tm->load() > 0.5f);
+
+        // Restore popup3 (autofill interval) visual label from the parameter
+        if (auto* pchoice = dynamic_cast<juce::AudioParameterChoice*>(processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramPatternBars)))
+        {
+            // paramPatternBars maps: 0=OFF,1=1,2=2,3=4,4=8,5=16,6=32,7=64,8=RND
+            // Playground popup ordering is RND(0),64(1),32(2),16(3),8(4),4(5),2(6),1(7),OFF(8)
+            int paramIdx = pchoice->getIndex();
+            int popupIndex = 8 - paramIdx; // inverse of map used in updatePatternParamFromPopup3
+            playgroundComp->setPopup3Index(popupIndex);
+            processor.getAPVTS().state.setProperty("ui.popup3Index", popupIndex, nullptr);
+        }
+        // Persist linear shuffle toggle when changed in the playground
+        playgroundComp->onLinearShuffleModeChanged = [this](bool on){
+            processor.getAPVTS().state.setProperty("ui.linearShuffleMode", on, nullptr);
+        };
+        // Restore shuffle visual selection from parameter (if present)
+        if (auto* sh = dynamic_cast<juce::AudioParameterInt*>(processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramShuffleStep)))
+        {
+            playgroundComp->setSelectedShuffle(sh->get());
+            processor.getAPVTS().state.setProperty("ui.selectedShuffle", sh->get(), nullptr);
+        }
+        // Restore linear shuffle UI-only toggle (persisted in state)
+        {
+            juce::var v = processor.getAPVTS().state.getProperty("ui.linearShuffleMode", juce::var(false));
+            if (v.isBool()) playgroundComp->setLinearShuffleModeState((bool) v);
+        }
+        // Restore main circle6 value (click / extra6) if saved
+        {
+            juce::var v = processor.getAPVTS().state.getProperty("ui.mainCircle6Value", juce::var());
+            if (! v.isVoid() && v.isDouble()) playgroundComp->setMainCircle6Value((int) v);
+        }
     }
 
     // Device list
@@ -244,7 +321,8 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         nameMidiSwitch.setColour(juce::TextButton::textColourOffId, txtCol);
         nameMidiSwitch.setColour(juce::TextButton::textColourOnId,  txtCol);
     }
-    if (nameMidiSwitch.getToggleState()) { loadInstrumentNamesFromState(); populateNameBox(); }
+    if (nameMidiSwitch.getToggleState()) { populateNameBox(); }
+    // Persist NAME/MIDI toggle into APVTS state so it survives project save/load
     nameMidiSwitch.onClick = [this]{
         const bool showName = nameMidiSwitch.getToggleState();
         nameMidiSwitch.setButtonText(showName ? "MIDI" : "NAME");
@@ -259,6 +337,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         else { deviceBox.toFront(true); if (setupButton.getToggleState()) setupButton.setToggleState(false, juce::dontSendNotification); setupSubmenuTargetOn = false; setupSubmenuProgress = 0.0f; setupSubmenuAnimatingHide = true; }
         if (playgroundComp) playgroundComp->setHeaderHeight(30);
         resized(); repaint(0,0,getWidth(), 34);
+        processor.getAPVTS().state.setProperty("ui.showNameMode", showName, nullptr);
     };
 
     // Setup submenu animator
@@ -286,6 +365,8 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         setupSubmenuTargetOn = setupButton.getToggleState();
         setupSubmenuAnimatingHide = ! setupSubmenuTargetOn;
         setupAnimator->start();
+        // Persist submenu open state
+        processor.getAPVTS().state.setProperty("ui.setupSubmenuOn", setupSubmenuTargetOn, nullptr);
     };
     auto configureSetupToggle = [](juce::TextButton& b){
         b.setColour(juce::TextButton::textColourOffId, UiThemeColours::cyan());
@@ -303,7 +384,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     idleModeButton.onClick = [this]{ const bool on = idleModeButton.getToggleState(); idleModeButton.setButtonText(on ? "IDLE ON" : "IDLE OFF"); };
     legacyModernButton.onClick = [this]{ const bool on = legacyModernButton.getToggleState(); legacyModernButton.setButtonText(on ? "MODERN" : "LEGACY"); processor.setLegacyMode(!on); };
     sppButton.onClick = [this]{ const bool on = sppButton.getToggleState(); sppButton.setButtonText(on ? "S.P.P. ON" : "S.P.P. OFF"); };
-    nameBox.onChange = [this]{ const int id = nameBox.getSelectedId(); if (id == 1000) showNewNameDialog(); else if (id == 1001){ instrumentNames.clear(); saveInstrumentNamesToState(); populateNameBox(); } };
+    nameBox.onChange = [this]{ const int id = nameBox.getSelectedId(); if (id == 1000) showNewNameDialog(); else if (id == 1001){ instrumentNames.clear(); saveInstrumentNamesToState(); populateNameBox(); processor.getAPVTS().state.setProperty("ui.selectedInstrument", 0, nullptr); } else { if (id >= 1) processor.getAPVTS().state.setProperty("ui.selectedInstrument", id, nullptr); } };
 
     refreshDeviceList();
 
@@ -422,14 +503,10 @@ void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
         repaintComp(legacyModernButton);
         repaintComp(sppButton);
 
-        // Version label (right-aligned)
-        const juce::String ver = PLUGIN_VERSION_WITH_BUILD;
+        // Pattern start fine-tune numeric control (in submenu) — slider drawn as component above.
+        // We draw a small label to indicate units next to the buttons.
         juce::Font vf(juce::FontOptions("Arial", 11.0f, juce::Font::bold));
-        g.setFont(vf);
-        g.setColour(UiThemeColours::cyan());
-        // Version label alignment uses button geometry (already computed above)
-        juce::Rectangle<int> verArea((int)getWidth() - 156, yButtons, 150, btnH);
-        g.drawFittedText(ver, verArea, juce::Justification::centredRight, 1);
+        
 
         // Hover tooltips (avoid drawing above header region 0..30)
         if (hoveredSetupIndex >= 0)
@@ -508,6 +585,22 @@ void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
     // StatusBarComponent now paints status + LED.
 
     // Debug offset panel removed per user request to declutter lower area during shuffle hit testing.
+    // Draw small build number at lower-right (same vertical region as hoverText)
+    {
+        // Compute build-only string from PLUGIN_VERSION_WITH_BUILD macro (extract trailing "build N").
+        juce::String ver = PLUGIN_VERSION_WITH_BUILD;
+        juce::String buildStr = ver;
+        const int idx = ver.indexOf("build ");
+        if (idx >= 0)
+            buildStr = ver.substring(idx + 6); // number and trailing
+        g.setColour(UiThemeColours::cyan().withAlpha(0.95f));
+        // Use the newer FontOptions-based constructor to avoid deprecated API warnings
+        g.setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::plain)));
+        const int pad = 6;
+        juce::Rectangle<int> r(getWidth() - 80, getHeight() - 20, 74, 16);
+        g.drawFittedText(buildStr.trim(), r, juce::Justification::centredRight, 1);
+    }
+
 }
 
 void ClockSyncAudioProcessorEditor::resized()
@@ -906,35 +999,21 @@ void ClockSyncAudioProcessorEditor::timerCallback()
             // boundaries (more robust than relying purely on step==0).
             if (playgroundComp)
             {
-                if (auto* playHead = processor.getPlayHead())
+                // Use cached bar number written by the audio thread in processBlock
+                // to avoid calling playHead->getPosition() from the message thread
+                // (the host playhead wrapper is only valid during audio callbacks).
+                int barNumber = processor.getUiExternalBarNumber();
+                // If the audio thread just detected a host START edge, ask the
+                // playground to reset its external-bar tracking first so the
+                // next forwarded bar number is treated as a fresh first bar.
+                if (processor.consumeUiHostStartPending())
                 {
-                    if (auto posOpt = playHead->getPosition())
-                    {
-                        auto pos = *posOpt; // PositionInfo
-                        // Prefer an explicit bar count if the host provides it
-                        if (auto barOpt = pos.getBarCount())
-                        {
-                            playgroundComp->setExternalBarNumber((int) *barOpt);
-                        }
-                        else if (auto ppqBarStartOpt = pos.getPpqPositionOfLastBarStart())
-                        {
-                            double ppqBarStart = *ppqBarStartOpt; // quarter-note units
-                            double quartersPerBar = 4.0; // default assume 4/4
-                            if (auto tsOpt = pos.getTimeSignature())
-                            {
-                                auto ts = *tsOpt;
-                                if (ts.denominator > 0)
-                                    quartersPerBar = ts.numerator * (4.0 / (double) ts.denominator);
-                            }
-                            if (quartersPerBar > 0.0)
-                            {
-                                double barIndexD = std::floor(ppqBarStart / quartersPerBar);
-                                int barNumber = 1 + (int) std::max(0.0, barIndexD); // 1-based
-                                playgroundComp->setExternalBarNumber(barNumber);
-                            }
-                        }
-                    }
+                    playgroundComp->setExternalBarNumber(-1);
                 }
+                // Forward cached bar number (may be -1 when host transport is unavailable)
+                // so the playground can reset its autofill counters when the DAW stops.
+                playgroundComp->setExternalBarNumber(barNumber);
+
                 // Always forward DAW step to the playground after bar info so
                 // `patternBarActive` is set correctly before onStepChanged runs.
                 playgroundComp->setExternalPlayheadStep(stepNow);
@@ -1038,6 +1117,18 @@ void ClockSyncAudioProcessorEditor::timerCallback()
             paramStep = juce::jlimit(1, 16, pi->get());
         if (paramStep > 0)
             selectedResyncStepCached = paramStep;
+    }
+
+    // Keep pattern visual in sync with the parameter in case it changed externally
+    if (auto* psi = dynamic_cast<juce::AudioParameterInt*>(processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramPatternSteps)))
+    {
+        int v = (int) juce::jlimit(0, 65535, psi->get());
+        if (v != patternParamCached)
+        {
+            patternParamCached = v;
+            pattern.setBitmask((uint16_t) v);
+            needRing = true;
+        }
     }
 
     // Playground reflects shuffle amount visually.
@@ -1470,7 +1561,7 @@ void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
                     if (patternEditMode)
                     {
                         int logicalStep = juce::jlimit(1,16, relativeStepCached);
-                        constexpr int visualRotation = 4;
+                        constexpr int visualRotation = 3;
                         int storedIndex = ((logicalStep - 1) + visualRotation) & 15;
                         if (! pattern.getStep(storedIndex))
                         {
@@ -1651,8 +1742,12 @@ void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
                 while (rel < 0.0f) rel += twoPi;
                 const float slice = twoPi / 16.0f;
                 int rawIdx = (int) std::floor(rel / slice); // 0..15
-                const int offset = 4; // visual rotation to match playground
-                int logical0 = (rawIdx - offset + 16) % 16;
+                // Use the raw angular sector as the logical step (0..15) so
+                // clicking the top wedge maps to step 1. The PlaygroundComponent
+                // already applies the visual rotation when rendering and when
+                // scheduling pattern steps, so we should treat the ring sector
+                // index as the canonical logical index here.
+                int logical0 = rawIdx;
                 int step = logical0 + 1; // 1..16
                 if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramResyncOffsetStep))
                 {
@@ -1711,12 +1806,18 @@ void ClockSyncAudioProcessorEditor::updatePatternParamFromPopup3(int popupIndex)
         p->beginChangeGesture();
         p->setValueNotifyingHost(p->getNormalisableRange().convertTo0to1((float) paramIdx));
         p->endChangeGesture();
+        // Persist the popup3 index (visual) so it can be restored even if the playground
+        // visual state isn't created before parameters are applied by the host.
+        int popupIndex = 8 - paramIdx;
+        processor.getAPVTS().state.setProperty("ui.popup3Index", popupIndex, nullptr);
     }
 }
 
 void ClockSyncAudioProcessorEditor::pushPatternStateToProcessor()
 {
     uint16_t mask = pattern.getBitmask();
+    if (playgroundComp)
+        mask = playgroundComp->getPatternBitmask();
     if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramPatternSteps))
     {
         float norm = p->getNormalisableRange().convertTo0to1((float) mask);

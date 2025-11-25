@@ -253,19 +253,6 @@ increment_build/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/increment_build.dir/build.make CMakeFiles/increment_build.dir/build
 .PHONY : increment_build/fast
 
-#=============================================================================
-# Target rules for targets named LayoutPlayground
-
-# Build rule for target.
-LayoutPlayground: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 LayoutPlayground
-.PHONY : LayoutPlayground
-
-# fast build rule for target.
-LayoutPlayground/fast:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/build
-.PHONY : LayoutPlayground/fast
-
 JUCE/modules/juce_animation/juce_animation.o: JUCE/modules/juce_animation/juce_animation.cpp.o
 .PHONY : JUCE/modules/juce_animation/juce_animation.o
 
@@ -785,7 +772,6 @@ JUCE/modules/juce_core/juce_core.o: JUCE/modules/juce_core/juce_core.mm.o
 # target to build an object file
 JUCE/modules/juce_core/juce_core.mm.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/JUCE/modules/juce_core/juce_core.mm.o
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/JUCE/modules/juce_core/juce_core.mm.o
 .PHONY : JUCE/modules/juce_core/juce_core.mm.o
 
 JUCE/modules/juce_core/juce_core.i: JUCE/modules/juce_core/juce_core.mm.i
@@ -794,7 +780,6 @@ JUCE/modules/juce_core/juce_core.i: JUCE/modules/juce_core/juce_core.mm.i
 # target to preprocess a source file
 JUCE/modules/juce_core/juce_core.mm.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/JUCE/modules/juce_core/juce_core.mm.i
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/JUCE/modules/juce_core/juce_core.mm.i
 .PHONY : JUCE/modules/juce_core/juce_core.mm.i
 
 JUCE/modules/juce_core/juce_core.s: JUCE/modules/juce_core/juce_core.mm.s
@@ -803,7 +788,6 @@ JUCE/modules/juce_core/juce_core.s: JUCE/modules/juce_core/juce_core.mm.s
 # target to generate assembly for a file
 JUCE/modules/juce_core/juce_core.mm.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/JUCE/modules/juce_core/juce_core.mm.s
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/JUCE/modules/juce_core/juce_core.mm.s
 .PHONY : JUCE/modules/juce_core/juce_core.mm.s
 
 JUCE/modules/juce_core/juce_core_CompilationTime.o: JUCE/modules/juce_core/juce_core_CompilationTime.cpp.o
@@ -812,7 +796,6 @@ JUCE/modules/juce_core/juce_core_CompilationTime.o: JUCE/modules/juce_core/juce_
 # target to build an object file
 JUCE/modules/juce_core/juce_core_CompilationTime.cpp.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/JUCE/modules/juce_core/juce_core_CompilationTime.cpp.o
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/JUCE/modules/juce_core/juce_core_CompilationTime.cpp.o
 .PHONY : JUCE/modules/juce_core/juce_core_CompilationTime.cpp.o
 
 JUCE/modules/juce_core/juce_core_CompilationTime.i: JUCE/modules/juce_core/juce_core_CompilationTime.cpp.i
@@ -821,7 +804,6 @@ JUCE/modules/juce_core/juce_core_CompilationTime.i: JUCE/modules/juce_core/juce_
 # target to preprocess a source file
 JUCE/modules/juce_core/juce_core_CompilationTime.cpp.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/JUCE/modules/juce_core/juce_core_CompilationTime.cpp.i
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/JUCE/modules/juce_core/juce_core_CompilationTime.cpp.i
 .PHONY : JUCE/modules/juce_core/juce_core_CompilationTime.cpp.i
 
 JUCE/modules/juce_core/juce_core_CompilationTime.s: JUCE/modules/juce_core/juce_core_CompilationTime.cpp.s
@@ -830,7 +812,6 @@ JUCE/modules/juce_core/juce_core_CompilationTime.s: JUCE/modules/juce_core/juce_
 # target to generate assembly for a file
 JUCE/modules/juce_core/juce_core_CompilationTime.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/JUCE/modules/juce_core/juce_core_CompilationTime.cpp.s
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/JUCE/modules/juce_core/juce_core_CompilationTime.cpp.s
 .PHONY : JUCE/modules/juce_core/juce_core_CompilationTime.cpp.s
 
 JUCE/modules/juce_data_structures/juce_data_structures.o: JUCE/modules/juce_data_structures/juce_data_structures.mm.o
@@ -839,7 +820,6 @@ JUCE/modules/juce_data_structures/juce_data_structures.o: JUCE/modules/juce_data
 # target to build an object file
 JUCE/modules/juce_data_structures/juce_data_structures.mm.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/JUCE/modules/juce_data_structures/juce_data_structures.mm.o
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/JUCE/modules/juce_data_structures/juce_data_structures.mm.o
 .PHONY : JUCE/modules/juce_data_structures/juce_data_structures.mm.o
 
 JUCE/modules/juce_data_structures/juce_data_structures.i: JUCE/modules/juce_data_structures/juce_data_structures.mm.i
@@ -848,7 +828,6 @@ JUCE/modules/juce_data_structures/juce_data_structures.i: JUCE/modules/juce_data
 # target to preprocess a source file
 JUCE/modules/juce_data_structures/juce_data_structures.mm.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/JUCE/modules/juce_data_structures/juce_data_structures.mm.i
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/JUCE/modules/juce_data_structures/juce_data_structures.mm.i
 .PHONY : JUCE/modules/juce_data_structures/juce_data_structures.mm.i
 
 JUCE/modules/juce_data_structures/juce_data_structures.s: JUCE/modules/juce_data_structures/juce_data_structures.mm.s
@@ -857,7 +836,6 @@ JUCE/modules/juce_data_structures/juce_data_structures.s: JUCE/modules/juce_data
 # target to generate assembly for a file
 JUCE/modules/juce_data_structures/juce_data_structures.mm.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/JUCE/modules/juce_data_structures/juce_data_structures.mm.s
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/JUCE/modules/juce_data_structures/juce_data_structures.mm.s
 .PHONY : JUCE/modules/juce_data_structures/juce_data_structures.mm.s
 
 JUCE/modules/juce_dsp/juce_dsp.o: JUCE/modules/juce_dsp/juce_dsp.mm.o
@@ -890,7 +868,6 @@ JUCE/modules/juce_events/juce_events.o: JUCE/modules/juce_events/juce_events.mm.
 # target to build an object file
 JUCE/modules/juce_events/juce_events.mm.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/JUCE/modules/juce_events/juce_events.mm.o
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/JUCE/modules/juce_events/juce_events.mm.o
 .PHONY : JUCE/modules/juce_events/juce_events.mm.o
 
 JUCE/modules/juce_events/juce_events.i: JUCE/modules/juce_events/juce_events.mm.i
@@ -899,7 +876,6 @@ JUCE/modules/juce_events/juce_events.i: JUCE/modules/juce_events/juce_events.mm.
 # target to preprocess a source file
 JUCE/modules/juce_events/juce_events.mm.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/JUCE/modules/juce_events/juce_events.mm.i
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/JUCE/modules/juce_events/juce_events.mm.i
 .PHONY : JUCE/modules/juce_events/juce_events.mm.i
 
 JUCE/modules/juce_events/juce_events.s: JUCE/modules/juce_events/juce_events.mm.s
@@ -908,7 +884,6 @@ JUCE/modules/juce_events/juce_events.s: JUCE/modules/juce_events/juce_events.mm.
 # target to generate assembly for a file
 JUCE/modules/juce_events/juce_events.mm.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/JUCE/modules/juce_events/juce_events.mm.s
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/JUCE/modules/juce_events/juce_events.mm.s
 .PHONY : JUCE/modules/juce_events/juce_events.mm.s
 
 JUCE/modules/juce_graphics/juce_graphics.o: JUCE/modules/juce_graphics/juce_graphics.mm.o
@@ -917,7 +892,6 @@ JUCE/modules/juce_graphics/juce_graphics.o: JUCE/modules/juce_graphics/juce_grap
 # target to build an object file
 JUCE/modules/juce_graphics/juce_graphics.mm.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/JUCE/modules/juce_graphics/juce_graphics.mm.o
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/JUCE/modules/juce_graphics/juce_graphics.mm.o
 .PHONY : JUCE/modules/juce_graphics/juce_graphics.mm.o
 
 JUCE/modules/juce_graphics/juce_graphics.i: JUCE/modules/juce_graphics/juce_graphics.mm.i
@@ -926,7 +900,6 @@ JUCE/modules/juce_graphics/juce_graphics.i: JUCE/modules/juce_graphics/juce_grap
 # target to preprocess a source file
 JUCE/modules/juce_graphics/juce_graphics.mm.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/JUCE/modules/juce_graphics/juce_graphics.mm.i
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/JUCE/modules/juce_graphics/juce_graphics.mm.i
 .PHONY : JUCE/modules/juce_graphics/juce_graphics.mm.i
 
 JUCE/modules/juce_graphics/juce_graphics.s: JUCE/modules/juce_graphics/juce_graphics.mm.s
@@ -935,7 +908,6 @@ JUCE/modules/juce_graphics/juce_graphics.s: JUCE/modules/juce_graphics/juce_grap
 # target to generate assembly for a file
 JUCE/modules/juce_graphics/juce_graphics.mm.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/JUCE/modules/juce_graphics/juce_graphics.mm.s
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/JUCE/modules/juce_graphics/juce_graphics.mm.s
 .PHONY : JUCE/modules/juce_graphics/juce_graphics.mm.s
 
 JUCE/modules/juce_graphics/juce_graphics_Harfbuzz.o: JUCE/modules/juce_graphics/juce_graphics_Harfbuzz.cpp.o
@@ -944,7 +916,6 @@ JUCE/modules/juce_graphics/juce_graphics_Harfbuzz.o: JUCE/modules/juce_graphics/
 # target to build an object file
 JUCE/modules/juce_graphics/juce_graphics_Harfbuzz.cpp.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/JUCE/modules/juce_graphics/juce_graphics_Harfbuzz.cpp.o
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/JUCE/modules/juce_graphics/juce_graphics_Harfbuzz.cpp.o
 .PHONY : JUCE/modules/juce_graphics/juce_graphics_Harfbuzz.cpp.o
 
 JUCE/modules/juce_graphics/juce_graphics_Harfbuzz.i: JUCE/modules/juce_graphics/juce_graphics_Harfbuzz.cpp.i
@@ -953,7 +924,6 @@ JUCE/modules/juce_graphics/juce_graphics_Harfbuzz.i: JUCE/modules/juce_graphics/
 # target to preprocess a source file
 JUCE/modules/juce_graphics/juce_graphics_Harfbuzz.cpp.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/JUCE/modules/juce_graphics/juce_graphics_Harfbuzz.cpp.i
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/JUCE/modules/juce_graphics/juce_graphics_Harfbuzz.cpp.i
 .PHONY : JUCE/modules/juce_graphics/juce_graphics_Harfbuzz.cpp.i
 
 JUCE/modules/juce_graphics/juce_graphics_Harfbuzz.s: JUCE/modules/juce_graphics/juce_graphics_Harfbuzz.cpp.s
@@ -962,7 +932,6 @@ JUCE/modules/juce_graphics/juce_graphics_Harfbuzz.s: JUCE/modules/juce_graphics/
 # target to generate assembly for a file
 JUCE/modules/juce_graphics/juce_graphics_Harfbuzz.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/JUCE/modules/juce_graphics/juce_graphics_Harfbuzz.cpp.s
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/JUCE/modules/juce_graphics/juce_graphics_Harfbuzz.cpp.s
 .PHONY : JUCE/modules/juce_graphics/juce_graphics_Harfbuzz.cpp.s
 
 JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.o: JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.c.o
@@ -971,7 +940,6 @@ JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.o: JUCE/modules/juce_graphics
 # target to build an object file
 JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.c.o
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.c.o
 .PHONY : JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.c.o
 
 JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.i: JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.c.i
@@ -980,7 +948,6 @@ JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.i: JUCE/modules/juce_graphics
 # target to preprocess a source file
 JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.c.i
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.c.i
 .PHONY : JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.c.i
 
 JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.s: JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.c.s
@@ -989,7 +956,6 @@ JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.s: JUCE/modules/juce_graphics
 # target to generate assembly for a file
 JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.c.s
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.c.s
 .PHONY : JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.c.s
 
 JUCE/modules/juce_gui_basics/juce_gui_basics.o: JUCE/modules/juce_gui_basics/juce_gui_basics.mm.o
@@ -998,7 +964,6 @@ JUCE/modules/juce_gui_basics/juce_gui_basics.o: JUCE/modules/juce_gui_basics/juc
 # target to build an object file
 JUCE/modules/juce_gui_basics/juce_gui_basics.mm.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/JUCE/modules/juce_gui_basics/juce_gui_basics.mm.o
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/JUCE/modules/juce_gui_basics/juce_gui_basics.mm.o
 .PHONY : JUCE/modules/juce_gui_basics/juce_gui_basics.mm.o
 
 JUCE/modules/juce_gui_basics/juce_gui_basics.i: JUCE/modules/juce_gui_basics/juce_gui_basics.mm.i
@@ -1007,7 +972,6 @@ JUCE/modules/juce_gui_basics/juce_gui_basics.i: JUCE/modules/juce_gui_basics/juc
 # target to preprocess a source file
 JUCE/modules/juce_gui_basics/juce_gui_basics.mm.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/JUCE/modules/juce_gui_basics/juce_gui_basics.mm.i
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/JUCE/modules/juce_gui_basics/juce_gui_basics.mm.i
 .PHONY : JUCE/modules/juce_gui_basics/juce_gui_basics.mm.i
 
 JUCE/modules/juce_gui_basics/juce_gui_basics.s: JUCE/modules/juce_gui_basics/juce_gui_basics.mm.s
@@ -1016,7 +980,6 @@ JUCE/modules/juce_gui_basics/juce_gui_basics.s: JUCE/modules/juce_gui_basics/juc
 # target to generate assembly for a file
 JUCE/modules/juce_gui_basics/juce_gui_basics.mm.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/JUCE/modules/juce_gui_basics/juce_gui_basics.mm.s
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/JUCE/modules/juce_gui_basics/juce_gui_basics.mm.s
 .PHONY : JUCE/modules/juce_gui_basics/juce_gui_basics.mm.s
 
 JUCE/modules/juce_gui_extra/juce_gui_extra.o: JUCE/modules/juce_gui_extra/juce_gui_extra.mm.o
@@ -1025,7 +988,6 @@ JUCE/modules/juce_gui_extra/juce_gui_extra.o: JUCE/modules/juce_gui_extra/juce_g
 # target to build an object file
 JUCE/modules/juce_gui_extra/juce_gui_extra.mm.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/JUCE/modules/juce_gui_extra/juce_gui_extra.mm.o
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/JUCE/modules/juce_gui_extra/juce_gui_extra.mm.o
 .PHONY : JUCE/modules/juce_gui_extra/juce_gui_extra.mm.o
 
 JUCE/modules/juce_gui_extra/juce_gui_extra.i: JUCE/modules/juce_gui_extra/juce_gui_extra.mm.i
@@ -1034,7 +996,6 @@ JUCE/modules/juce_gui_extra/juce_gui_extra.i: JUCE/modules/juce_gui_extra/juce_g
 # target to preprocess a source file
 JUCE/modules/juce_gui_extra/juce_gui_extra.mm.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/JUCE/modules/juce_gui_extra/juce_gui_extra.mm.i
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/JUCE/modules/juce_gui_extra/juce_gui_extra.mm.i
 .PHONY : JUCE/modules/juce_gui_extra/juce_gui_extra.mm.i
 
 JUCE/modules/juce_gui_extra/juce_gui_extra.s: JUCE/modules/juce_gui_extra/juce_gui_extra.mm.s
@@ -1043,7 +1004,6 @@ JUCE/modules/juce_gui_extra/juce_gui_extra.s: JUCE/modules/juce_gui_extra/juce_g
 # target to generate assembly for a file
 JUCE/modules/juce_gui_extra/juce_gui_extra.mm.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/JUCE/modules/juce_gui_extra/juce_gui_extra.mm.s
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/JUCE/modules/juce_gui_extra/juce_gui_extra.mm.s
 .PHONY : JUCE/modules/juce_gui_extra/juce_gui_extra.mm.s
 
 Source/PluginEditor.o: Source/PluginEditor.cpp.o
@@ -1093,30 +1053,6 @@ Source/PluginProcessor.s: Source/PluginProcessor.cpp.s
 Source/PluginProcessor.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ClockV3.dir/build.make CMakeFiles/ClockV3.dir/Source/PluginProcessor.cpp.s
 .PHONY : Source/PluginProcessor.cpp.s
-
-apps/layout_playground/Main.o: apps/layout_playground/Main.cpp.o
-.PHONY : apps/layout_playground/Main.o
-
-# target to build an object file
-apps/layout_playground/Main.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/apps/layout_playground/Main.cpp.o
-.PHONY : apps/layout_playground/Main.cpp.o
-
-apps/layout_playground/Main.i: apps/layout_playground/Main.cpp.i
-.PHONY : apps/layout_playground/Main.i
-
-# target to preprocess a source file
-apps/layout_playground/Main.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/apps/layout_playground/Main.cpp.i
-.PHONY : apps/layout_playground/Main.cpp.i
-
-apps/layout_playground/Main.s: apps/layout_playground/Main.cpp.s
-.PHONY : apps/layout_playground/Main.s
-
-# target to generate assembly for a file
-apps/layout_playground/Main.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/LayoutPlayground.dir/build.make CMakeFiles/LayoutPlayground.dir/apps/layout_playground/Main.cpp.s
-.PHONY : apps/layout_playground/Main.cpp.s
 
 juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData1.o: juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData1.cpp.o
 .PHONY : juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData1.o
@@ -1713,7 +1649,6 @@ help:
 	@echo "... ClockV3_VST3"
 	@echo "... ClockV3_vst3_helper"
 	@echo "... DancerFrames"
-	@echo "... LayoutPlayground"
 	@echo "... JUCE/modules/juce_animation/juce_animation.o"
 	@echo "... JUCE/modules/juce_animation/juce_animation.i"
 	@echo "... JUCE/modules/juce_animation/juce_animation.s"
@@ -1810,9 +1745,6 @@ help:
 	@echo "... Source/PluginProcessor.o"
 	@echo "... Source/PluginProcessor.i"
 	@echo "... Source/PluginProcessor.s"
-	@echo "... apps/layout_playground/Main.o"
-	@echo "... apps/layout_playground/Main.i"
-	@echo "... apps/layout_playground/Main.s"
 	@echo "... juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData1.o"
 	@echo "... juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData1.i"
 	@echo "... juce_binarydata_DancerFrames/JuceLibraryCode/BinaryData1.s"

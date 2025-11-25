@@ -87,9 +87,7 @@ public:
         p.addRectangle(-w * 0.5f, -h * 0.5f, w, h);
         juce::AffineTransform t = juce::AffineTransform::rotation(juce::MathConstants<float>::pi * 0.25f).translated(centreX, centreY);
         p.applyTransform(t);
-#if JUCE_DEBUG
-        juce::Logger::writeToLog("RunButton::drawAt centre: " + juce::String((int)std::round(centreX)) + "," + juce::String((int)std::round(centreY)));
-#endif
+
         g.setColour(UiThemeColours::accent());
         g.fillPath(p);
     }

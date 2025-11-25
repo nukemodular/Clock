@@ -5,7 +5,6 @@
 /Users/studio/Documents/PlugProcess/clock_plugin/build_main/CMakeFiles/ClockV3_VST3.dir
 /Users/studio/Documents/PlugProcess/clock_plugin/build_main/CMakeFiles/ClockV3_vst3_helper.dir
 /Users/studio/Documents/PlugProcess/clock_plugin/build_main/CMakeFiles/increment_build.dir
-/Users/studio/Documents/PlugProcess/clock_plugin/build_main/CMakeFiles/LayoutPlayground.dir
 /Users/studio/Documents/PlugProcess/clock_plugin/build_main/CMakeFiles/edit_cache.dir
 /Users/studio/Documents/PlugProcess/clock_plugin/build_main/CMakeFiles/rebuild_cache.dir
 /Users/studio/Documents/PlugProcess/clock_plugin/build_main/CMakeFiles/list_install_components.dir

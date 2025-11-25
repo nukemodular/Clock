@@ -58,6 +58,15 @@ public:
     bool getUiPendingStart() const { return uiPendingStart.load(std::memory_order_relaxed); }
     bool getUiNextRestartPending() const { return uiNextRestartPending.load(std::memory_order_relaxed); }
     double getUiBpm() const { return uiBpm.load(std::memory_order_relaxed); }
+    // Expose cached host bar number to UI/editor (-1 when unknown)
+    int getUiExternalBarNumber() const { return uiExternalBarNumber.load(std::memory_order_relaxed); }
+    // Expose cached time-signature and ppq-last-bar-start to UI/editor
+    int getUiTimeSigNumerator() const;
+    int getUiTimeSigDenominator() const;
+    double getUiPpqPositionOfLastBarStart() const;
+    // Consume and clear the host-start pending flag (atomic fetch-and-clear)
+    bool consumeUiHostStartPending() { return uiHostStartPending.exchange(false, std::memory_order_acq_rel); }
+    
 
     // Legacy mode: when enabled we emit a MIDI Stop a few ticks before each scheduled Start
     // (trigger restart, bar restart, rate change) and gate MIDI clock pulses between the Stop
@@ -83,8 +92,24 @@ public:
     static inline const juce::String paramShuffleStep { "shuffleStep" }; // 1..7 discrete swing amount (1 none .. 7 heavy)
     static inline const juce::String paramDiagnostics { "diagnostics" }; // enable brief timing logs
     static inline const juce::String paramPatternBars { "patternBars" }; // OFF,1,2,4,8,16,32,64,RND
-    static inline const juce::String paramPatternSteps { "patternSteps" }; // 16-bit bitmask persisted
+    static inline const juce::String paramPatternSteps { "patternSteps" }; // 16-bit bitmask persisted (default non-zero for first logical step)
+    // Pattern start fine-tune parameter removed
 
+        std::atomic<int> lastPatternBarsMode { 0 }; // track previous interval mode to detect changes
+        std::atomic<bool> intervalModeChangedThisBlock { false }; // one-shot suppression flag: changing interval never emits Start
+
+        // Helper: returns true if internally generated (non-host) Start messages are allowed right now.
+        // Rule: If interval (patternBarsMode>0) is active AND the pattern step mask is empty (no bits), then
+        // no internally generated Starts (manual trigger, pattern steps, bar restarts) are allowed. Host transport
+        // Start/Continue remains unaffected.
+        bool shouldAllowGeneratedStart() const noexcept {
+            int mode = patternBarsMode.load(std::memory_order_relaxed);
+            if (mode > 0) {
+                uint16_t mask = patternStepsMask.load(std::memory_order_relaxed);
+                if (mask == 0) return false;
+            }
+            return true;
+        }
 private:
     //==============================================================================
     juce::AudioProcessorValueTreeState parameters;
@@ -139,11 +164,36 @@ private:
     std::atomic<bool> uiPendingStart { false };
     std::atomic<bool> uiNextRestartPending { false }; // show "NEXT" when a bar+offset restart is scheduled
     std::atomic<double> uiBpm { 120.0 }; // host tempo (fallback 120)
+    // Cached host-provided bar number (1-based). -1 means unknown/not provided.
+    std::atomic<int> uiExternalBarNumber { -1 };
+    // Cached host-provided time signature and last-bar PPQ. Denominator==0 => unknown.
+    std::atomic<int> uiTimeSigNumerator { 0 };
+    std::atomic<int> uiTimeSigDenominator { 0 };
+    std::atomic<double> uiPpqPositionOfLastBarStart { -1.0 };
+    // When true, suppress bar-aligned restarts (haveBarRestart) until the first
+    // pattern interval has fired after a host START. This avoids an early
+    // unrequested Start at the first few bars (e.g. bar 4) before the pattern
+    // itself fires (e.g. interval=4).
+    std::atomic<bool> deferBarRestartUntilPattern { false };
+    std::atomic<long long> lastStartBar { -1 };
+    std::atomic<int> lastStartStep { -1 }; // 1..16 when last Start emitted
+    // Flag set when host transport START edge observed; editor may consume to trigger UI reset
+    std::atomic<bool> uiHostStartPending { false };
     // Behaviour mode
     std::atomic<bool> legacyModeEnabled { false }; // false => modern (default), true => legacy pre-stop gating
     // Pattern sequencer state
     std::atomic<uint16_t> patternStepsMask { 0 }; // 16 bits
     std::atomic<int> patternBarsMode { 0 }; // 0=OFF,1=1,2=2,3=4,4=8,5=16,6=32,7=64,8=RND
+    // Flag: set true when pattern mask transitions from empty (0) to non-empty (>0) so we can
+    // schedule in-bar pattern targets immediately instead of waiting for the next interval bar.
+    std::atomic<bool> patternMaskJustActivated { false };
+    std::atomic<bool> patternModeJustChanged { false }; // one-block flag to suppress immediate pattern firing on interval change
+    // Resync flag (rule set per workflow.md): mono pending target (bar,step). When set by a Start (and gate idx8 TRUE)
+    // or by rate change (unconditional), or pattern completion (idx3≠1 & idx8 TRUE), it schedules a future Start at
+    // offset step either in current bar (if ahead) or next bar (if behind). Replacement only if new target earlier.
+    std::atomic<bool> resyncPending { false };            // true when a target is scheduled
+    std::atomic<long long> resyncTargetBar { -1 };        // bar index (0-based) where resync should fire
+    std::atomic<int> resyncTargetStep { -1 };             // 1..16 step within target bar
     long long lastPatternFiredBar { -1 }; // last bar number pattern fired
     long long nextRandomPatternTargetBar { -1 }; // target bar for random firing
     long long lastPatternRestartScheduledBar { -1 }; // bar number where a trigger-mode restart was scheduled from pattern
@@ -160,8 +210,11 @@ private:
     int lastBarRestartStartSampleInBlock { -1 };
     void updatePatternParams();
     void preparePatternForBar(double barStartPPQ, double barLenQ);
-    void tryFirePattern(double ppqStart, double barLenQ, double barStartPPQ, int numSamples, juce::MidiBuffer& midi, juce::MidiBuffer& extClock);
+    // suppressDiag: when true, internal PATTERN_DIAG logging is reduced for idempotent second pass.
+    void tryFirePattern(double ppqStart, double barLenQ, double barStartPPQ, int numSamples, juce::MidiBuffer& midi, juce::MidiBuffer& extClock, bool suppressDiag = false);
     int getPatternBarIntervalFromMode(int mode) const;
+    // Attempt to (re)schedule resync target obeying shortest precedence.
+    void attemptScheduleResync(long long currentBar, int currentStep, int offsetStep, bool force /* rate change */);
     long long computeCurrentBar(double ppqStart, double barLenQ) const { return (long long) std::floor(ppqStart / juce::jmax(1e-9, barLenQ)); }
     void setPatternSteps(uint16_t mask) { patternStepsMask.store(mask, std::memory_order_relaxed); }
     void setPatternBarsMode(int mode) { patternBarsMode.store(mode, std::memory_order_relaxed); }
@@ -186,3 +239,8 @@ private:
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ClockSyncAudioProcessor)
 };
+
+// Out-of-line definitions so the member atomics are declared before these are parsed.
+inline int ClockSyncAudioProcessor::getUiTimeSigNumerator() const { return uiTimeSigNumerator.load(std::memory_order_relaxed); }
+inline int ClockSyncAudioProcessor::getUiTimeSigDenominator() const { return uiTimeSigDenominator.load(std::memory_order_relaxed); }
+inline double ClockSyncAudioProcessor::getUiPpqPositionOfLastBarStart() const { return uiPpqPositionOfLastBarStart.load(std::memory_order_relaxed); }

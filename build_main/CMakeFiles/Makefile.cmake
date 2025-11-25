@@ -25,7 +25,6 @@ set(CMAKE_MAKEFILE_DEPENDS
   "ClockV3_artefacts/JuceLibraryCode/ClockV3_AU/Info.plist"
   "ClockV3_artefacts/JuceLibraryCode/ClockV3_VST3/Info.plist"
   "JUCE/tools/JUCEToolsExport.cmake"
-  "LayoutPlayground_artefacts/JuceLibraryCode/LayoutPlayground/Info.plist"
   "/opt/homebrew/share/cmake/Modules/BasicConfigVersion-ExactVersion.cmake.in"
   "/opt/homebrew/share/cmake/Modules/CMakeCInformation.cmake"
   "/opt/homebrew/share/cmake/Modules/CMakeCXXInformation.cmake"
@@ -71,16 +70,12 @@ set(CMAKE_MAKEFILE_OUTPUTS
 # Byproducts of CMake generate step:
 set(CMAKE_MAKEFILE_PRODUCTS
   "ClockV3_artefacts/JuceLibraryCode/Debug/Defs.txt"
-  "LayoutPlayground_artefacts/JuceLibraryCode/Debug/Defs.txt"
   "ClockV3_artefacts/Debug/AU/toolBoy Clock v3.component/Contents/MacOS"
   "ClockV3_artefacts/Debug/AU/toolBoy Clock v3.component/Contents/Info.plist"
   "ClockV3_artefacts/Debug/AU/toolBoy Clock v3.component/Contents/Info.plist"
   "ClockV3_artefacts/Debug/VST3/toolBoy Clock v3.vst3/Contents/MacOS"
   "ClockV3_artefacts/Debug/VST3/toolBoy Clock v3.vst3/Contents/Info.plist"
   "ClockV3_artefacts/Debug/VST3/toolBoy Clock v3.vst3/Contents/Info.plist"
-  "LayoutPlayground_artefacts/Debug/Layout Playground.app/Contents/MacOS"
-  "LayoutPlayground_artefacts/Debug/Layout Playground.app/Contents/Info.plist"
-  "LayoutPlayground_artefacts/Debug/Layout Playground.app/Contents/Info.plist"
   "CMakeFiles/CMakeDirectoryInformation.cmake"
   "JUCE/JUCEConfigVersion.cmake"
   "JUCE/JUCEConfig.cmake"
@@ -100,5 +95,4 @@ set(CMAKE_DEPEND_INFO_FILES
   "CMakeFiles/ClockV3_VST3.dir/DependInfo.cmake"
   "CMakeFiles/ClockV3_vst3_helper.dir/DependInfo.cmake"
   "CMakeFiles/increment_build.dir/DependInfo.cmake"
-  "CMakeFiles/LayoutPlayground.dir/DependInfo.cmake"
   )
