@@ -18,6 +18,67 @@ namespace {
         mainBuf.addEvent(msg, sample);
         extBuf.addEvent(msg, sample);
     }
+    
+    // Compute logical 1..16 step within a bar for an absolute PPQ position,
+    // respecting the TR-909-style shuffle mapping when active.
+    inline int computeLogicalStepFromPPQ(double absolutePPQ, double barLenQ, int shuffleStep)
+    {
+        if (!(barLenQ > 0.0)) return 1;
+        double posInBar = std::fmod(absolutePPQ, barLenQ);
+        if (posInBar < 0.0) posInBar += barLenQ;
+        // Snap near-zero positions to exact bar start to avoid 1-sample rounding
+        // producing step 2 for values that should be step 1.
+        if (std::fabs(posInBar) < 1e-9)
+            posInBar = 0.0;
+        if (shuffleStep <= 1 || std::fabs(barLenQ - 4.0) > 1e-6)
+        {
+            int step = (int) std::floor((posInBar / barLenQ) * 16.0) + 1;
+            if (step < 1) step = 1; if (step > 16) step = 16;
+            return step;
+        }
+        // Build the shuffled positions for each logical step (0..15) and pick the closest.
+        const double shiftQ = (double)(shuffleStep - 1) * (1.0 / 48.0);
+        double bestDiff = 1e9; int bestIdx = 0;
+        for (int logical = 0; logical < 16; ++logical)
+        {
+            int pair = logical / 2;
+            bool second = (logical & 1) == 1;
+            double pairStart = pair * 0.5;
+            double stepPos = second ? (pairStart + 0.25 + shiftQ) : pairStart;
+            double d = std::fabs(posInBar - stepPos);
+            if (d < bestDiff)
+            {
+                bestDiff = d; bestIdx = logical;
+            }
+        }
+        return bestIdx + 1;
+    }
+
+    // Compute absolute PPQ position for a logical 1..16 step inside the given bar.
+    // Keeps the same TR-909-style shuffle mapping as used by computeLogicalStepFromPPQ.
+    inline double computeStepPPQ(double barStartPPQ, double barLenQ, int logicalStep1to16, int shuffleStep)
+    {
+        if (logicalStep1to16 < 1) logicalStep1to16 = 1;
+        if (logicalStep1to16 > 16) logicalStep1to16 = 16;
+        const int idx = logicalStep1to16 - 1; // 0..15
+        double posInBar;
+        if (shuffleStep <= 1 || std::fabs(barLenQ - 4.0) > 1e-6)
+        {
+            posInBar = (barLenQ / 16.0) * (double) idx;
+        }
+        else
+        {
+            const double shiftQ = (double)(shuffleStep - 1) * (1.0 / 48.0);
+            int pair = idx / 2;
+            bool second = (idx & 1) == 1;
+            double pairStart = pair * 0.5;
+            posInBar = second ? (pairStart + 0.25 + shiftQ) : pairStart;
+        }
+        // snap tiny values to exact bar start for step 1
+        if (std::fabs(posInBar) < 1e-9)
+            posInBar = 0.0;
+        return barStartPPQ + posInBar;
+    }
 }
 
 //==============================================================================
@@ -74,6 +135,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout ClockSyncAudioProcessor::cre
     // Click rate: discrete stages 0..4 (0 = off). Default changed to 0 so rotary starts at OFF.
     params.push_back(std::make_unique<juce::AudioParameterInt>(
         paramClickRate, "Click Rate", 0, 4, 0));
+
+    // Pulse width (ms): 1–20, automatable
+    params.push_back(std::make_unique<juce::AudioParameterInt>(
+        "pulseWidthMs", "Pulse Width (ms)", 1, 20, 1));
 
     // Click variant: false = 1-sample spike, true = 1ms pulse
     params.push_back(std::make_unique<juce::AudioParameterBool>(
@@ -133,17 +198,23 @@ void ClockSyncAudioProcessor::prepareToPlay(double sr, int /*samplesPerBlock*/)
     triggerArmedForNextSixteenth.store(false, std::memory_order_relaxed);
     pendingBarRestart.store(false, std::memory_order_relaxed);
     // Initial trigger mode from parameter
-    if (auto* tv = parameters.getRawParameterValue(paramTriggerModeEnabled))
+    if (auto* triggerVal = parameters.getRawParameterValue(paramTriggerModeEnabled))
     {
-        const bool tm = tv->load() > 0.5f;
-        triggerModeEnabled.store(tm, std::memory_order_relaxed);
-        lastTriggerModeEnabled = tm;
+        const bool triggerMode = triggerVal->load() > 0.5f;
+        triggerModeEnabled.store(triggerMode, std::memory_order_relaxed);
+        lastTriggerModeEnabled = triggerMode;
     }
     else
     {
         triggerModeEnabled.store(true, std::memory_order_relaxed);
         lastTriggerModeEnabled = true;
     }
+
+    // Pulse width param pointer (raw, not unique_ptr)
+    pulseWidthParam = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter("pulseWidthMs"));
+    if (pulseWidthParam)
+        pulseWidthMs.store(pulseWidthParam->get(), std::memory_order_relaxed);
+
     suppressUntilRestart = false;
     firstBlock = true;
     if (auto* pi = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramResyncOffsetStep)))
@@ -246,6 +317,22 @@ void ClockSyncAudioProcessor::resetAccumulators()
     lastBpmForAcc = -1.0;
 }
 
+bool ClockSyncAudioProcessor::isDuplicateStart(long long barForStart, int stepForStart, int sampleOffset, int toleranceSamples) const
+{
+    // Exact bar+step duplicate
+    if (barForStart == lastStartBar.load(std::memory_order_relaxed) && stepForStart == lastStartStep.load(std::memory_order_relaxed))
+        return true;
+    // Per-block near-simultaneous emission tolerance (collapse duplicates within a few samples)
+    if (sampleOffset >= 0)
+    {
+        if (lastPatternStartSampleInBlock >= 0 && std::abs(sampleOffset - lastPatternStartSampleInBlock) <= toleranceSamples)
+            return true;
+        if (lastBarRestartStartSampleInBlock >= 0 && std::abs(sampleOffset - lastBarRestartStartSampleInBlock) <= toleranceSamples)
+            return true;
+    }
+    return false;
+}
+
 void ClockSyncAudioProcessor::updateExternalOut()
 {
     // Tear down existing
@@ -277,6 +364,18 @@ void ClockSyncAudioProcessor::setExternalDeviceId(const juce::String& id)
 }
 
 //==============================================================================
+void ClockSyncAudioProcessor::setPulseWidthMs(int ms)
+{
+    if (pulseWidthParam)
+        pulseWidthParam->setValueNotifyingHost((float)juce::jlimit(1, 20, ms) / 20.0f);
+}
+
+int ClockSyncAudioProcessor::getPulseWidthMs() const
+{
+    if (pulseWidthParam)
+        return pulseWidthParam->get();
+    return pulseWidthMs.load(std::memory_order_relaxed);
+}
 void ClockSyncAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
@@ -396,6 +495,9 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
     // Update derived params (fast, read atomics)
     updateDerivedParams();
 
+    // Update runActive to reflect the current Run parameter value
+    runActive = parameters.getRawParameterValue(paramRun)->load() > 0.5f;
+
 
     // Centralized external MIDI buffer: collect all external messages here and send once at function end.
     juce::MidiBuffer extClock;
@@ -414,7 +516,7 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                 : 4.0;
             const double barStartPPQ = pos.ppqPositionOfLastBarStart;
             preparePatternForBar(barStartPPQ, barLenQ);
-            tryFirePattern(pos.ppqPosition, barLenQ, barStartPPQ, numSamples, midi, extClock, true);
+            tryFirePattern(pos.ppqPosition, barLenQ, barStartPPQ, numSamples, midi, extClock, true, /*preview=*/true);
 
         }
     }
@@ -424,6 +526,8 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
     const int clickRateCached = clickRateParam ? juce::jlimit(0, 4, clickRateParam->get()) : 0;
     const bool clickEnabled = (clickRateCached > 0);
     const bool clickPulseCached = parameters.getRawParameterValue(paramClickPulse)->load() > 0.5f;
+
+    // Only gate click (audio pulse) output by runActive (Run button ON)
 
 
     auto* choiceParam = dynamic_cast<juce::AudioParameterChoice*>(parameters.getParameter(paramClockRateIndex));
@@ -736,11 +840,10 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                 {
                     const auto startMsg = juce::MidiMessage::midiStart();
                     long long barForStart = computeCurrentBar(ppqStart, barLenQ);
-                    int stepForStart = 1 + (int) std::floor(((barLenQ>0.0? (nextBoundaryQ - lastBar)/barLenQ:0.0))*16.0); // approximate grid step
-                    if (stepForStart < 1) stepForStart = 1; if (stepForStart>16) stepForStart=16;
+                    int stepForStart = computeLogicalStepFromPPQ(nextBoundaryQ, barLenQ, currentShuffleStep);
                     // Duplicate suppression: skip if same bar+step already emitted
-                    // Always emit Start (250) for manual trigger, regardless of gating or pattern state
-                    if (!(barForStart == lastStartBar.load(std::memory_order_relaxed) && stepForStart == lastStartStep.load(std::memory_order_relaxed)))
+                    // or if a near-simultaneous Start was already emitted this block.
+                    if (! isDuplicateStart(barForStart, stepForStart, nextGridOffset))
                     {
                         addBoth(midi, extClock, startMsg, nextGridOffset);
                         lastStartBar.store(barForStart, std::memory_order_relaxed);
@@ -752,6 +855,11 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                     // triggerArmed diagnostic message removed per user request
                     // Consume arm
                     triggerArmedForNextSixteenth.store(false, std::memory_order_relaxed);
+                    // Manual trigger should clear a stopped state: mark engine running
+                    runActive = true;
+                    pendingStart = false;
+                    uiIsRunning.store(true, std::memory_order_relaxed);
+                    uiPendingStart.store(false, std::memory_order_relaxed);
                     // Schedule resync if idx8 (gate) is enabled, per workflow.md rule 1
                     if (triggerModeEnabled.load(std::memory_order_relaxed))
                     {
@@ -772,14 +880,14 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
         }
 
         // Pattern scheduling: first pass (full diagnostics). At bar boundaries decide if pattern fires; then emit Start events.
-        tryFirePattern(ppqStart, barLenQ, lastBar, numSamples, midi, extClock, false);
+        tryFirePattern(ppqStart, barLenQ, lastBar, numSamples, midi, extClock, false, /*preview=*/false);
 
         auto barWindow = handleBarAlignedChanges(pos, numSamples, midi, extClock);
         gapStart = barWindow.gapStart;
         gapEnd = barWindow.gapEnd;
         startSampleAtBoundary = barWindow.startSample;
         // Second idempotent pass: suppress duplicate diagnostics unless new pattern targets appeared.
-        tryFirePattern(ppqStart, barLenQ, lastBar, numSamples, midi, extClock, true);
+        tryFirePattern(ppqStart, barLenQ, lastBar, numSamples, midi, extClock, true, /*preview=*/false);
 
         // If host just started this block (sample 0), mark the boundary at sample 0
         if (startSampleAtBoundary < 0 && hostStartSampleThisBlock >= 0)
@@ -899,7 +1007,7 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                     }
                 }
 
-                    if (clickEnabled)
+                    if (clickEnabled && runActive)
                     {
                         int stepSpan = 1;
                         switch (clickRateCached)
@@ -912,10 +1020,10 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                         }
                         if ((t % stepSpan) == 0)
                         {
-                            const bool quarterBoundary = (t % resolutionBefore) == 0;
-                            const float baseLevel = quarterBoundary ? 1.0f : 0.7f;
-                            const float outLevel = baseLevel * clickGainLinear;
-                            const int pulseSamples = (int) juce::jmax(1, (int) std::round(0.001 * currentSampleRate));
+                            const float outLevel = 1.0f; // Always fixed 0 dB, all beats even
+                            // Use user-selected pulse width (ms)
+                            const double pulseMs = (double) pulseWidthMs;
+                            const int pulseSamples = (int) juce::jmax(1, (int) std::round((pulseMs / 1000.0) * currentSampleRate));
                             if (! clickPulseCached)
                             {
                                 // 1-sample spike
@@ -927,16 +1035,14 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                             }
                             else
                             {
-                                // 1ms pulse: distribute a decaying linear pulse across pulseSamples
+                                // Pulse: hold high for pulseWidthMs, no decay
                                 for (int s = 0; s < pulseSamples; ++s)
                                 {
                                     const int idx = sampleOffset + s;
                                     if (idx >= 0 && idx < numSamples)
                                     {
-                                        const float env = 1.0f - (float) s / (float) pulseSamples;
-                                        const float val = outLevel * env;
                                         for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-                                            buffer.addSample(ch, idx, val);
+                                            buffer.addSample(ch, idx, outLevel);
                                     }
                                 }
                             }
@@ -1037,7 +1143,7 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                     }
                 }
 
-                    if (clickEnabled)
+                    if (clickEnabled && runActive)
                     {
                         int stepSpan = 1;
                         switch (clickRateCached)
@@ -1050,10 +1156,10 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                         }
                         if ((t % stepSpan) == 0)
                         {
-                            const bool quarterBoundary = (t % resolutionAfter) == 0;
-                            const float baseLevel = quarterBoundary ? 1.0f : 0.7f;
-                            const float outLevel = baseLevel * clickGainLinear;
-                            const int pulseSamples = (int) juce::jmax(1, (int) std::round(0.001 * currentSampleRate));
+                            const float outLevel = 1.0f; // Always fixed 0 dB, all beats even
+                            // Use user-selected pulse width (ms)
+                            const double pulseMs = (double) pulseWidthMs;
+                            const int pulseSamples = (int) juce::jmax(1, (int) std::round((pulseMs / 1000.0) * currentSampleRate));
                             if (! clickPulseCached)
                             {
                                 if (mappedOffset >= 0 && mappedOffset < numSamples)
@@ -1069,10 +1175,8 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                                     const int idx = mappedOffset + s;
                                     if (idx >= 0 && idx < numSamples)
                                     {
-                                        const float env = 1.0f - (float) s / (float) pulseSamples;
-                                        const float val = outLevel * env;
                                         for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-                                            buffer.addSample(ch, idx, val);
+                                            buffer.addSample(ch, idx, outLevel);
                                     }
                                 }
                             }
@@ -1124,6 +1228,13 @@ void ClockSyncAudioProcessor::updatePatternParams()
             resyncTargetBar.store(-1, std::memory_order_relaxed);
             resyncTargetStep.store(-1, std::memory_order_relaxed);
             patternModeJustChanged.store(true, std::memory_order_relaxed);
+                // Changing interval should clear any pending pattern scheduling so
+                // the new interval takes effect immediately (avoid firing on the
+                // previously computed bar for the old interval).
+                pendingPatternPPQ.clear();
+                pendingPatternRestartTargetBar.store(-1, std::memory_order_relaxed);
+                lastPatternFiredBar = -1;
+                nextRandomPatternTargetBar = -1;
 
         }
     }
@@ -1159,11 +1270,10 @@ void ClockSyncAudioProcessor::preparePatternForBar(double barStartPPQ, double ba
     if (mask != 0) {
         // Visual interaction originally applied a +4 step rotation (see PatternRing::hitTest).
         // The stored bitmask indices therefore represented (logicalIndex + 4) & 15.
-        // We now use a +3 visual rotation; to schedule pattern events at the intended
-        // logical 16th positions we inverse that rotation here.
-        // The UI stores bits using a +3 rotation; schedule using the inverse mapping
-        // so playback aligns one 16th earlier than the original visual mapping.
-        constexpr int visualRotation = 3; // schedule one-step earlier than stored visual mapping
+        // Use the UI rotation so scheduled pattern events align with visual steps.
+        // This preserves the +1-step alignment observed with hosts where UI uses
+        // 1..16 visual numbering while storage uses rotated bit indices.
+        constexpr int visualRotation = 4; // match UI rotation
         const bool applySwing = (currentShuffleStep > 1 && std::fabs(barLenQ - 4.0) < 1e-6);
         const double shiftQ = applySwing ? (double)(currentShuffleStep - 1) * (1.0 / 48.0) : 0.0; // second 16th of each pair delay
         juce::Array<int> activeLogicalSteps;
@@ -1184,7 +1294,11 @@ void ClockSyncAudioProcessor::preparePatternForBar(double barStartPPQ, double ba
             {
                 stepPosQ = (barLenQ / 16.0) * (double) triggerLogical;
             }
+            // Snap exact bar-start triggers to the precise barStartPPQ to avoid
+            // tiny FP rounding moving step 1 off the quantized boundary.
             double scheduledPPQ = barStartPPQ + stepPosQ;
+            if (std::fabs(stepPosQ) < 1e-9)
+                scheduledPPQ = barStartPPQ;
             pendingPatternPPQ.push_back(scheduledPPQ);
             activeLogicalSteps.add(triggerLogical   + 1); // store 1..16 for diagnostics
 
@@ -1198,7 +1312,7 @@ void ClockSyncAudioProcessor::preparePatternForBar(double barStartPPQ, double ba
 }
 
 // Attempt to schedule (or replace) resync target according to precedence rules.
-// currentBar: 0-based bar where scheduling request occurs.
+// currentBar: 1-based bar where scheduling request occurs (first bar == 1).
 // currentStep: 1..16 current step (approx) when request occurs.
 // offsetStep: 1..16 target offset step (user selection).
 // force: true for rate-change (sets regardless of gate idx8), false for Start-driven (only called when gate already TRUE).
@@ -1223,6 +1337,15 @@ void ClockSyncAudioProcessor::attemptScheduleResync(long long currentBar, int cu
     }
     if (replace)
     {
+        // If a pattern has already requested a deferred restart for this bar,
+        // do not schedule an independent resync here — let the pattern's
+        // deferred restart take precedence to avoid overlapping semantics
+        // that can clear or shift the pattern stop/restart scheduling.
+        const long long pendingTarget = pendingPatternRestartTargetBar.load(std::memory_order_relaxed);
+        if (pendingTarget >= 0 && pendingTarget == targetBar)
+        {
+            return;
+        }
         resyncTargetBar.store(targetBar, std::memory_order_relaxed);
         resyncTargetStep.store(offsetStep, std::memory_order_relaxed);
         resyncPending.store(true, std::memory_order_relaxed);
@@ -1231,7 +1354,7 @@ void ClockSyncAudioProcessor::attemptScheduleResync(long long currentBar, int cu
 
 }
 
-void ClockSyncAudioProcessor::tryFirePattern(double ppqStart, double barLenQ, double barStartPPQ, int numSamples, juce::MidiBuffer& midi, juce::MidiBuffer& extClock, bool suppressDiag)
+void ClockSyncAudioProcessor::tryFirePattern(double ppqStart, double barLenQ, double barStartPPQ, int numSamples, juce::MidiBuffer& midi, juce::MidiBuffer& extClock, bool suppressDiag, bool preview)
 {
     // Allow pattern-driven Starts to fire even when the internal `runActive` flag
     // is false. This makes pattern behaviour consistent with manual triggers: when
@@ -1248,12 +1371,22 @@ void ClockSyncAudioProcessor::tryFirePattern(double ppqStart, double barLenQ, do
     // started after the bar start).
     // Prefer host-provided bar count when available to sync across multiple plugin instances.
     // `uiExternalBarNumber` (1-based) is written in processBlock when the playhead provides barCount.
+    // Previous logic used extBarNum-1 to convert to 0-based; now we use 1-based internal bar numbering.
     const int extBarNum = uiExternalBarNumber.load(std::memory_order_relaxed);
-    // Previous logic used extBarNum directly which appears one block late in some hosts (user observed interval=4 firing at bar 5.1.1).
-    // Adjustment: only trust extBarNum when the block actually starts at the bar boundary; otherwise compute from ppqStart.
-    const double epsBoundary = 1e-6;
-    const bool blockAtBarStart = std::fabs(ppqStart - barStartPPQ) < epsBoundary;
-    const long long currentBar = (extBarNum > 0 && blockAtBarStart) ? (long long) (extBarNum - 1) : computeCurrentBar(ppqStart, barLenQ);
+    // Prefer the host-provided bar number when available. Some hosts report
+    // 0-based bar counts while our internal computation is 1-based. To avoid
+    // a persistent off-by-one across hosts, compare the computed 1-based bar
+    // and the host value; if they differ by exactly 1 assume the host is
+    // 0-based and use the computed 1-based result instead.
+    const long long computedBar = computeCurrentBar(ppqStart, barLenQ);
+    long long currentBar = computedBar;
+    if (extBarNum > 0)
+    {
+        if (computedBar - (long long) extBarNum == 1)
+            currentBar = computedBar; // host appears 0-based, prefer computed 1-based
+        else
+            currentBar = (long long) extBarNum;
+    }
     auto decideFireForBar = [&](long long candidateBar)->bool {
         if (rnd)
         {
@@ -1265,9 +1398,9 @@ void ClockSyncAudioProcessor::tryFirePattern(double ppqStart, double barLenQ, do
         {
             int interval = getPatternBarIntervalFromMode(mode);
             // Reverted semantics: fire ON every Nth DAW bar (interval), i.e. DAW bars N,2N,3N,...
-            // candidateBar is zero-based internally, so convert to 1-based by (candidateBar+1) before modulo.
-            // Example: interval=4 -> fires when (candidateBar+1)%4==0 => candidateBar=3,7,11,... (DAW bars 4,8,12,...)
-            const bool res = (interval > 0 && (((candidateBar + 1) % interval) == 0));
+            // candidateBar is 1-based internally, so check modulo directly.
+            // Example: interval=4 -> fires when (candidateBar%4)==0 => candidateBar=4,8,12,...
+            const bool res = (interval > 0 && ((candidateBar % interval) == 0));
 
             return res;
         }
@@ -1321,7 +1454,7 @@ void ClockSyncAudioProcessor::tryFirePattern(double ppqStart, double barLenQ, do
             }
             else
             {
-                if (((candidateBar + 1) % interval) == 0)
+                if ((candidateBar % interval) == 0)
                 {
                     // Suppress firing in the same block where mode changed (avoid immediate unintended Start)
                     if (patternModeJustChanged.load(std::memory_order_relaxed))
@@ -1409,11 +1542,8 @@ void ClockSyncAudioProcessor::tryFirePattern(double ppqStart, double barLenQ, do
         }
         // Compute logical step for duplicate suppression before emission
         long long barForStart = computeCurrentBar(targetPPQ, barLenQ);
-        // Compute step using explicit barStart = barForStart * barLenQ to avoid host PPQ offsets shifting the modulo.
-        double barStartForCalc = (double) barForStart * barLenQ;
-        double posInBarForStart = targetPPQ - barStartForCalc; if (posInBarForStart < 0.0) posInBarForStart += barLenQ; // safety wrap
-        int stepForStart = (int) std::floor((posInBarForStart / barLenQ) * 16.0) + 1; if (stepForStart<1) stepForStart=1; if (stepForStart>16) stepForStart=16;
-        bool duplicate = (barForStart == lastStartBar.load(std::memory_order_relaxed) && stepForStart == lastStartStep.load(std::memory_order_relaxed));
+        int stepForStart = computeLogicalStepFromPPQ(targetPPQ, barLenQ, currentShuffleStep);
+        bool duplicate = isDuplicateStart(barForStart, stepForStart, sampleOffset);
         bool allowPatternStart = shouldAllowGeneratedStart();
         if (!duplicate && allowPatternStart)
         {
@@ -1421,7 +1551,28 @@ void ClockSyncAudioProcessor::tryFirePattern(double ppqStart, double barLenQ, do
             extClock.addEvent(startMsg, sampleOffset);
             lastStartBar.store(barForStart, std::memory_order_relaxed);
             lastStartStep.store(stepForStart, std::memory_order_relaxed);
+            // For preview-only emissions (editor mask activation) do not modify
+            // processor run/resync state or diagnostic counts. Only record
+            // real pattern emissions.
+            if (! preview)
+            {
+                lastStartSource.store(1, std::memory_order_relaxed); // pattern
+                patternStartCount.fetch_add(1, std::memory_order_relaxed);
+            }
             lastBarEmitted = std::max(lastBarEmitted, barForStart);
+
+            // If a deferred pattern-requested restart targets this same bar,
+            // consume it now to avoid the bar-restart codepath re-emitting
+            // the same Start later in this or the next block. This prevents
+            // duplicate restart emissions when both scheduling paths coexist.
+            {
+                const long long pendingTarget = pendingPatternRestartTargetBar.load(std::memory_order_relaxed);
+                if (pendingTarget >= 0 && pendingTarget == barForStart)
+                {
+                    pendingPatternRestartTargetBar.store(-1, std::memory_order_relaxed);
+                    uiNextRestartPending.store(false, std::memory_order_relaxed);
+                }
+            }
 
         }
 
@@ -1435,28 +1586,23 @@ void ClockSyncAudioProcessor::tryFirePattern(double ppqStart, double barLenQ, do
         // update UI/run state accordingly.
         if (barLenQ > 0.0)
         {
-            // Derive position within its OWN bar, independent of the block's barStartPPQ argument.
-            // Using (targetPPQ - barStartPPQ) fails when we prepared targets for a future bar inside
-            // the same audio block, yielding a shifted (off-by-one) logical step. Compute modulo.
-            long long uiBar = computeCurrentBar(targetPPQ, barLenQ);
-            double uiBarStart = (double) uiBar * barLenQ;
-            double posInBar = targetPPQ - uiBarStart; if (posInBar < 0.0) posInBar += barLenQ;
-            const double frac = posInBar / barLenQ; // 0.0.. <1.0
-            int stepNumber = (int) std::floor(frac * 16.0) + 1;
-            if (stepNumber < 1) stepNumber = 1;
-            if (stepNumber > 16) stepNumber = 16;
+            // Use centralized helper so shuffle/quantization match emission and duplicate suppression.
+            int stepNumber = computeLogicalStepFromPPQ(targetPPQ, barLenQ, currentShuffleStep);
             uiStep16.store(stepNumber, std::memory_order_relaxed);
-
         }
         // Make the processor consider itself running so any restart/modifiers take effect.
-        runActive = true;
-        pendingStart = false;
-        uiIsRunning.store(true, std::memory_order_relaxed);
-        uiPendingStart.store(false, std::memory_order_relaxed);
+        // For preview emissions, do not change run state.
+        if (! preview)
+        {
+            runActive = true;
+            pendingStart = false;
+            uiIsRunning.store(true, std::memory_order_relaxed);
+            uiPendingStart.store(false, std::memory_order_relaxed);
+        }
         // tryFirePattern diagnostic logging removed per user request
         // Respect trigger mode: schedule a bar+offset restart (same semantics as manual trigger idx1)
         const long long patternBar = computeCurrentBar(targetPPQ, barLenQ);
-        if (triggerModeEnabled.load(std::memory_order_relaxed) && lastPatternRestartScheduledBar != patternBar)
+        if (!preview && triggerModeEnabled.load(std::memory_order_relaxed) && lastPatternRestartScheduledBar != patternBar)
         {
             // NOTE: previously we scheduled a deferred bar-aligned restart here
             // (pendingPatternRestartTargetBar) so that a pattern Start would also
@@ -1482,8 +1628,19 @@ void ClockSyncAudioProcessor::tryFirePattern(double ppqStart, double barLenQ, do
             int offsetStep = 1;
             if (auto* pi = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramResyncOffsetStep)))
                 offsetStep = juce::jlimit(1,16, pi->get());
-            int currentStepApprox = juce::jlimit(1,16, uiStep16.load(std::memory_order_relaxed));
-            attemptScheduleResync(lastBarEmitted, currentStepApprox, offsetStep, false);
+            // Prefer the exact last emitted step when available to avoid
+            // off-by-one scheduling caused by UI/storage index conversions.
+            int lastEmitted = lastStartStep.load(std::memory_order_relaxed);
+            int currentStepApprox = (lastEmitted >= 1 && lastEmitted <= 16)
+                ? lastEmitted
+                : juce::jlimit(1,16, uiStep16.load(std::memory_order_relaxed));
+            // Do not schedule a completion resync while a shuffle change is pending.
+            // Shuffle shifts second-16th PPQ positions and is applied at the next
+            // 1/8 boundary; scheduling a resync while pendingShuffleStep is set
+            // can cause duplicate restart emissions. Defer resync until shuffle
+            // has been applied in `handleBarAlignedChanges`.
+            if (pendingShuffleStep <= 0)
+                attemptScheduleResync(lastBarEmitted, currentStepApprox, offsetStep, false);
         }
     }
 
@@ -1535,15 +1692,9 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
         offsetStep = juce::jlimit(1, 16, (int) juce::roundToInt(p->getValue() * 15.0f + 1.0f));
     const int stepIndex0 = offsetStep - 1; // 0..15
     // Swing-aware mapping: if shuffle active (>1) and 4/4, recompute target boundary using shifted second 16th lengths.
-    double stepQWithinBar = (barLenQ / 16.0) * (double) stepIndex0; // default unswung
-    if (currentShuffleStep > 1 && std::fabs(barLenQ - 4.0) < 1e-6)
-    {
-        const double shiftQ = (double)(currentShuffleStep - 1) * (1.0 / 48.0);
-        int pairIndex = stepIndex0 / 2; // 0..7
-        bool secondHalf = (stepIndex0 % 2) == 1;
-        double pairStart = pairIndex * 0.5; // pair length always 0.5 quarter
-        stepQWithinBar = secondHalf ? (pairStart + 0.25 + shiftQ) : pairStart;
-    }
+    // Use master grid to compute target step position so all scheduling
+    // paths (pattern, resync) agree exactly on swung/unswung positions.
+    double stepQWithinBar = computeStepPPQ(lastBar, barLenQ, offsetStep, currentShuffleStep) - lastBar;
 
     // Local flag to record whether a deferred pattern-requested restart matches
     // the scheduled boundary calculated below.
@@ -1580,9 +1731,8 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
         const int targetStep = resyncTargetStep.load(std::memory_order_relaxed);
         if (targetBar >= 0 && targetStep >= 1)
         {
-            const double targetBarStartPPQ = (double) targetBar * barLenQ;
-            const double stepQ = (barLenQ / 16.0) * (double)(targetStep - 1);
-            const double targetPPQ = targetBarStartPPQ + stepQ;
+            const double targetBarStartPPQ = (double) (targetBar - 1) * barLenQ;
+            const double targetPPQ = computeStepPPQ(targetBarStartPPQ, barLenQ, targetStep, currentShuffleStep);
             if (targetPPQ >= ppqStart - 1e-9)
             {
                 double deltaQ = targetPPQ - ppqStart;
@@ -1605,6 +1755,7 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
         }
     }
 
+    // If Run is OFF, suppress resync/auto starts. Manual triggers re-enable runActive
     if (sampleOffset <= numSamples - 1 && (haveRateChange || haveStart || haveBarRestart || deferredMatches || resyncMatches))
     {
         jassert(sampleOffset >= 0); // debug-only: ensure non-negative scheduling
@@ -1664,7 +1815,9 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
             }
         }
 
-        if (shouldEmitStart && (shouldAllowGeneratedStart() || resyncMatches))
+        // Only allow resyncMatches to bypass generated-start gating when the engine is running.
+        const bool allowResyncBypass = resyncMatches && runActive;
+        if (shouldEmitStart && (shouldAllowGeneratedStart() || allowResyncBypass))
         {
             const auto startMsg = juce::MidiMessage::midiStart();
             // If a pattern already emitted a Start at this exact sample earlier in
@@ -1676,19 +1829,33 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
                 pendingBarRestart.store(false, std::memory_order_relaxed);
                 uiNextRestartPending.store(false, std::memory_order_relaxed);
                 pendingPatternRestartTargetBar.store(-1, std::memory_order_relaxed);
+                // pattern already emitted the Start; record that the last source was pattern
+                lastStartSource.store(1, std::memory_order_relaxed);
             }
             else
             {
                 // Additional guard: if interval mode active and pattern empty, Start already suppressed above; no extra conditions.
                 long long barForStart = computeCurrentBar(ppqStart + (double) sampleOffset / samplesPerQuarter, barLenQ);
                 int stepForStart = resyncMatches ? resyncStepForStart : offsetStep;
-                bool duplicate = (barForStart == lastStartBar.load(std::memory_order_relaxed) && stepForStart == lastStartStep.load(std::memory_order_relaxed));
+                bool duplicate = isDuplicateStart(barForStart, stepForStart, sampleOffset);
                 if (!duplicate && sendMidi)
                 {
                     midi.addEvent(startMsg, sampleOffset);
                     extBuffer.addEvent(startMsg, sampleOffset);
                     lastStartBar.store(barForStart, std::memory_order_relaxed);
                     lastStartStep.store(stepForStart, std::memory_order_relaxed);
+
+                    // Record source: resyncMatches => resync, otherwise bar-aligned restart
+                    if (resyncMatches)
+                    {
+                        lastStartSource.store(3, std::memory_order_relaxed); // resync
+                        resyncStartCount.fetch_add(1, std::memory_order_relaxed);
+                    }
+                    else
+                    {
+                        lastStartSource.store(2, std::memory_order_relaxed); // barRestart
+                        barRestartStartCount.fetch_add(1, std::memory_order_relaxed);
+                    }
 
                 }
 
@@ -1807,8 +1974,10 @@ void ClockSyncAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
         if (live.hasProperty("instrumentNames"))
             state.setProperty("instrumentNames", live.getProperty("instrumentNames"), nullptr);
     }
-    if (auto xml = state.createXml())
+    if (auto xml = state.createXml()) {
+        // pulseWidthMs is now stored in APVTS, no need to save manually
         copyXmlToBinary(*xml, destData);
+    }
 }
 
 void ClockSyncAudioProcessor::setStateInformation(const void* data, int sizeInBytes)
@@ -1833,3 +2002,14 @@ juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new ClockSyncAudioProcessor();
 }
+
+int ClockSyncAudioProcessor::getPendingPatternCount() const
+{
+    return (int) pendingPatternPPQ.size();
+}
+
+int ClockSyncAudioProcessor::getPendingShuffleStep() const
+{
+    return pendingShuffleStep;
+}
+

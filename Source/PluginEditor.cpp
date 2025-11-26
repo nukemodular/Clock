@@ -12,11 +12,44 @@
 #include <array>
 #include <optional>
 
+
 namespace
 {
     // Accent background variant
     const juce::Colour kBaseLo  = UiThemeColours::base().darker(0.12f);
 }
+
+// File-scope ArrowDownComponent and arrowDown pointer
+struct ArrowDownComponent : public juce::Component
+{
+    void paint(juce::Graphics& g) override
+    {
+        auto b = getLocalBounds().toFloat();
+        juce::Path p;
+        float w = b.getWidth();
+        float h = b.getHeight();
+        // Triangle points: bottom center, top left, top right
+        p.startNewSubPath(w * 0.5f, h);
+        p.lineTo(w * 0.0f, 0.0f);
+        p.lineTo(w * 1.0f, 0.0f);
+        p.closeSubPath();
+        
+        g.setColour(UiThemeColours::base());
+        g.fillPath(p);
+
+        // Draw a smaller accent triangle inside the base triangle
+        juce::Path p2;
+        float inset = 6.0f;
+        p2.startNewSubPath(w * 0.5f, h - inset);
+        p2.lineTo(w * 0.0f + 6.0f, 2.0f );
+        p2.lineTo(w * 1.0f - 6.0f, 2.0f );
+        p2.closeSubPath();
+
+        g.setColour(UiThemeColours::cyan());
+        g.fillPath(p2);
+    }
+};
+static std::unique_ptr<ArrowDownComponent> arrowDown;
 
 ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProcessor& p)
     : juce::AudioProcessorEditor(&p), processor(p)
@@ -145,6 +178,39 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     addAndMakeVisible(deviceBox);
     addAndMakeVisible(nameBox);
     addAndMakeVisible(nameMidiSwitch);
+    // Ensure pulseWidthValueLabel is always constructed before use
+    if (!pulseWidthValueLabel)
+    {
+        pulseWidthValueLabel = std::make_unique<juce::Label>();
+        pulseWidthValueLabel->setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)));
+        pulseWidthValueLabel->setColour(juce::Label::textColourId, UiThemeColours::cyan());
+        pulseWidthValueLabel->setJustificationType(juce::Justification::centredLeft);
+    }
+    addAndMakeVisible(*pulseWidthValueLabel);
+
+    // Ensure pulseWidthSlider is always constructed before use
+    if (!pulseWidthSlider)
+    {
+        pulseWidthSlider = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::NoTextBox);
+        pulseWidthSlider->setRange(1, 20, 1);
+        pulseWidthSlider->setTextValueSuffix(" ms");
+        pulseWidthSlider->setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+        pulseWidthSlider->setColour(juce::Slider::textBoxTextColourId, UiThemeColours::cyan());
+        pulseWidthSlider->setColour(juce::Slider::thumbColourId, UiThemeColours::cyan());
+        pulseWidthSlider->setColour(juce::Slider::trackColourId, UiThemeColours::accent());
+        pulseWidthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            processor.getAPVTS(), "pulseWidthMs", *pulseWidthSlider);
+        addAndMakeVisible(*pulseWidthSlider);
+        pulseWidthSlider->setVisible(false);
+    }
+
+    // Ensure arrowDown is always constructed before use
+    if (!arrowDown)
+    {
+        arrowDown = std::make_unique<ArrowDownComponent>();
+        addAndMakeVisible(*arrowDown);
+        arrowDown->setVisible(false);
+    }
     refreshButton.toFront(true);
     deviceBox.toFront(true);
     nameBox.toFront(true);
@@ -152,14 +218,15 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     statusBar->toFront(true);
 
     // Initialise pattern ring visual state from persisted parameter
-    if (auto* psi = dynamic_cast<juce::AudioParameterInt*>(apvts.getParameter(ClockSyncAudioProcessor::paramPatternSteps)))
-    {
-        int v = (int) juce::jlimit(0, 65535, psi->get());
-        pattern.setBitmask((uint16_t) v);
-        patternParamCached = v;
-        if (playgroundComp)
-            playgroundComp->setPatternBitmask((uint16_t) v);
-    }
+        if (auto* psi = dynamic_cast<juce::AudioParameterInt*>(apvts.getParameter(ClockSyncAudioProcessor::paramPatternSteps)))
+        {
+            int v = psi->get();
+            patternParamCached = v;
+            // Always update UI after parameter load
+            if (playgroundComp) playgroundComp->setPatternBitmask((uint16_t) v);
+            else pattern.setBitmask((uint16_t) v);
+        }
+        // (Parameter listener code removed: handled elsewhere)
 
     // --- Wire PlaygroundComponent callbacks to APVTS ---
     if (playgroundComp)
@@ -181,6 +248,9 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
                 pParam->setValueNotifyingHost(on ? 1.0f : 0.0f);
                 pParam->endChangeGesture();
             }
+            // Schedule a resync immediately when Run is toggled ON
+            if (on && playgroundComp && playgroundComp->onResyncStepRequested)
+                playgroundComp->onResyncStepRequested(1); // step 1 = bar start
         };
         playgroundComp->onTriggerOnceRequested = [this](){
             ledPulseTarget = 1.0f; ledAnimator.start(); processor.requestTriggerOnce();
@@ -190,6 +260,15 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
                 ? (selectedResyncStepCached - manualTriggerRelativeStepAtTrigger + 16) % 16 : 0;
             if (playgroundComp) playgroundComp->flashSegmentLogical(manualTriggerRelativeStepAtTrigger);
             repaint(ringArea);
+        };
+        // Automatic pattern playback should NOT call into `processor.requestTriggerOnce()`
+        // which would arm processor state. Map auto playback to a no-op/visual-only
+        // callback so the editor handles preview without mutating processor flags.
+        playgroundComp->onAutoTriggerRequested = [this]() {
+            // Visual preview only: flash the logical segment but do not arm processor.
+            int step = juce::jlimit(1,16, (int) (playgroundComp ? playgroundComp->getPatternBitmask() : 1));
+            // flashSegmentLogical expects 1..16 logical step; caller already triggers visual elsewhere
+            // Keep this intentionally minimal to avoid side-effects.
         };
         playgroundComp->onClockRateIndexRequested = [this](int val){
             int idx = 1; if (val == 32) idx = 0; else if (val == 16) idx = 1; else if (val == 8) idx = 2; else if (val == 4) idx = 3;
@@ -243,17 +322,29 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
             if (playgroundComp) playgroundComp->setPatternEditButtonState(on);
             if (on)
             {
-                if (auto* psi = dynamic_cast<juce::AudioParameterInt*>(processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramPatternSteps)))
-                    pattern.setBitmask((uint16_t) juce::jlimit(0,65535, psi->get()));
+                if (auto* psi = dynamic_cast<juce::AudioParameterInt*>(processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramPatternSteps))) {
+                    uint16_t m = (uint16_t) juce::jlimit(0, 65535, psi->get());
+                    if (playgroundComp) playgroundComp->setPatternBitmask(m);
+                    else pattern.setBitmask(m);
+                }
             }
             // Persist editor-only pattern edit flag
             processor.getAPVTS().state.setProperty("ui.patternEditMode", on, nullptr);
             repaint(ringArea);
         };
+        playgroundComp->onPatternChanged = [this](uint16_t m){
+            patternParamCached = m;
+            pushPatternStateToProcessor();
+        };
         // Initialise playground visual state
         playgroundComp->setRunState(runParamCached);
         if (auto* pi = dynamic_cast<juce::AudioParameterInt*>(apvts.getParameter(ClockSyncAudioProcessor::paramResyncOffsetStep)))
+        {
             playgroundComp->setResyncStepSelected(pi->get());
+            // Schedule a resync at the next bar when offset step changes
+            if (playgroundComp->onResyncStepRequested)
+                playgroundComp->onResyncStepRequested(1); // step 1 = bar start
+        }
         int displayed = 16; switch (rateIndexCached){ case 0: displayed = 32; break; case 1: displayed = 16; break; case 2: displayed = 8; break; case 3: displayed = 4; break; default: break; }
         playgroundComp->setClockRateIndexValue(displayed);
         if (auto* cp = apvts.getRawParameterValue(ClockSyncAudioProcessor::paramClickPulse))
@@ -292,7 +383,23 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
             if (! v.isVoid() && v.isDouble()) playgroundComp->setMainCircle6Value((int) v);
         }
     }
-
+    // --- Pulse Width Slider (1–20 ms, no label, visible in setup submenu) ---
+    // Pulse Width Slider (1–20 ms, no label, visible in setup submenu)
+    if (!pulseWidthSlider)
+    {
+        pulseWidthSlider = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::NoTextBox);
+        pulseWidthSlider->setRange(1, 20, 1);
+        pulseWidthSlider->setTextValueSuffix(" ms");
+        //pulseWidthSlider->setTooltip("Pulse Width (ms): 1–20 ms");
+        pulseWidthSlider->setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+        pulseWidthSlider->setColour(juce::Slider::textBoxTextColourId, UiThemeColours::cyan());
+        pulseWidthSlider->setColour(juce::Slider::thumbColourId, UiThemeColours::cyan());
+        pulseWidthSlider->setColour(juce::Slider::trackColourId, UiThemeColours::accent());
+        pulseWidthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            processor.getAPVTS(), "pulseWidthMs", *pulseWidthSlider);
+        addAndMakeVisible(*pulseWidthSlider);
+        pulseWidthSlider->setVisible(false);
+    }
     // Device list
     refreshButton.onClick = [this]{ refreshDeviceList(); };
     deviceBox.setLookAndFeel(themeLNF.get());
@@ -313,6 +420,8 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     idleModeButton.setVisible(false);
     legacyModernButton.setVisible(false);
     sppButton.setVisible(false);
+    pulseWidthSlider->setVisible(false);
+    pulseWidthValueLabel->setVisible(false);
     // NAME/MIDI toggle initial appearance
     {
         const bool showName = nameMidiSwitch.getToggleState();
@@ -324,6 +433,19 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     if (nameMidiSwitch.getToggleState()) { populateNameBox(); }
     // Persist NAME/MIDI toggle into APVTS state so it survives project save/load
     nameMidiSwitch.onClick = [this]{
+        // If submenu is open, close it by toggling setupButton and setting animation flags
+        if (setupButton.getToggleState())
+        {   
+             
+            
+            setupSubmenuTargetOn = false;
+            setupSubmenuAnimatingHide = true;
+            setupButton.setToggleState(false, juce::sendNotification);
+            //  updateSetupSubmenuLayout(); repaint(); return;
+            if (setupAnimator)
+                setupAnimator->start();
+               
+        }
         const bool showName = nameMidiSwitch.getToggleState();
         nameMidiSwitch.setButtonText(showName ? "MIDI" : "NAME");
         auto txtCol = (showName ? UiThemeColours::accent() : UiThemeColours::cyan());
@@ -334,7 +456,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         setupButton.setVisible(showName);
         refreshButton.setVisible(!showName);
         if (showName) { loadInstrumentNamesFromState(); populateNameBox(); nameBox.toFront(true); }
-        else { deviceBox.toFront(true); if (setupButton.getToggleState()) setupButton.setToggleState(false, juce::dontSendNotification); setupSubmenuTargetOn = false; setupSubmenuProgress = 0.0f; setupSubmenuAnimatingHide = true; }
+        else { deviceBox.toFront(true); }
         if (playgroundComp) playgroundComp->setHeaderHeight(30);
         resized(); repaint(0,0,getWidth(), 34);
         processor.getAPVTS().state.setProperty("ui.showNameMode", showName, nullptr);
@@ -348,16 +470,24 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
             setupSubmenuProgress = setupSubmenuAnimatingHide ? (1.0f - p) : p;
             updateSetupSubmenuLayout();
             const bool active = nameMidiSwitch.getToggleState() && (setupSubmenuTargetOn || setupSubmenuProgress > 0.0f);
-            idleModeButton.setVisible(active); legacyModernButton.setVisible(active); sppButton.setVisible(active);
+            idleModeButton.setVisible(active);
+            legacyModernButton.setVisible(active);
+            sppButton.setVisible(active);
+            pulseWidthSlider->setVisible(active);
+            if (pulseWidthValueLabel) pulseWidthValueLabel->setVisible(active);
             idleModeButton.setInterceptsMouseClicks(active, active);
             legacyModernButton.setInterceptsMouseClicks(active, active);
             sppButton.setInterceptsMouseClicks(active, active);
+            pulseWidthSlider->setInterceptsMouseClicks(active, active);
             if (playgroundComp) { playgroundComp->setExternalHoverBlocked(active); if (!active) playgroundComp->clearForcedHoverIndex(); }
             repaint(0,0,getWidth(),80);
         }).build());
     vblankUpdater = std::make_unique<juce::VBlankAnimatorUpdater>(this);
     vblankUpdater->addAnimator(*setupAnimator);
     vblankUpdater->addAnimator(ledAnimator);
+
+
+
 
     setupButton.onClick = [this]{
         const bool showName = nameMidiSwitch.getToggleState();
@@ -373,7 +503,6 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         b.setColour(juce::TextButton::textColourOnId, UiThemeColours::cyan());
     };
     configureSetupToggle(idleModeButton); configureSetupToggle(legacyModernButton); configureSetupToggle(sppButton);
-    idleModeButton.setVisible(true); legacyModernButton.setVisible(true); sppButton.setVisible(true);
     // Default the setup to MODERN behaviour so hosts that start immediately will
     // not receive a pre-Stop message (instant play on DAW start). The button
     // visual state maps true->MODERN, false->LEGACY. Keep processor legacy flag
@@ -400,6 +529,9 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         {
             processor.setExternalDeviceId(midiOutputs[(size_t) (selId - 2)].identifier);
         }
+        // Schedule a resync when a MIDI port is selected
+        if (playgroundComp && playgroundComp->onResyncStepRequested)
+            playgroundComp->onResyncStepRequested(1); // step 1 = bar start
     };
 
     // Backdrop animators (decorative circles)
@@ -413,6 +545,9 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     }
 
     loadDancerFrames();
+
+    // Ensure submenu controls are laid out and visibility is correct after construction
+    updateSetupSubmenuLayout();
 }
 
 void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
@@ -493,22 +628,17 @@ void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
         g.setColour(UiThemeColours::base());
         g.fillRect(submenuRect);
         // Repaint buttons manually AFTER fill so they appear above submenu background (normal child paint occurred earlier & is covered).
-        const int btnW = 60, btnH = 14, gap = 6, marginX = 8;
-        const int yButtons = (int) std::round(submenuRect.getBottom() - btnH - 4.0f);
-        idleModeButton.setBounds(marginX + 6, yButtons, btnW, btnH);
-        legacyModernButton.setBounds(marginX + 6 + (btnW + gap), yButtons, btnW, btnH);
-        sppButton.setBounds(marginX + 6 + 2*(btnW + gap), yButtons, btnW, btnH);
-        auto repaintComp = [&g](juce::Component& c){ if (! c.isVisible()) return; juce::Graphics::ScopedSaveState ss(g); g.setOrigin(c.getX(), c.getY()); c.paint(g); g.setOrigin(0,0); };
-        repaintComp(idleModeButton);
-        repaintComp(legacyModernButton);
-        repaintComp(sppButton);
-
-        // Pattern start fine-tune numeric control (in submenu) — slider drawn as component above.
-        // We draw a small label to indicate units next to the buttons.
-        juce::Font vf(juce::FontOptions("Arial", 11.0f, juce::Font::bold));
-        
+        // Only repaint the components; layout is handled in updateSetupSubmenuLayout
+        auto repaintComp = [&g](juce::Component* c){ if (!c || !c->isVisible()) return; juce::Graphics::ScopedSaveState ss(g); g.setOrigin(c->getX(), c->getY()); c->paint(g); g.setOrigin(0,0); };
+        repaintComp(pulseWidthSlider ? pulseWidthSlider.get() : nullptr);
+        repaintComp(pulseWidthValueLabel ? pulseWidthValueLabel.get() : nullptr);
+        repaintComp(arrowDown ? arrowDown.get() : nullptr);
+        repaintComp(&idleModeButton);
+        repaintComp(&legacyModernButton);
+        repaintComp(&sppButton);
 
         // Hover tooltips (avoid drawing above header region 0..30)
+        juce::Font vf(juce::FontOptions("Arial", 11.0f, juce::Font::bold));
         if (hoveredSetupIndex >= 0)
         {
             g.setColour(UiThemeColours::accent());
@@ -593,13 +723,51 @@ void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
         const int idx = ver.indexOf("build ");
         if (idx >= 0)
             buildStr = ver.substring(idx + 6); // number and trailing
-        g.setColour(UiThemeColours::cyan().withAlpha(0.95f));
+        g.setColour(UiThemeColours::accent().darker(3.33f));
         // Use the newer FontOptions-based constructor to avoid deprecated API warnings
         g.setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::plain)));
         const int pad = 6;
-        juce::Rectangle<int> r(getWidth() - 80, getHeight() - 20, 74, 16);
-        g.drawFittedText(buildStr.trim(), r, juce::Justification::centredRight, 1);
+        juce::Rectangle<int> r(getWidth() - 80, getHeight() - 16, 74, 16);
+        g.drawFittedText("3.0." + buildStr.trim(), r, juce::Justification::centredRight, 1);
     }
+
+    // Debug stack (left side): show last clicked stored step, logical mapping, host bar and scheduled targets
+    // {
+    //     const int leftX = 6;
+    //     int y = 40;
+    //     const int lineH = 14;
+    //     g.setColour(UiThemeColours::cyan().withAlpha(0.95f));
+    //     g.setFont(juce::Font(juce::FontOptions("Arial", 11.0f, juce::Font::plain)));
+
+    //     int clicked = lastClickedStoredIndex;
+    //     const int visualRotation = 4;
+    //     juce::String clickedLine;
+    //     if (clicked >= 0)
+    //     {
+    //         int logical = ((clicked - visualRotation) & 15) + 1; // 1..16
+    //         clickedLine = "Clicked stored: " + juce::String(clicked) + "  (logical " + juce::String(logical) + ")";
+    //     }
+    //     else clickedLine = "Clicked stored: N/A";
+    //     g.drawFittedText(clickedLine, juce::Rectangle<int>(leftX, y, 200, lineH), juce::Justification::left, 1);
+    //     y += lineH + 2;
+
+    //     int hostBar = processor.getUiExternalBarNumber();
+    //     juce::String hostLine = "Host bar: "; hostLine += (hostBar >= 0) ? juce::String(hostBar) : juce::String("N/A");
+    //     g.drawFittedText(hostLine, juce::Rectangle<int>(leftX, y, 200, lineH), juce::Justification::left, 1);
+    //     y += lineH + 2;
+
+    //     long long rtBar = processor.getResyncTargetBar();
+    //     int rtStep = processor.getResyncTargetStep();
+    //     juce::String resyncLine = "Resync target: ";
+    //     if (rtBar >= 0) resyncLine += "bar " + juce::String(rtBar) + " step " + juce::String(rtStep);
+    //     else resyncLine += "none";
+    //     g.drawFittedText(resyncLine, juce::Rectangle<int>(leftX, y, 240, lineH), juce::Justification::left, 1);
+    //     y += lineH + 2;
+
+    //     long long pendingBar = processor.getPendingPatternRestartTargetBar();
+    //     juce::String pendingLine = "Pending pat restart bar: "; pendingLine += (pendingBar >= 0) ? juce::String(pendingBar) : juce::String("N/A");
+    //     g.drawFittedText(pendingLine, juce::Rectangle<int>(leftX, y, 240, lineH), juce::Justification::left, 1);
+    // }
 
 }
 
@@ -716,20 +884,86 @@ void ClockSyncAudioProcessorEditor::resized()
 // Update setup submenu button positions based on current animation progress (without repaint).
 void ClockSyncAudioProcessorEditor::updateSetupSubmenuLayout()
 {
-    if (! nameMidiSwitch.getToggleState()) return; // submenu only relevant in NAME mode
-    if (! (setupSubmenuTargetOn || setupSubmenuProgress > 0.0f)) return; // not active
+    // Only show and position controls if submenu is open or animating
+    if (!nameMidiSwitch.getToggleState()) return;
+    if (!(setupSubmenuTargetOn || setupSubmenuProgress > 0.0f)) {
+        idleModeButton.setVisible(false);
+        legacyModernButton.setVisible(false);
+        sppButton.setVisible(false);
+        pulseWidthSlider->setVisible(false);
+        arrowDown->setVisible(false);
+        if (pulseWidthValueLabel) pulseWidthValueLabel->setVisible(false);
+        return;
+    }
+    // Layout: slider on the left, then buttons, all horizontally aligned
     const float hiddenTop = -10.0f;
-    const float shownTop  = 25.0f; // adjusted per request (less downward slide)
+    const float shownTop  = 25.0f;
     const float topY = hiddenTop + (shownTop - hiddenTop) * setupSubmenuProgress;
     const float submenuH = 30.0f;
+    const int sliderW = 46;
     const int btnW = 60;
     const int btnH = 14;
-    const int gap = 6;
-    const int marginX = 8;
-    const int yButtons = (int) std::round(topY + submenuH - btnH - 3.0f);
-    idleModeButton.setBounds(marginX, yButtons, btnW, btnH);
-    legacyModernButton.setBounds(marginX + (btnW + gap), yButtons, btnW, btnH);
-    sppButton.setBounds(marginX + 2*(btnW + gap), yButtons, btnW, btnH);
+    const int gap = 4;
+    const int totalW = sliderW + btnW * 3 + gap * 4;
+    const int x0 = (getWidth() - totalW) / 2;
+    // Move slider down a bit and make it taller so value box is not hidden
+    const int yButtons = (int) std::round(topY + 10); // 6px padding from top of submenu
+
+    int x = x0;
+    pulseWidthSlider->setBounds(x - 20, yButtons, sliderW, btnH);
+    if (themeLNF)
+        pulseWidthSlider->setLookAndFeel(themeLNF.get());
+
+    // Place the value label immediately to the right of the slider
+    x += sliderW ;
+    const int valueLabelW = 40;
+    // pulseWidthValueLabel is always constructed in the constructor
+    pulseWidthValueLabel->setBounds(x - 25, yButtons, valueLabelW, btnH);
+    pulseWidthValueLabel->setColour(juce::Label::backgroundColourId, juce::Colours::transparentBlack);
+    pulseWidthValueLabel->setColour(juce::Label::outlineColourId, juce::Colours::transparentBlack);
+    pulseWidthValueLabel->setVisible(true);
+
+
+
+    // arrowDown is always constructed in the constructor
+    // Position the arrow centered below the value label
+    const int arrowW = 22;
+    const int arrowH = 15;
+    int arrowX = pulseWidthValueLabel->getX() + (pulseWidthValueLabel->getWidth() - arrowW) / 2;
+    int arrowY = pulseWidthValueLabel->getBottom() + 2;
+    arrowDown->setBounds(arrowX, arrowY, arrowW, arrowH);
+    arrowDown->setVisible(true);
+
+    x += gap + 20 ;
+
+    idleModeButton.setBounds(x, yButtons, btnW, btnH);
+    x += btnW + gap;
+    legacyModernButton.setBounds(x, yButtons, btnW, btnH);
+    x += btnW + gap;
+    sppButton.setBounds(x, yButtons, btnW, btnH);
+    pulseWidthSlider->setVisible(true);
+    pulseWidthValueLabel->setVisible(true);
+        arrowDown->setVisible(true);
+    idleModeButton.setVisible(true);
+    legacyModernButton.setVisible(true);
+    sppButton.setVisible(true);
+
+    // Keep label in sync with slider value
+    if (pulseWidthSlider)
+    {
+        pulseWidthSlider->onValueChange = [this]()
+        {
+            if (pulseWidthValueLabel && pulseWidthSlider)
+                pulseWidthValueLabel->setText(juce::String((int)pulseWidthSlider->getValue()) + " ms", juce::dontSendNotification);
+        };
+        // Set initial value
+        pulseWidthSlider->onValueChange();
+    }
+
+    // --- Adjust layout: slider + label + legacyModernButton + idleModeButton + sppButton ---
+    // (updateSetupSubmenuLayout handles positioning)
+    // Add label to layout after slider, before legacyModernButton
+
 }
 
 // Removed duplicate legacy mouseMove (#if 0 block) – only one active handler remains.
@@ -1126,7 +1360,10 @@ void ClockSyncAudioProcessorEditor::timerCallback()
         if (v != patternParamCached)
         {
             patternParamCached = v;
-            pattern.setBitmask((uint16_t) v);
+            if (playgroundComp)
+                playgroundComp->setPatternBitmask((uint16_t) v);
+            else
+                pattern.setBitmask((uint16_t) v);
             needRing = true;
         }
     }
@@ -1533,7 +1770,13 @@ void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
                     playgroundComp->setPatternEditButtonState(next);
                     if (next)
                         if (auto* psi = dynamic_cast<juce::AudioParameterInt*>(processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramPatternSteps)))
-                            pattern.setBitmask((uint16_t) juce::jlimit(0, 65535, psi->get()));
+                        {
+                            uint16_t m = (uint16_t) juce::jlimit(0, 65535, psi->get());
+                            if (playgroundComp)
+                                playgroundComp->setPatternBitmask(m);
+                            else
+                                pattern.setBitmask(m);
+                        }
                     repaint(ringArea);
                     return;
                 }
@@ -1561,11 +1804,15 @@ void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
                     if (patternEditMode)
                     {
                         int logicalStep = juce::jlimit(1,16, relativeStepCached);
-                        constexpr int visualRotation = 3;
+                        constexpr int visualRotation = 4;
                         int storedIndex = ((logicalStep - 1) + visualRotation) & 15;
-                        if (! pattern.getStep(storedIndex))
+                        uint16_t mask = playgroundComp ? playgroundComp->getPatternBitmask() : pattern.getBitmask();
+                        if ((mask & (1u << storedIndex)) == 0)
                         {
-                            pattern.setStep(storedIndex, true);
+                            mask |= (uint16_t)(1u << storedIndex);
+                            if (playgroundComp) playgroundComp->setPatternBitmask(mask);
+                            else pattern.setStep(storedIndex, true);
+                            lastClickedStoredIndex = storedIndex;
                             pushPatternStateToProcessor();
                             repaint(ringArea);
                         }
@@ -1648,19 +1895,25 @@ void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
                 float patternInnerR = patternOuterR * 0.775f; // thinner ring
                 juce::Point<float> centre((float) ringArea.getCentreX(), (float) ringArea.getCentreY());
                 int pw = pattern.hitTest(e.position.toFloat(), centre, patternOuterR, patternInnerR);
-                if (pw >= 0)
-                {
-                    // Begin drag mode: determine uniform target state from initial wedge.
-                    bool current = pattern.getStep(pw);
-                    patternDragActive = true;
-                    patternDragSetState = ! current; // invert first wedge; subsequent wedges adopt same state
-                    std::fill(std::begin(patternDragTouched), std::end(patternDragTouched), false);
-                    patternDragTouched[pw] = true;
-                    pattern.setStep(pw, patternDragSetState);
-                    pushPatternStateToProcessor();
-                    repaint(ringArea);
-                    return;
-                }
+                    if (pw >= 0)
+                    {
+                        // Begin drag mode: determine uniform target state from initial wedge.
+                        uint16_t mask = playgroundComp ? playgroundComp->getPatternBitmask() : pattern.getBitmask();
+                        bool current = (mask & (1u << pw)) != 0;
+                        patternDragActive = true;
+                        patternDragSetState = ! current; // invert first wedge; subsequent wedges adopt same state
+                        std::fill(std::begin(patternDragTouched), std::end(patternDragTouched), false);
+                        patternDragTouched[pw] = true;
+                        if (patternDragSetState)
+                            mask |= (uint16_t)(1u << pw);
+                        else
+                            mask &= (uint16_t)~(1u << pw);
+                        if (playgroundComp) playgroundComp->setPatternBitmask(mask);
+                        else pattern.setStep(pw, patternDragSetState);
+                        pushPatternStateToProcessor();
+                        repaint(ringArea);
+                        return;
+                    }
                 // If click lies within the pattern ring bounds (even if gap) while editing, block underlying
                 const float dxP = e.position.x - centre.x;
                 const float dyP = e.position.y - centre.y;
@@ -1713,7 +1966,7 @@ void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
                     float patternOuterR = innerHoleR - 8.0f;
                     float patternInnerR = patternOuterR * 0.775f;
                     const float d = std::sqrt(dist2);
-                    if (d >= patternInnerR && d <= patternOuterR)
+                        if (d >= patternInnerR && d <= patternOuterR)
                     {
                         const float angle = std::atan2(dy, dx); // -pi..pi
                         const float startAt12 = -juce::MathConstants<float>::halfPi;
@@ -1722,13 +1975,14 @@ void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
                         const float slice = juce::MathConstants<float>::twoPi / 16.0f;
                         int rawIdx = (int) std::floor(rel / slice);
                         const int offset = 4;
-                        // rawIdx is the angular sector index (0..15) starting at 12 o'clock.
-                        // The pattern storage uses a visual rotation of +4 steps, so compute
-                        // the stored index accordingly when toggling pattern bits.
                         int storedIdx = (rawIdx + offset) & 15;
                         if (storedIdx >= 0 && storedIdx < 16)
                         {
-                            pattern.toggleStep(storedIdx);
+                            uint16_t mask = playgroundComp ? playgroundComp->getPatternBitmask() : pattern.getBitmask();
+                            mask ^= (uint16_t)(1u << storedIdx);
+                            if (playgroundComp) playgroundComp->setPatternBitmask(mask);
+                            else pattern.toggleStep(storedIdx);
+                            lastClickedStoredIndex = storedIdx;
                             pushPatternStateToProcessor();
                             repaint(ringArea);
                         }
@@ -1778,7 +2032,20 @@ void ClockSyncAudioProcessorEditor::mouseDrag(const juce::MouseEvent& e)
     if (pw >= 0 && ! patternDragTouched[pw])
     {
         patternDragTouched[pw] = true;
-        pattern.setStep(pw, patternDragSetState);
+        if (playgroundComp)
+        {
+            uint16_t mask = playgroundComp->getPatternBitmask();
+            if (patternDragSetState)
+                mask |= (uint16_t)(1u << pw);
+            else
+                mask &= (uint16_t)~(1u << pw);
+            playgroundComp->setPatternBitmask(mask);
+        }
+        else
+        {
+            pattern.setStep(pw, patternDragSetState);
+        }
+        lastClickedStoredIndex = pw;
         pushPatternStateToProcessor();
         repaint(ringArea);
     }
