@@ -49,7 +49,7 @@ juce_add_binary_data(DancerFrames
 juce_add_plugin(ClockV3
     COMPANY_NAME "toolBoy"
     PRODUCT_NAME "toolBoy Clock v3"
-    BUNDLE_ID com.toolBoy.clockVst3
+    BUNDLE_ID com.toolboy.clock_v3
     # Build as an effect (FX) instead of a synth/instrument
     IS_SYNTH FALSE
     # Typically effects don't need MIDI; enable if you require MIDI control
@@ -72,6 +72,8 @@ target_sources(ClockV3
         Source/PluginEditor.cpp
         Source/PluginProcessor.h
         Source/PluginEditor.h
+        Source/UiTheme.cpp
+        Source/UiTheme.h
 )
 
 target_compile_definitions(ClockV3
@@ -108,7 +110,7 @@ if (APPLE)
         MACOSX_BUNDLE TRUE
         XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "Developer ID Application: Dominik Bohn (3J6FW877T8)"  # Replace with your actual code signing identity
         XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "3J6FW877T8"  # Replace with your actual development team ID
-        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.toolBoy.clockVst3"
+        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.toolboy.clock_v3"
     )
 
     # Optional install rules: allows installing to system VST3/AU folders via

@@ -1,3 +1,9 @@
+#include <juce_gui_basics/juce_gui_basics.h>
+#include <juce_core/juce_core.h>
+#include <array>
+
+// Forward declaration for editor highlight logic
+class ClockSyncAudioProcessorEditor;
 // UiTheme.h
 #pragma once
 
@@ -20,6 +26,7 @@ struct UiThemeColours
 class ThemeLNF : public juce::LookAndFeel_V4
 {
 public:
+    virtual ~ThemeLNF() override;
     void drawButtonBackground(juce::Graphics& g, juce::Button& b, const juce::Colour&,
                               bool isHighlighted, bool isDown) override
     {
@@ -51,42 +58,7 @@ public:
         g.drawFittedText(b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, 1);
     }
 
-    void drawComboBox(juce::Graphics& g, int w, int h, bool, int, int, int, int, juce::ComboBox& box) override
-    {
-        juce::ignoreUnused(w, h);
-        auto r = box.getLocalBounds().toFloat();
-        g.setColour(UiThemeColours::accent());
-        g.fillRoundedRectangle(r, 5.0f);
-        g.setColour(UiThemeColours::base());
-        g.fillRoundedRectangle(r.reduced(2.0f), 4.0f);
-
-        juce::String txt = box.getText();
-        if (txt.isNotEmpty())
-        {
-            juce::Colour textCol = box.findColour(juce::ComboBox::textColourId);
-            if (! textCol.isOpaque()) textCol = UiThemeColours::cyan();
-            g.setColour(textCol);
-            g.setFont(getComboBoxFont(box));
-            auto textR = r.reduced(6.0f, 2.0f);
-            g.drawFittedText(txt, textR.toNearestInt(), juce::Justification::centred, 1);
-        }
-
-        juce::Colour arrowCol = box.findColour(juce::ComboBox::arrowColourId);
-        if (arrowCol.isOpaque())
-        {
-            const float aw = 10.0f;
-            const float padding = 6.0f;
-            juce::Path p;
-            const float cx = r.getRight() - padding - aw * 0.5f;
-            const float cy = r.getCentreY();
-            p.startNewSubPath(cx - aw * 0.5f, cy - aw * 0.25f);
-            p.lineTo(cx, cy + aw * 0.5f);
-            p.lineTo(cx + aw * 0.5f, cy - aw * 0.25f);
-            p.closeSubPath();
-            g.setColour(arrowCol);
-            g.fillPath(p);
-        }
-    }
+    void drawComboBox(juce::Graphics& g, int w, int h, bool, int, int, int, int, juce::ComboBox& box) override;
 
     juce::Font getPopupMenuFont() override { return juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)); }
     juce::Font getComboBoxFont(juce::ComboBox&) override { return getPopupMenuFont(); }

@@ -8,6 +8,7 @@
 #include "build_info.h"
 #include "BinaryData.h"
 #include "UiTheme.h"
+#include "UiComponents.h"
 #include "HitRouting.h"
 #include <array>
 #include <optional>
@@ -19,37 +20,7 @@ namespace
     const juce::Colour kBaseLo  = UiThemeColours::base().darker(0.12f);
 }
 
-// File-scope ArrowDownComponent and arrowDown pointer
-struct ArrowDownComponent : public juce::Component
-{
-    void paint(juce::Graphics& g) override
-    {
-        auto b = getLocalBounds().toFloat();
-        juce::Path p;
-        float w = b.getWidth();
-        float h = b.getHeight();
-        // Triangle points: bottom center, top left, top right
-        p.startNewSubPath(w * 0.5f, h);
-        p.lineTo(w * 0.0f, 0.0f);
-        p.lineTo(w * 1.0f, 0.0f);
-        p.closeSubPath();
-        
-        g.setColour(UiThemeColours::base());
-        g.fillPath(p);
 
-        // Draw a smaller accent triangle inside the base triangle
-        juce::Path p2;
-        float inset = 6.0f;
-        p2.startNewSubPath(w * 0.5f, h - inset);
-        p2.lineTo(w * 0.0f + 6.0f, 2.0f );
-        p2.lineTo(w * 1.0f - 6.0f, 2.0f );
-        p2.closeSubPath();
-
-        g.setColour(UiThemeColours::cyan());
-        g.fillPath(p2);
-    }
-};
-static std::unique_ptr<ArrowDownComponent> arrowDown;
 
 ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProcessor& p)
     : juce::AudioProcessorEditor(&p), processor(p)
@@ -161,8 +132,8 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     // from covering the status area before the first explicit resized()/repaint().
     {
         const int headerH = 30;
-        const int w = 90;
-        statusBar->setBounds(getWidth() - w - 8, 0, w, headerH);
+        const int w = 50;
+        statusBar->setBounds(getWidth() - w - 5, 0, w, headerH);
         // Initialize visible content without changing colour/alpha.
         juce::String st = idleModeButton.getToggleState() ? "IDLE" : "STOP";
         statusBar->setStatusText(st);
@@ -170,6 +141,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     }
 
     // Header widgets on top
+   
     addAndMakeVisible(refreshButton);
     addAndMakeVisible(setupButton);
     addAndMakeVisible(idleModeButton);
@@ -178,6 +150,26 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     addAndMakeVisible(deviceBox);
     addAndMakeVisible(nameBox);
     addAndMakeVisible(nameMidiSwitch);
+    // Header switch toggle (created once)
+    headerSwitchToggle = std::make_unique<HeaderSwitchToggle>();
+    addAndMakeVisible(*headerSwitchToggle);
+    headerSwitchToggle->setSize(12, 20);
+    headerSwitchToggle->setVisible(true);
+    // Force absolute placement to match design: x=286,y=5,w=10,h=20
+    headerSwitchToggle->setBounds(286, 5, 10, 20);
+    headerSwitchToggle->setInterceptsMouseClicks(true, true);
+    headerSwitchToggle->toFront(true);
+    headerSwitchToggle->setAlwaysOnTop(true);
+    // Toggle behaviour: adjust editor canvas height and arrow visibility
+    headerSwitchToggle->onToggle = [this](bool on){
+        if (arrowDown) arrowDown->setVisible(on && (setupSubmenuTargetOn || setupSubmenuProgress > 0.0f));
+        int baseH = on ? 240 : 30;
+        int extra = (!on && (setupSubmenuTargetOn || setupSubmenuProgress > 0.0f)) ? (int) std::round(setupSubmenuProgress * 25.0f) : 0;
+        setSize(getWidth(), baseH + extra);
+    };
+    nameMidiSwitch.setVisible(true);
+    refreshButton.setVisible(true);
+    setupButton.setVisible(true);
     // Ensure pulseWidthValueLabel is always constructed before use
     if (!pulseWidthValueLabel)
     {
@@ -406,17 +398,29 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     deviceBox.setJustificationType(juce::Justification::centred);
     deviceBox.setColour(juce::ComboBox::arrowColourId, juce::Colours::transparentBlack);
     deviceBox.setEditableText(false);
-    deviceBox.setColour(juce::ComboBox::textColourId, UiThemeColours::accent());
+    // Ensure default ComboBox label doesn't draw; use FullWidthComboBox overlay colour instead
+    deviceBox.setColour(juce::ComboBox::textColourId, juce::Colours::transparentBlack);
+    deviceBox.setColour(FullWidthComboBox::overlayTextColourId, UiThemeColours::accent());
     deviceBox.setTextWhenNothingSelected("select midi-out...");
+
+    // Move refreshButton to the right of deviceBox
+    // const int deviceBoxW = 140;
+    // const int refreshW = 28;
+    // const int deviceBoxH = 24;
+    // const int deviceBoxY = 36;
+    // const int deviceBoxX = 16;
+    // deviceBox.setBounds(deviceBoxX, deviceBoxY, deviceBoxW, deviceBoxH);
+    // refreshButton.setBounds(deviceBoxX + deviceBoxW + 4, deviceBoxY, refreshW, deviceBoxH);
 
     nameBox.setJustificationType(juce::Justification::centred);
     nameBox.setEditableText(false);
     nameBox.setColour(juce::ComboBox::arrowColourId, juce::Colours::transparentBlack);
-    nameBox.setColour(juce::ComboBox::textColourId, UiThemeColours::cyan());
+    // Ensure default ComboBox label doesn't draw; use FullWidthComboBox overlay colour instead
+    nameBox.setColour(juce::ComboBox::textColourId, juce::Colours::transparentBlack);
+    nameBox.setColour(FullWidthComboBox::overlayTextColourId, UiThemeColours::cyan());
     nameBox.setVisible(nameMidiSwitch.getToggleState());
     deviceBox.setVisible(!nameMidiSwitch.getToggleState());
-    setupButton.setVisible(nameMidiSwitch.getToggleState());
-    refreshButton.setVisible(!nameMidiSwitch.getToggleState());
+    // refreshButton and setupButton are always visible, do not change their visibility here
     idleModeButton.setVisible(false);
     legacyModernButton.setVisible(false);
     sppButton.setVisible(false);
@@ -434,18 +438,18 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     // Persist NAME/MIDI toggle into APVTS state so it survives project save/load
     nameMidiSwitch.onClick = [this]{
         // If submenu is open, close it by toggling setupButton and setting animation flags
-        if (setupButton.getToggleState())
-        {   
+        // if (setupButton.getToggleState())
+        // {   
              
             
-            setupSubmenuTargetOn = false;
-            setupSubmenuAnimatingHide = true;
-            setupButton.setToggleState(false, juce::sendNotification);
-            //  updateSetupSubmenuLayout(); repaint(); return;
-            if (setupAnimator)
-                setupAnimator->start();
+        //     setupSubmenuTargetOn = false;
+        //     setupSubmenuAnimatingHide = true;
+        //     setupButton.setToggleState(false, juce::sendNotification);
+        //     //  updateSetupSubmenuLayout(); repaint(); return;
+        //     if (setupAnimator)
+        //         setupAnimator->start();
                
-        }
+        // }
         const bool showName = nameMidiSwitch.getToggleState();
         nameMidiSwitch.setButtonText(showName ? "MIDI" : "NAME");
         auto txtCol = (showName ? UiThemeColours::accent() : UiThemeColours::cyan());
@@ -453,8 +457,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         nameMidiSwitch.setColour(juce::TextButton::textColourOnId,  txtCol);
         nameBox.setVisible(showName);
         deviceBox.setVisible(!showName);
-        setupButton.setVisible(showName);
-        refreshButton.setVisible(!showName);
+        // setupButton and refreshButton are always visible, do not change their visibility here
         if (showName) { loadInstrumentNamesFromState(); populateNameBox(); nameBox.toFront(true); }
         else { deviceBox.toFront(true); }
         if (playgroundComp) playgroundComp->setHeaderHeight(30);
@@ -469,7 +472,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
             const float p = juce::jlimit(0.0f, 1.0f, progress);
             setupSubmenuProgress = setupSubmenuAnimatingHide ? (1.0f - p) : p;
             updateSetupSubmenuLayout();
-            const bool active = nameMidiSwitch.getToggleState() && (setupSubmenuTargetOn || setupSubmenuProgress > 0.0f);
+            const bool active = (setupSubmenuTargetOn || setupSubmenuProgress > 0.0f);
             idleModeButton.setVisible(active);
             legacyModernButton.setVisible(active);
             sppButton.setVisible(active);
@@ -480,6 +483,13 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
             sppButton.setInterceptsMouseClicks(active, active);
             pulseWidthSlider->setInterceptsMouseClicks(active, active);
             if (playgroundComp) { playgroundComp->setExternalHoverBlocked(active); if (!active) playgroundComp->clearForcedHoverIndex(); }
+            // Arrow visibility depends on header toggle: hide arrowDown when headerSwitchToggle is OFF
+            if (arrowDown) arrowDown->setVisible(active && (!headerSwitchToggle || headerSwitchToggle->getToggleState()));
+            // Animate canvas height along with submenu slide: when header toggle is ON, base height is 240 and submenu adds 0; when OFF base is 30 and submenu adds up to 30px
+            int baseH = (headerSwitchToggle && headerSwitchToggle->getToggleState()) ? 240 : 30;
+            int extraH = (headerSwitchToggle && headerSwitchToggle->getToggleState()) ? 0 : 25;
+            int newH = baseH + (int) std::round(setupSubmenuProgress * (float) extraH);
+            if (newH != getHeight()) setSize(getWidth(), newH);
             repaint(0,0,getWidth(),80);
         }).build());
     vblankUpdater = std::make_unique<juce::VBlankAnimatorUpdater>(this);
@@ -490,13 +500,12 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
 
 
     setupButton.onClick = [this]{
-        const bool showName = nameMidiSwitch.getToggleState();
-        if (!showName) { setupSubmenuTargetOn = false; setupSubmenuAnimatingHide = true; setupSubmenuProgress = 0.0f; updateSetupSubmenuLayout(); repaint(); return; }
         setupSubmenuTargetOn = setupButton.getToggleState();
         setupSubmenuAnimatingHide = ! setupSubmenuTargetOn;
         setupAnimator->start();
         // Persist submenu open state
         processor.getAPVTS().state.setProperty("ui.setupSubmenuOn", setupSubmenuTargetOn, nullptr);
+        // canvas resizing is handled by the setupAnimator animation callback
     };
     auto configureSetupToggle = [](juce::TextButton& b){
         b.setColour(juce::TextButton::textColourOffId, UiThemeColours::cyan());
@@ -609,8 +618,7 @@ HitResult ClockSyncAudioProcessorEditor::routeHit(const juce::MouseEvent& e, boo
 void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
 {
     // Submenu should draw first (behind header) so header masks its top portion.
-    const bool inNameMode = nameMidiSwitch.getToggleState();
-    const bool submenuActive = (inNameMode && (setupSubmenuTargetOn || setupSubmenuProgress > 0.0f));
+    const bool submenuActive = (setupSubmenuTargetOn || setupSubmenuProgress > 0.0f);
     if (submenuActive)
     {
         const float hiddenTop = -10.0f; // fully hidden behind header
@@ -685,14 +693,19 @@ void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
         g.setOrigin(0,0);
     };
     repaintHeaderComp(nameMidiSwitch);
-    if (refreshButton.isVisible()) repaintHeaderComp(refreshButton);
-    if (setupButton.isVisible()) repaintHeaderComp(setupButton);
+    //if (refreshButton.isVisible()) repaintHeaderComp(refreshButton);
+    //if (setupButton.isVisible()) repaintHeaderComp(setupButton);
+     repaintHeaderComp(refreshButton);
+     repaintHeaderComp(setupButton);
     repaintHeaderComp(deviceBox);
     repaintHeaderComp(nameBox);
     // Ensure the status bar (LED + text) is repainted above the header fill so
     // it remains visible — it is a child component but the header is painted
     // in paintOverChildren which would otherwise cover children drawn earlier.
     if (statusBar && statusBar->isVisible()) repaintHeaderComp(*statusBar);
+    // Draw the header toggle above the header background, right of status bar
+    if (headerSwitchToggle && headerSwitchToggle->isVisible())
+        repaintHeaderComp(*headerSwitchToggle);
     // Setup submenu drawn separately below; buttons repainted there.
 
     // Skip fallback ring/dancer drawing when playground is active.
@@ -727,7 +740,7 @@ void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
         // Use the newer FontOptions-based constructor to avoid deprecated API warnings
         g.setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::plain)));
         const int pad = 6;
-        juce::Rectangle<int> r(getWidth() - 80, getHeight() - 16, 74, 16);
+        juce::Rectangle<int> r(getWidth() - 80, 224, 74, 16);
         g.drawFittedText("3.0." + buildStr.trim(), r, juce::Justification::centredRight, 1);
     }
 
@@ -802,14 +815,14 @@ void ClockSyncAudioProcessorEditor::resized()
         const int centerX = getWidth() / 2;
         const int comboX = centerX - comboW / 2;
         // place refresh button immediately left of the combo
-        refreshButton.setBounds(comboX - (toggleW + 4), marginY + 5, toggleW, contentH - 10);
-        setupButton.setBounds(refreshButton.getBounds());
-        // place NAME/MIDI toggle left of refresh button (moved further left to avoid clipping)
+        refreshButton.setBounds(comboX + comboW -1, marginY + 5, toggleW, contentH - 10);
+        nameMidiSwitch.setBounds(comboX - 44, marginY + 5, 40, contentH - 10);
+        // place setupButton left of nameMidiSwitch (moved further left to avoid clipping)
         const int extraLeft = 17; // nudge left
-        nameMidiSwitch.setBounds(refreshButton.getX() - (toggleW + 13 + extraLeft), marginY + 5, 40, contentH - 10);
+        setupButton.setBounds(nameMidiSwitch.getX() - (toggleW + 4), marginY + 5, toggleW, contentH - 10);
         // comboboxes share same bounds; only one visible at a time
-        deviceBox.setBounds(comboX, marginY + 3, comboW, contentH - 2);
-        nameBox.setBounds(comboX, marginY + 3, comboW, contentH - 2);
+        deviceBox.setBounds(comboX, marginY + 1 , comboW, contentH - 2);
+        nameBox.setBounds(comboX, marginY + 1, comboW, contentH - 2);
 
         // Setup submenu layout now handled in paintOverChildren via animation; initial hidden position set here.
         updateSetupSubmenuLayout();
@@ -874,18 +887,27 @@ void ClockSyncAudioProcessorEditor::resized()
     {
         // Provide area matching previous manual drawing region (right segment of header minus margins)
         const int headerH = 30;
-        const int w = 90; // width for text + LED
-        statusBar->setBounds(getWidth() - w - 8, 0, w, headerH);
+        const int w = 50; // width for text + LED
+        statusBar->setBounds(getWidth() - w - 5, 0, w, headerH);
     }
 
-    
+    // Force absolute placement to keep toggle at exact design coordinates.
+    if (headerSwitchToggle) {
+        headerSwitchToggle->setBounds(286, 5, 10, 20);
+        headerSwitchToggle->setInterceptsMouseClicks(true, true);
+        headerSwitchToggle->toFront(true);
+        headerSwitchToggle->setAlwaysOnTop(true);
+    }
 }
 
 // Update setup submenu button positions based on current animation progress (without repaint).
 void ClockSyncAudioProcessorEditor::updateSetupSubmenuLayout()
 {
+    // Defensive: check all required pointers before use
+    if (!pulseWidthSlider || !pulseWidthValueLabel || !arrowDown)
+        return;
+
     // Only show and position controls if submenu is open or animating
-    if (!nameMidiSwitch.getToggleState()) return;
     if (!(setupSubmenuTargetOn || setupSubmenuProgress > 0.0f)) {
         idleModeButton.setVisible(false);
         legacyModernButton.setVisible(false);
@@ -895,6 +917,7 @@ void ClockSyncAudioProcessorEditor::updateSetupSubmenuLayout()
         if (pulseWidthValueLabel) pulseWidthValueLabel->setVisible(false);
         return;
     }
+    const bool active = (setupSubmenuTargetOn || setupSubmenuProgress > 0.0f);
     // Layout: slider on the left, then buttons, all horizontally aligned
     const float hiddenTop = -10.0f;
     const float shownTop  = 25.0f;
@@ -917,22 +940,18 @@ void ClockSyncAudioProcessorEditor::updateSetupSubmenuLayout()
     // Place the value label immediately to the right of the slider
     x += sliderW ;
     const int valueLabelW = 40;
-    // pulseWidthValueLabel is always constructed in the constructor
     pulseWidthValueLabel->setBounds(x - 25, yButtons, valueLabelW, btnH);
     pulseWidthValueLabel->setColour(juce::Label::backgroundColourId, juce::Colours::transparentBlack);
     pulseWidthValueLabel->setColour(juce::Label::outlineColourId, juce::Colours::transparentBlack);
     pulseWidthValueLabel->setVisible(true);
 
-
-
-    // arrowDown is always constructed in the constructor
     // Position the arrow centered below the value label
     const int arrowW = 22;
     const int arrowH = 15;
     int arrowX = pulseWidthValueLabel->getX() + (pulseWidthValueLabel->getWidth() - arrowW) / 2;
     int arrowY = pulseWidthValueLabel->getBottom() + 2;
     arrowDown->setBounds(arrowX, arrowY, arrowW, arrowH);
-    arrowDown->setVisible(true);
+    arrowDown->setVisible(active && (!headerSwitchToggle || headerSwitchToggle->getToggleState()));
 
     x += gap + 20 ;
 
@@ -943,7 +962,7 @@ void ClockSyncAudioProcessorEditor::updateSetupSubmenuLayout()
     sppButton.setBounds(x, yButtons, btnW, btnH);
     pulseWidthSlider->setVisible(true);
     pulseWidthValueLabel->setVisible(true);
-        arrowDown->setVisible(true);
+        arrowDown->setVisible(active && (!headerSwitchToggle || headerSwitchToggle->getToggleState()));
     idleModeButton.setVisible(true);
     legacyModernButton.setVisible(true);
     sppButton.setVisible(true);
@@ -1392,9 +1411,9 @@ void ClockSyncAudioProcessorEditor::timerCallback()
         const bool isArmed = processor.getUiPendingStart();
         const bool hasNext = processor.getUiNextRestartPending();
         juce::String st;
-        if (hasNext) st = "PENDING";
-        else if (isRunning) st = "LOCKED";
-        else if (isArmed) st = "ARMED";
+        if (hasNext) st = "WAIT";
+        else if (isRunning) st = "LOCK";
+        else if (isArmed) st = "ARM'D'";
         else st = idleModeButton.getToggleState() ? "IDLE" : "STOP";
         statusBar->setStatusText(st);
         statusBar->setLedLevel(ledLevel);
@@ -1417,6 +1436,7 @@ void ClockSyncAudioProcessorEditor::loadDancerFrames()
     dancerFrames.reserve(24);
     auto addFrame = [this](const void* data, int size){
         if (! data || size <= 0) return;
+       
         if (auto d = juce::Drawable::createFromImageData(data, size))
             dancerFrames.push_back(std::move(d));
     };
@@ -1498,7 +1518,7 @@ ClockSyncAudioProcessorEditor::~ClockSyncAudioProcessorEditor()
 {
     // Ensure vblank updater is destroyed before member animators go away
     vblankUpdater.reset();
-    
+    arrowDown.reset();
     deviceBox.setLookAndFeel(nullptr);
     refreshButton.setLookAndFeel(nullptr);
     nameBox.setLookAndFeel(nullptr);
@@ -1513,7 +1533,7 @@ void ClockSyncAudioProcessorEditor::mouseMove(const juce::MouseEvent& e)
 {
     juce::Point<float> pf((float) e.x, (float) e.y);
     bool did = false;
-    const bool submenuActive = (nameMidiSwitch.getToggleState() && (setupSubmenuTargetOn || setupSubmenuProgress > 0.0f));
+    const bool submenuActive = (setupSubmenuTargetOn || setupSubmenuProgress > 0.0f);
     if (submenuActive)
     {
         // Use editor-relative coordinates when testing child bounds, because events may
@@ -1606,19 +1626,14 @@ void ClockSyncAudioProcessorEditor::mouseMove(const juce::MouseEvent& e)
     // Playground provides hover/tooltips; skip deprecated popup-ring hover handling.
     if (! playgroundComp)
     {
-        auto checkHoverComp = [&](const std::unique_ptr<PopupMenuRing>& pr, const juce::Component& c)
+        auto checkHoverComp = [&](const std::unique_ptr<PopupMenuRing>& pr, const juce::Component& c) -> int
         {
-            if (! pr) return;
+            if (! pr) return 0;
             auto b = c.getBounds().toFloat();
             const float baseX = b.getCentreX();
             const float baseY = b.getCentreY();
             const float baseR = std::min(b.getWidth(), b.getHeight()) * 0.5f;
-            const int hi = pr->handleMouseMove(pf, baseX, baseY, baseR);
-            if (hi >= 0 || pr->isAnimating())
-            {
-                repaint(c.getBounds().expanded(80, 80));
-                did = true;
-            }
+            return pr->handleMouseMove(pf, baseX, baseY, baseR);
         };
 
         
@@ -1643,67 +1658,69 @@ void ClockSyncAudioProcessorEditor::mouseMove(const juce::MouseEvent& e)
         juce::Point<int> pos = e.getPosition(); // (x,y) public members
         // Precompute ring annulus state using the same geometry we paint with
         bool inDonut = false;
+        float dx = 0.0f, dy = 0.0f, dist2 = 0.0f, innerR = 0.0f, outerR = 0.0f;
         if (ringArea.contains(pos))
         {
             const int cx = ringArea.getCentreX();
             const int cy = ringArea.getCentreY();
-            const float dxR = (float) pos.x - (float) cx;
-            const float dyR = (float) pos.y - (float) cy;
-            const float dist2R = dxR*dxR + dyR*dyR;
-            const float outerR = (float) kRingOuterD * 0.5f;
-            const float innerR = (float) kRingInnerD * 0.5f;
-            inDonut = (dist2R <= outerR*outerR && dist2R >= innerR*innerR);
-        }
+            dx = (float) pos.x - (float) cx;
+            dy = (float) pos.y - (float) cy;
+            dist2 = dx*dx + dy*dy;
+            outerR = (float) kRingOuterD * 0.5f;
+            innerR = (float) kRingInnerD * 0.5f;
+            inDonut = (dist2 <= outerR*outerR && dist2 >= innerR*innerR);
 
-        for (int i = 0; i < n; ++i)
-        {
-            float cx,cy,cr; if (! playgroundComp->getCircleInfo(i,cx,cy,cr)) continue; const float gx = cx + (float) pgx; const float gy = cy + (float) pgy; const float dx = (float) pos.x - gx; const float dy = (float) pos.y - gy; if (dx*dx + dy*dy <= cr*cr + 0.0001f) { if (cr < bestR) { bestR = cr; bestIdx = i; } }
-        }
-
-        bool consumed = false;
-        // Special-case idx7 tiny inner button hover so its label shows when pointer is
-        // inside the small dot even if overlays block Playground's own mouseMove.
-        bool innerBtnHover = false;
-        if (playgroundComp->getCircleCount() > 7)
-        {
-            float cx7,cy7,cr7; if (playgroundComp->getCircleInfo(7,cx7,cy7,cr7))
+            // All code using dx, dy, dist2, innerR, outerR must be inside this block
+            for (int i = 0; i < n; ++i)
             {
-                const float smallR = 8.0f; const float dx7 = (float) pos.x - (cx7 + (float) pgx); const float dy7 = (float) pos.y - (cy7 + (float) pgy); innerBtnHover = (dx7*dx7 + dy7*dy7) <= (smallR*smallR);
+                float cx,cy,cr; if (! playgroundComp->getCircleInfo(i,cx,cy,cr)) continue; const float gx = cx + (float) pgx; const float gy = cy + (float) pgy; const float dx = (float) pos.x - gx; const float dy = (float) pos.y - gy; if (dx*dx + dy*dy <= cr*cr + 0.0001f) { if (cr < bestR) { bestR = cr; bestIdx = i; } }
             }
-            playgroundComp->setClickToPulseHoverFromEditor(innerBtnHover);
-            if (innerBtnHover)
+
+            bool consumed = false;
+            // Special-case idx7 tiny inner button hover so its label shows when pointer is
+            // inside the small dot even if overlays block Playground's own mouseMove.
+            bool innerBtnHover = false;
+            if (playgroundComp->getCircleCount() > 7)
             {
-                playgroundComp->setHoverIndexFromEditor(7);
+                float cx7,cy7,cr7; if (playgroundComp->getCircleInfo(7,cx7,cy7,cr7))
+                {
+                    const float smallR = 8.0f; const float dx7 = (float) pos.x - (cx7 + (float) pgx); const float dy7 = (float) pos.y - (cy7 + (float) pgy); innerBtnHover = (dx7*dx7 + dy7*dy7) <= (smallR*smallR);
+                }
+                playgroundComp->setClickToPulseHoverFromEditor(innerBtnHover);
+                if (innerBtnHover)
+                {
+                    playgroundComp->setHoverIndexFromEditor(7);
+                    consumed = true;
+                }
+            }
+
+            if (!consumed && bestIdx >= 0)
+            {
+                // Smallest containing circle wins; only fall back to ring when no circle matches.
+                playgroundComp->setHoverIndexFromEditor(bestIdx);
                 consumed = true;
             }
-        }
+            else if (inDonut)
+            {
+                // Ring donut fallback: pointer in annulus (between inner & outer radii) -> idx0 hover.
+                playgroundComp->setHoverIndexFromEditor(0);
+                consumed = true;
+            }
 
-        if (!consumed && bestIdx >= 0)
-        {
-            // Smallest containing circle wins; only fall back to ring when no circle matches.
-            playgroundComp->setHoverIndexFromEditor(bestIdx);
-            consumed = true;
-        }
-        else if (inDonut)
-        {
-            // Ring donut fallback: pointer in annulus (between inner & outer radii) -> idx0 hover.
-            playgroundComp->setHoverIndexFromEditor(0);
-            consumed = true;
-        }
+            if (! consumed)
+            {
+                // Clear circle/ring hover if nothing matched.
+                playgroundComp->clearHoverFromEditor();
+            }
 
-        if (! consumed)
-        {
-            // Clear circle/ring hover if nothing matched.
-            playgroundComp->clearHoverFromEditor();
+            // If popup menus are visible, propagate their internal item hover by forcing the parent
+            // circle index (3 or 6) so tooltip stays active even when pointer is over expanded items.
+            // We only do this when the popup itself reports a hover >= 0. (Requires PopupMenuRing API.)
+            // Access underlying rings through playgroundComp public members (popup3/popup6).
+            // NOTE: We rely on PopupMenuRing::getHoverIndex(); if not hovered returns -1.
+            // Popup item hover mapping handled internally in PlaygroundComponent; avoid forcing here
+            // to prevent overriding a smaller circle selection.
         }
-
-        // If popup menus are visible, propagate their internal item hover by forcing the parent
-        // circle index (3 or 6) so tooltip stays active even when pointer is over expanded items.
-        // We only do this when the popup itself reports a hover >= 0. (Requires PopupMenuRing API.)
-        // Access underlying rings through playgroundComp public members (popup3/popup6).
-        // NOTE: We rely on PopupMenuRing::getHoverIndex(); if not hovered returns -1.
-        // Popup item hover mapping handled internally in PlaygroundComponent; avoid forcing here
-        // to prevent overriding a smaller circle selection.
     }
 }
 
@@ -1843,100 +1860,10 @@ void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
             const float gdx = (float) e.x - (float) rcx;
             const float gdy = (float) e.y - (float) rcy;
             const float gd2 = gdx*gdx + gdy*gdy;
-            const bool insideRingDonut = (gd2 <= outerRGuard*outerRGuard && gd2 >= innerRGuard*innerRGuard);
-            float c6x,c6y,c6r; if (playgroundComp->getCircleInfo(6,c6x,c6y,c6r))
-            {
-                juce::Rectangle<int> r6((int)std::round(c6x - c6r), (int)std::round(c6y - c6r), (int)std::round(c6r * 2.0f), (int)std::round(c6r * 2.0f));
-                if (! insideRingDonut && r6.contains(e.getPosition())) { playgroundComp->togglePopup6(); repaint(); return; }
-                else if (r6.contains(e.getPosition())) inAnySmallCircle = true;
-            }
-        }
-        // Other circle forwards (excluding 3 & 6 handled above)
-        const int bc = playgroundComp->getCircleCount();
-        for (int i = 0; i < bc; ++i)
-        {
-            if (i == 3 || i == 6) continue;
-            float cx,cy,cr; if (! playgroundComp->getCircleInfo(i,cx,cy,cr)) continue;
-            juce::Rectangle<int> ri((int)std::round(cx - cr), (int)std::round(cy - cr), (int)std::round(cr * 2.0f), (int)std::round(cr * 2.0f));
-            if (ri.contains(e.getPosition()))
-            {
-                inAnySmallCircle = (i != 0) || inAnySmallCircle;
-                if (playgroundComp->handleExternalClickIndex(i)) { repaint(); return; }
-            }
-        }
-        // Pre-scan for ANY non-ring circle under pointer (indices > 0)
-        bool pointerInNonRingCircle = false;
-        for (int i = 1; i < bc; ++i)
-        {
-            float nx,ny,nr; if (! playgroundComp->getCircleInfo(i,nx,ny,nr)) continue;
-            const float dxs = (float) e.x - nx;
-            const float dys = (float) e.y - ny;
-            if (dxs*dxs + dys*dys <= nr*nr) { pointerInNonRingCircle = true; break; }
-        }
-        // Shuffle points
-        bool pointerInShufflePoint = false;
-        for (int si = 0; si < playgroundComp->getShuffleCount(); ++si)
-        {
-            int sid; float sx,sy,sr; if (! playgroundComp->getShuffleInfo(si,sid,sx,sy,sr)) continue;
-            const float dxs = (float) e.x - sx;
-            const float dys = (float) e.y - sy;
-            const float hitR = sr * 1.4f;
-            if (dxs*dxs + dys*dys <= hitR*hitR) { pointerInShufflePoint = true; break; }
-        }
-        const bool blockRingClicks = inAnySmallCircle || pointerInNonRingCircle || pointerInShufflePoint;
-        // If no small circle or shuffle point handled the click, process ring clicks (center toggle and segment select)
-        if (! blockRingClicks && ringArea.contains(e.getPosition()))
-        {
-            // Pattern editing: detect wedge toggles first when edit mode enabled.
-            if (patternEditMode)
-            {
-                float innerHoleR = (float) kRingInnerD * 0.5f;
-                float patternOuterR = innerHoleR - 8.0f; // inward shift
-                float patternInnerR = patternOuterR * 0.775f; // thinner ring
-                juce::Point<float> centre((float) ringArea.getCentreX(), (float) ringArea.getCentreY());
-                int pw = pattern.hitTest(e.position.toFloat(), centre, patternOuterR, patternInnerR);
-                    if (pw >= 0)
-                    {
-                        // Begin drag mode: determine uniform target state from initial wedge.
-                        uint16_t mask = playgroundComp ? playgroundComp->getPatternBitmask() : pattern.getBitmask();
-                        bool current = (mask & (1u << pw)) != 0;
-                        patternDragActive = true;
-                        patternDragSetState = ! current; // invert first wedge; subsequent wedges adopt same state
-                        std::fill(std::begin(patternDragTouched), std::end(patternDragTouched), false);
-                        patternDragTouched[pw] = true;
-                        if (patternDragSetState)
-                            mask |= (uint16_t)(1u << pw);
-                        else
-                            mask &= (uint16_t)~(1u << pw);
-                        if (playgroundComp) playgroundComp->setPatternBitmask(mask);
-                        else pattern.setStep(pw, patternDragSetState);
-                        pushPatternStateToProcessor();
-                        repaint(ringArea);
-                        return;
-                    }
-                // If click lies within the pattern ring bounds (even if gap) while editing, block underlying
-                const float dxP = e.position.x - centre.x;
-                const float dyP = e.position.y - centre.y;
-                const float dist2P = dxP*dxP + dyP*dyP;
-                if (dist2P <= patternOuterR*patternOuterR && dist2P >= patternInnerR*patternInnerR)
-                {
-                    return; // swallow while editing
-                }
-                if (dist2P < patternInnerR*patternInnerR)
-                    return; // block central run toggle while editing
-            }
-
-            const int cx = ringArea.getCentreX();
-            const int cy = ringArea.getCentreY();
-            const float outerR = (float) kRingOuterD * 0.5f;
-            const float innerR = (float) kRingInnerD * 0.5f;
-            const float dx = (float)e.x - (float)cx;
-            const float dy = (float)e.y - (float)cy;
-            const float dist2 = dx*dx + dy*dy;
             // Only toggle Run when pointer is well inside the centre (apply margin so near-boundary clicks don't toggle).
             // Reduce run-toggle radius while in pattern edit mode so wedge clicks are not misinterpreted.
-            const float innerToggleR = patternEditMode ? (innerR * 0.60f) : (innerR * 0.82f);
-            if (dist2 <= innerToggleR * innerToggleR)
+            const float innerToggleR = patternEditMode ? (innerRGuard * 0.60f) : (innerRGuard * 0.82f);
+            if (gd2 <= innerToggleR * innerToggleR)
             {
                 if (patternEditMode) return; // Block run toggle while editing pattern
                 if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramRun))
@@ -1956,7 +1883,7 @@ void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
                 }
                 return;
             }
-            if (dist2 <= outerR * outerR && dist2 >= innerR * innerR)
+            if (gd2 <= outerRGuard * outerRGuard && gd2 >= innerRGuard * innerRGuard)
             {
                 if (patternEditMode)
                 {
@@ -1965,10 +1892,10 @@ void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
                     float innerHoleR = (float) kRingInnerD * 0.5f;
                     float patternOuterR = innerHoleR - 8.0f;
                     float patternInnerR = patternOuterR * 0.775f;
-                    const float d = std::sqrt(dist2);
+                    const float d = std::sqrt(gd2);
                         if (d >= patternInnerR && d <= patternOuterR)
                     {
-                        const float angle = std::atan2(dy, dx); // -pi..pi
+                        const float angle = std::atan2(gdy, gdx); // -pi..pi
                         const float startAt12 = -juce::MathConstants<float>::halfPi;
                         float rel = angle - startAt12;
                         while (rel < 0.0f) rel += juce::MathConstants<float>::twoPi;
@@ -1989,7 +1916,7 @@ void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
                     }
                     return; // swallow during edit mode
                 }
-                const float angle = std::atan2(dy, dx); // -pi..pi
+                const float angle = std::atan2(gdy, gdx); // -pi..pi
                 const float startAt12 = -juce::MathConstants<float>::halfPi;
                 const float twoPi = juce::MathConstants<float>::twoPi;
                 float rel = angle - startAt12;
@@ -2158,6 +2085,45 @@ void ClockSyncAudioProcessorEditor::populateNameBox()
         nameBox.setSelectedId(0, juce::dontSendNotification);
         nameBox.setTextWhenNothingSelected("name...");
     }
+    // Ensure the displayed text uses the cyan accent via overlay colour and is centred
+    nameBox.setColour(FullWidthComboBox::overlayTextColourId, UiThemeColours::cyan());
+    nameBox.setJustificationType(juce::Justification::centred);
+    nameBox.toFront(true);
+    // Ensure any internal editor uses the accent cyan, but always hide any
+    // internal Label children so `FullWidthComboBox::paint()` is the single
+    // source of visible text (prevents doubled rendering).
+    for (auto* c : nameBox.getChildren())
+    {
+        if (auto* te = dynamic_cast<juce::TextEditor*>(c))
+        {
+            te->setColour(juce::TextEditor::textColourId, UiThemeColours::cyan());
+            te->setBounds(nameBox.getLocalBounds().reduced(6, 0));
+        }
+        else if (auto* lb = dynamic_cast<juce::Label*>(c))
+        {
+            lb->setVisible(false);
+            lb->toBack();
+            lb->setJustificationType(juce::Justification::centred);
+        }
+    }
+    // Additionally hide any sibling Label components that overlap the nameBox
+    // — some hosts or look-and-feel implementations may create separate labels
+    // that draw the selected text; hide them to avoid doubled rendering.
+    if (auto* p = nameBox.getParentComponent())
+    {
+        for (auto* sc : p->getChildren())
+        {
+            if (sc == &nameBox) continue;
+            if (auto* lb = dynamic_cast<juce::Label*>(sc))
+            {
+                if (lb->isVisible() && lb->getBounds().intersects(nameBox.getBounds()))
+                {
+                    lb->setVisible(false);
+                    lb->toBack();
+                }
+            }
+        }
+    }
 }
 
 void ClockSyncAudioProcessorEditor::showNewNameDialog()
@@ -2165,17 +2131,32 @@ void ClockSyncAudioProcessorEditor::showNewNameDialog()
     if (nameEntryEditor) return;
     // open an inline empty editor for new name (commit on Enter, cancel on blur)
     auto rc = nameBox.getBounds();
-    const int editorH = 22;
+    const int editorH = rc.getHeight();
     const int editorW = std::max(160, rc.getWidth());
     const int x = rc.getX();
-    const int y = rc.getBottom() + 4;
+    // Position editor over the combobox (same Y) so it appears in-place
+    const int y = rc.getY();
 
     nameEntryEditor = std::make_unique<juce::TextEditor>();
     nameEntryEditor->setText(juce::String());
     nameEntryEditor->setFont(juce::Font(juce::FontOptions("Arial", 14.0f, juce::Font::plain)));
-    nameEntryEditor->setBounds(x, y, editorW, editorH);
-    addAndMakeVisible(*nameEntryEditor);
+    // Parent the inline editor to the top-level window so it appears above
+    // other UI (including host-drawn overlays). Convert nameBox coords.
+    nameEntryEditor->setColour(juce::TextEditor::textColourId, UiThemeColours::cyan());
+    if (auto* top = getTopLevelComponent())
+    {
+        auto topLeftInTop = top->getLocalPoint(this, nameBox.getBounds().getTopLeft());
+        juce::Rectangle<int> editorBounds(topLeftInTop.x + 6, topLeftInTop.y, std::max(160, nameBox.getWidth()) - 12, nameBox.getHeight());
+        top->addAndMakeVisible(*nameEntryEditor);
+        nameEntryEditor->setBounds(editorBounds);
+    }
+    else
+    {
+        addAndMakeVisible(*nameEntryEditor);
+        nameEntryEditor->setBounds(nameBox.getBounds().reduced(6, 0));
+    }
     nameEntryEditor->grabKeyboardFocus();
+    nameEntryEditor->toFront(true);
 
     nameEntryEditor->onReturnKey = [this]()
     {
@@ -2220,17 +2201,31 @@ void ClockSyncAudioProcessorEditor::toggleNameEditorOrCommit()
     juce::String cur;
     if (sel >= 1 && sel <= instrumentNames.size()) cur = instrumentNames[(size_t) (sel - 1)];
     auto rc = nameBox.getBounds();
-    const int editorH = 22;
+    const int editorH = rc.getHeight();
     const int editorW = std::max(160, rc.getWidth());
     const int x = rc.getX();
-    const int y = rc.getBottom() + 4;
+    const int y = rc.getY();
 
     nameEntryEditor = std::make_unique<juce::TextEditor>();
     nameEntryEditor->setText(cur);
     nameEntryEditor->setFont(juce::Font(juce::FontOptions("Arial", 14.0f, juce::Font::plain)));
-    nameEntryEditor->setBounds(x, y, editorW, editorH);
-    addAndMakeVisible(*nameEntryEditor);
+    // Parent the inline editor to the top-level window so it appears above
+    // other UI (including host-drawn overlays). Convert nameBox coords.
+    nameEntryEditor->setColour(juce::TextEditor::textColourId, UiThemeColours::cyan());
+    if (auto* top = getTopLevelComponent())
+    {
+        auto topLeftInTop = top->getLocalPoint(this, nameBox.getBounds().getTopLeft());
+        juce::Rectangle<int> editorBounds(topLeftInTop.x + 6, topLeftInTop.y, std::max(160, nameBox.getWidth()) - 12, nameBox.getHeight());
+        top->addAndMakeVisible(*nameEntryEditor);
+        nameEntryEditor->setBounds(editorBounds);
+    }
+    else
+    {
+        addAndMakeVisible(*nameEntryEditor);
+        nameEntryEditor->setBounds(nameBox.getBounds().reduced(6, 0));
+    }
     nameEntryEditor->grabKeyboardFocus();
+    nameEntryEditor->toFront(true);
 
     // commit on Enter; cancel on focus lost or Escape
     nameEntryEditor->onReturnKey = [this]()
