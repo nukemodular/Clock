@@ -113,12 +113,28 @@ void ClockSyncAudioProcessor::requestTriggerOnce()
 void ClockSyncAudioProcessor::setTriggerModeEnabled(bool enabled)
 {
     triggerModeEnabled.store(enabled, std::memory_order_relaxed);
+    // When disabling the trigger-mode gate, clear any pending restart/resync
+    // so idx8 acts as the master gate for resync behaviour.
+    if (! enabled)
+    {
+        pendingBarRestart.store(false, std::memory_order_relaxed);
+        uiNextRestartPending.store(false, std::memory_order_relaxed);
+        // Clear any already-scheduled resync target
+        resyncPending.store(false, std::memory_order_relaxed);
+        resyncTargetBar.store(-1, std::memory_order_relaxed);
+        resyncTargetStep.store(-1, std::memory_order_relaxed);
+    }
 }
 
 void ClockSyncAudioProcessor::notifyResyncOffsetChanged()
 {
-    pendingBarRestart.store(true, std::memory_order_relaxed);
-    uiNextRestartPending.store(true, std::memory_order_relaxed);
+    // Only schedule a pending bar restart if the trigger-mode gate (idx8)
+    // is enabled; otherwise treat the offset change as non-actionable.
+    if (triggerModeEnabled.load(std::memory_order_relaxed))
+    {
+        pendingBarRestart.store(true, std::memory_order_relaxed);
+        uiNextRestartPending.store(true, std::memory_order_relaxed);
+    }
 }
 
 //==============================================================================
@@ -489,6 +505,17 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                                                     juce::MidiBuffer& midi)
 {
     const int numSamples = buffer.getNumSamples();
+    // Apply any carried-over pulse tail from the previous block at the start of this block.
+    if (clickHoldRemainingSamples > 0)
+    {
+        const int carry = juce::jmin(clickHoldRemainingSamples, numSamples);
+        for (int s = 0; s < carry; ++s)
+        {
+            for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                buffer.addSample(ch, s, 1.0f);
+        }
+        clickHoldRemainingSamples -= carry;
+    }
     // Clear per-block pattern/bar-start markers
     lastPatternStartSampleInBlock = -1;
     lastBarRestartStartSampleInBlock = -1;
@@ -632,14 +659,29 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
     }
     // removed unused lastRunParam
 
-    // Trigger mode rising edge while already running (engine active): schedule a bar+offset restart.
-    // Placed before host transport edge handling so NEXT indicator can appear immediately after user toggles.
+    // Trigger mode rising edge: when enabling the trigger-mode gate (idx8),
+    // schedule a bar+offset restart (resync). This should happen when the
+    // gate is switched ON; turning it OFF does not schedule a resync.
     {
         const bool tmNow = triggerModeEnabled.load(std::memory_order_relaxed);
-        if (runActive && tmNow && ! lastTriggerModeEnabled)
+        if (tmNow && ! lastTriggerModeEnabled)
         {
+            // Show NEXT indicator and request a bar restart
             pendingBarRestart.store(true, std::memory_order_relaxed);
             uiNextRestartPending.store(true, std::memory_order_relaxed);
+
+            // Compute current bar and step to schedule a resync target.
+            int offsetStep = 1;
+            if (auto* pi = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramResyncOffsetStep)))
+                offsetStep = juce::jlimit(1, 16, pi->get());
+            const double barLenQNow = (pos.timeSigNumerator > 0 && pos.timeSigDenominator > 0)
+                ? (4.0 * (double) pos.timeSigNumerator / (double) pos.timeSigDenominator)
+                : 4.0;
+            long long curBar = computeCurrentBar(ppqStart, barLenQNow);
+            int currentStepApprox = juce::jlimit(1, 16, uiStep16.load(std::memory_order_relaxed));
+
+            // Attempt to schedule a resync target (non-force; obey replacement rules).
+            attemptScheduleResync(curBar, currentStepApprox, offsetStep, false);
         }
         lastTriggerModeEnabled = tmNow;
     }
@@ -1036,7 +1078,8 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                             else
                             {
                                 // Pulse: hold high for pulseWidthMs, no decay
-                                for (int s = 0; s < pulseSamples; ++s)
+                                int s = 0;
+                                for (; s < pulseSamples; ++s)
                                 {
                                     const int idx = sampleOffset + s;
                                     if (idx >= 0 && idx < numSamples)
@@ -1045,6 +1088,10 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                                             buffer.addSample(ch, idx, outLevel);
                                     }
                                 }
+                                // If the pulse extends beyond the end of this block, carry the remaining tail.
+                                const int tailBeyond = (sampleOffset + pulseSamples) - numSamples;
+                                if (tailBeyond > 0)
+                                    clickHoldRemainingSamples = juce::jmax(clickHoldRemainingSamples, tailBeyond);
                             }
                         }
                     }
@@ -1170,7 +1217,8 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                             }
                             else
                             {
-                                for (int s = 0; s < pulseSamples; ++s)
+                                int s = 0;
+                                for (; s < pulseSamples; ++s)
                                 {
                                     const int idx = mappedOffset + s;
                                     if (idx >= 0 && idx < numSamples)
@@ -1179,6 +1227,9 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                                             buffer.addSample(ch, idx, outLevel);
                                     }
                                 }
+                                const int tailBeyond = (mappedOffset + pulseSamples) - numSamples;
+                                if (tailBeyond > 0)
+                                    clickHoldRemainingSamples = juce::jmax(clickHoldRemainingSamples, tailBeyond);
                             }
                         }
                     }
@@ -1319,6 +1370,11 @@ void ClockSyncAudioProcessor::preparePatternForBar(double barStartPPQ, double ba
 void ClockSyncAudioProcessor::attemptScheduleResync(long long currentBar, int currentStep, int offsetStep, bool force)
 {
     if (offsetStep < 1 || offsetStep > 16) return;
+    // Honour the trigger-mode gate: if this is not a forced scheduling (rate change)
+    // then require `triggerModeEnabled` (idx8) to be true. This centralises the
+    // master resync gate so UI/parameter timing cannot accidentally override it.
+    if (! force && ! triggerModeEnabled.load(std::memory_order_relaxed))
+        return;
     // Determine target bar relative to current position
     long long targetBar = currentBar;
     if (offsetStep <= currentStep)

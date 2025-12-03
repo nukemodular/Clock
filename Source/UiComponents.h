@@ -107,7 +107,7 @@ public:
                 auto col = findColour(overlayTextColourId);
                 if (col.isTransparent()) col = findColour(juce::ComboBox::textColourId);
                 g.setColour(col);
-                g.setFont(juce::Font(13.0f, juce::Font::bold));
+                g.setFont(juce::Font(juce::FontOptions("Arial", 13.0f, juce::Font::bold)));
                 g.drawFittedText(placeholder, getLocalBounds().reduced(6, 0), juce::Justification::centred, 1);
             }
         }
@@ -124,7 +124,7 @@ public:
                     auto col = findColour(overlayTextColourId);
                     if (col.isTransparent()) col = findColour(juce::ComboBox::textColourId);
                     g.setColour(col);
-                    g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+                    g.setFont(juce::Font(juce::FontOptions("Arial", 13.0f, juce::Font::bold)));
                     g.drawFittedText(t, getLocalBounds().reduced(6, 0), juce::Justification::centred, 1);
                 }
             }

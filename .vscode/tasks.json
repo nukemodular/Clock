@@ -1,0 +1,50 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Build Release After Crash Fix",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"--preset",
+				"release"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build Release After Crash Fix",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"--preset",
+				"release"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build Release After Crash Fix",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"--preset",
+				"release"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		}
+	]
+}

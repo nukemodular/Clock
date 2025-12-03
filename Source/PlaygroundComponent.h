@@ -6,6 +6,7 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 #include <cmath>
 #include <vector>
+#include <array>
 #include "UiTheme.h"
 #include "PopupMenuRing.h"
 #include "Pattern.h" // PatternRing for edit mode
@@ -65,6 +66,7 @@ public:
     std::function<void(bool)> onHoverChanged;
 
 private:
+        bool rotaryHandleHover = false;
     static constexpr int diameter = 28;
     bool isOn = false;
 };
@@ -92,6 +94,7 @@ public:
         selected = logicalToRaw(globalRestartLogical);
         if (selected >= 0)
             flashSegmentRaw(selected, 0.9f, true, false);
+        rebuildPaths();
         startTimerHz(60);
     }
     // Identity mapping: logical index (0..15) matches raw wedge index; visual step = logical+1.
@@ -184,27 +187,19 @@ public:
             if (selected >= 0)
             {
                 int selIdx = (selected + kHighlightRotation) & 15;
-                auto b2 = b.reduced(0.5f);                     // reduce outer radius by ~1px
-                float innerPropSel = (innerR + 0.5f) / outerR; // inward growth keeps thickness balanced
-                juce::Path seg;
-                seg.addPieSegment(b2, start0 + selIdx * step, start0 + (selIdx + 1) * step, innerPropSel);
+                const juce::Path &segHi = wedgePathsSelected[(size_t)selIdx];
                 g.setColour(UiThemeColours::cyan().withAlpha(0.55f));
-                g.fillPath(seg);
+                g.fillPath(segHi);
                 g.setColour(UiThemeColours::cyan().withAlpha(1.0f));
-                g.strokePath(seg, juce::PathStrokeType(1.0f));
+                g.strokePath(segHi, juce::PathStrokeType(1.0f));
             }
             // Chase/playhead wedge (different) — draw full wedge so chase colour renders at full thickness
             if (playheadRaw >= 0)
             {
                 int chaseIdx = (playheadRaw + kHighlightRotation) & 15;
-                // Use the full wedge geometry (b) and the normal innerProp so the cyan/fade
-                // draw covers the same area as other segments (no reduced inset).
-                juce::Path seg;
-                seg.addPieSegment(b, start0 + chaseIdx * step, start0 + (chaseIdx + 1) * step, innerProp);
+                const juce::Path &seg = wedgePaths[(size_t)chaseIdx];
                 g.setColour(UiThemeColours::cyan().withAlpha(isPlaying ? 0.75f : 0.45f));
                 g.fillPath(seg);
-                // Do not draw an outline for the chase/playhead wedge so underlying
-                // chaselight (circle idx1) can show through without stroked edges.
             }
             return;
         }
@@ -217,12 +212,12 @@ public:
         static constexpr int kHighlightRotation = 4; // visually advance highlight by +4 wedges
         for (int i = 0; i < 16; ++i)
         {
-            juce::Path seg;
-            seg.addPieSegment(b, start0 + i * step, start0 + (i + 1) * step, innerProp);
+            const juce::Path &seg = wedgePaths[(size_t)i];
             static constexpr int kHighlightRotation = 4; // visually advance highlight by +4 wedges
             bool isSel = (i == ((selected + kHighlightRotation) & 15));
             bool isPlay = (i == ((playheadRaw + kHighlightRotation) & 15));
-            bool isHover = (i == hovered);
+            int hoverIdx = hovered >= 0 ? ((hovered + kHighlightRotation) & 15) : -1;
+            bool isHover = (i == hoverIdx);
             float flash = ringFlashes[i];
             float fade = segmentFade[i];
             if (isSel || isPlay)
@@ -230,10 +225,7 @@ public:
                 if (isSel)
                 {
                     // Selected wedge uses a slightly reduced thickness and an outline.
-                    auto b2 = b.reduced(0.5f);
-                    float innerPropHi = (innerR + 0.5f) / outerR;
-                    juce::Path segHi;
-                    segHi.addPieSegment(b2, start0 + i * step, start0 + (i + 1) * step, innerPropHi);
+                    const juce::Path &segHi = wedgePathsSelected[(size_t)i];
                     g.setColour(UiThemeColours::cyan().withAlpha(0.55f));
                     g.fillPath(segHi);
                     // Keep selected wedge outline cyan-only so it doesn't draw accent over the parent donut.
@@ -243,10 +235,8 @@ public:
                 else if (isPlay)
                 {
                     // Playhead/chase should render at full wedge geometry (no reduced inset)
-                    juce::Path segPlay;
-                    segPlay.addPieSegment(b, start0 + i * step, start0 + (i + 1) * step, innerProp);
                     g.setColour(UiThemeColours::cyan().withAlpha(isPlaying ? 1.0f : 0.45f));
-                    g.fillPath(segPlay);
+                    g.fillPath(seg);
                     // Do not stroke the playhead wedge here so the underlying chaselight can show through.
                 }
                 continue; // skip normal seg painting when highlighted
@@ -275,16 +265,13 @@ public:
         }
         if (fullRingFlash > 0.01f)
         {
-            juce::Path rp;
-            rp.addEllipse(b.getCentreX() - outerR, b.getCentreY() - outerR, outerR * 2, outerR * 2);
-            rp.addEllipse(b.getCentreX() - innerR, b.getCentreY() - innerR, innerR * 2, innerR * 2);
-            rp.setUsingNonZeroWinding(false);
             g.setColour(UiThemeColours::cyan().withAlpha(juce::jlimit(0.0f, 0.85f, fullRingFlash)));
-            g.fillPath(rp);
+            g.fillPath(donutPathCache);
         }
         g.setColour(UiThemeColours::accent().withAlpha(0.15f));
         g.drawEllipse(b.getCentreX() - innerR, b.getCentreY() - innerR, innerR * 2, innerR * 2, 1.0f);
     }
+    void resized() override { rebuildPaths(); }
     void mouseMove(const juce::MouseEvent &e) override
     {
         bool nowInner = isInsideInner(e.position);
@@ -348,11 +335,20 @@ public:
 
         if (s >= 0)
         {
+            bool changed = (selected != s);
             selected = s; // raw wedge for highlight
             int logical = rawToLogical(selected);
 
             if (onClicked)
                 onClicked(logical); // pass identity logical
+            // If offset changed, schedule a resync at next master boundary and update global restart logical mapping.
+            if (changed)
+            {
+                setGlobalRestartLogical(logical);
+                requestRestartAtNextMasterBoundary();
+                if (onStepChanged)
+                    onStepChanged(logical);
+            }
             repaint();
             draggingWedges = true; // allow drag in both normal and pattern edit modes
         }
@@ -379,6 +375,11 @@ public:
             int logical = rawToLogical(selected);
             if (onClicked)
                 onClicked(logical);
+            // Schedule resync on drag offset change as well.
+            setGlobalRestartLogical(logical);
+            requestRestartAtNextMasterBoundary();
+            if (onStepChanged)
+                onStepChanged(logical);
             repaint();
         }
     }
@@ -411,6 +412,31 @@ public:
     }
 
 private:
+    void rebuildPaths()
+    {
+        auto b = getLocalBounds().toFloat();
+        wedgePaths.fill(juce::Path());
+        wedgePathsSelected.fill(juce::Path());
+        const float innerProp = innerR / outerR;
+        const float step = juce::MathConstants<float>::twoPi / 16.0f;
+        const float start0 = -juce::MathConstants<float>::halfPi;
+        auto b2 = b.reduced(0.5f);
+        float innerPropSel = (innerR + 0.5f) / outerR;
+        for (int i = 0; i < 16; ++i)
+        {
+            juce::Path p;
+            p.addPieSegment(b, start0 + i * step, start0 + (i + 1) * step, innerProp);
+            wedgePaths[(size_t)i] = std::move(p);
+            juce::Path ph;
+            ph.addPieSegment(b2, start0 + i * step, start0 + (i + 1) * step, innerPropSel);
+            wedgePathsSelected[(size_t)i] = std::move(ph);
+        }
+        juce::Path rp;
+        rp.addEllipse(b.getCentreX() - outerR, b.getCentreY() - outerR, outerR * 2, outerR * 2);
+        rp.addEllipse(b.getCentreX() - innerR, b.getCentreY() - innerR, innerR * 2, innerR * 2);
+        rp.setUsingNonZeroWinding(false);
+        donutPathCache = std::move(rp);
+    }
     bool isInsideInner(juce::Point<float> p) const
     {
         auto c = getLocalBounds().toFloat().getCentre();
@@ -540,6 +566,9 @@ private:
     const float innerR = 55.0f;
     bool patternEditMode = false;
     bool draggingWedges = false;
+    std::array<juce::Path, 16> wedgePaths;
+    std::array<juce::Path, 16> wedgePathsSelected;
+    juce::Path donutPathCache;
 };
 
 // --------------------------------------------------------------
@@ -584,6 +613,11 @@ public:
     std::function<void(int)> onResyncStepRequested;
     std::function<void(bool)> onRunToggleRequested;
     std::function<void()> onTriggerOnceRequested;
+    // Called for automatic pattern-driven step triggers (NOT user clicks).
+    // Editor should NOT map this to `processor.requestTriggerOnce()` to avoid
+    // mutating processor run/restart state from UI playback; keep it for
+    // visual-only preview handling instead.
+    std::function<void()> onAutoTriggerRequested;
     std::function<void(int)> onClockRateIndexRequested;
     std::function<void(int)> onShuffleStepRequested;
     std::function<void(bool)> onClockWhileStoppedRequested;
@@ -592,6 +626,8 @@ public:
     std::function<void(bool)> onTriggerModeRequested;
     std::function<void(int)> onPopup3Selected;
     std::function<void(bool)> onPatternEditToggled;
+    // Callback invoked when the pattern bitmask changes via UI edits
+    std::function<void(uint16_t)> onPatternChanged;
     // Additional callbacks the editor can wire for UI-only toggles
     std::function<void(bool)> onLinearShuffleModeChanged;
 
@@ -651,6 +687,15 @@ public:
     bool keyPressed(const juce::KeyPress &) override;
 
 private:
+    // Pre-created fonts to avoid CoreText static lifetime issues
+    juce::Font fontSmall12{ juce::FontOptions("Arial", 12.0f, juce::Font::bold) };
+    juce::Font fontMid15{ juce::FontOptions("Arial", 15.0f, juce::Font::bold) };
+    juce::Font fontRndSmall14{ juce::FontOptions("Arial", 14.0f, juce::Font::bold) };
+    juce::Font fontRndNum24{ juce::FontOptions("Arial", 24.0f, juce::Font::bold) };
+    juce::Font fontHover12{ juce::FontOptions("Arial", 12.0f, juce::Font::bold) };
+    juce::Font fontStep30{ juce::FontOptions("Arial", 30.0f, juce::Font::bold) };
+    juce::Font fontMain6_22{ juce::FontOptions("Arial", 22.0f, juce::Font::bold) };
+    juce::Font fontStatus10{ juce::FontOptions("Arial", 10.0f, juce::Font::bold) };
     // helpers
     void makeButton(int idx);
     juce::Point<float> getPointAlongShufflePolyline(float t) const;
@@ -707,6 +752,7 @@ private:
     bool clickToPulseOn = false;
     bool clickToPulseHover = false;
     bool hoverTextEnabled = true;
+    bool rotaryHandleHover = false;
     bool expanded6 = false;
     int hoverExtra6 = -1;
     int extra6Count = 4;
@@ -893,8 +939,11 @@ inline PlaygroundComponent::PlaygroundComponent()
                 int rotatedTriggerIdx = (triggerIdx + 4) & 15; // account for visual +4 rotation
                 if (patternBarActive && pattern.getStep(rotatedTriggerIdx))
                 {
-                    if (onTriggerOnceRequested)
-                        onTriggerOnceRequested();
+                    // Automatic pattern playback should not directly arm or
+                    // mutate processor state; prefer a separate callback so
+                    // the editor can handle preview/visual only behaviour.
+                    if (onAutoTriggerRequested)
+                        onAutoTriggerRequested();
                 }
 
             // End of bar: disable fill unless continuous (interval == 1)
@@ -1324,6 +1373,7 @@ inline void PlaygroundComponent::setClickToPulseHoverFromEditor(bool hover)
 }
 inline void PlaygroundComponent::paint(juce::Graphics &g)
 {
+    // Use member fonts (constructed in component lifetime) to avoid static CoreText teardown crashes
     // Draw run-state indicator behind the donut: compute its bounds and draw
     // it here BEFORE the donut so the donut will paint on top (visually
     // occluding the indicator), which guarantees the indicator sits "behind"
@@ -1373,8 +1423,8 @@ inline void PlaygroundComponent::paint(juce::Graphics &g)
         juce::Rectangle<float> amountRect(centreX - boxW * 0.5f, centreY - boxH * 0.5f, boxW, boxH);
         juce::Rectangle<float> autoRect(amountRect.withY(amountRect.getY() - boxH - gapY));
         juce::Rectangle<float> rndRect(amountRect.withY(amountRect.getY() + boxH + gapY));
-        auto fontSmall = juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold));
-        auto fontMid = juce::Font(juce::FontOptions("Arial", 15.0f, juce::Font::bold));
+        const juce::Font &fontSmall = fontSmall12;
+        const juce::Font &fontMid = fontMid15;
         const float cornerR = 16.0f;
         // Draw AUTO with rounded TOP corners only (cyan styling when enabled)
         {
@@ -1504,7 +1554,7 @@ inline void PlaygroundComponent::paint(juce::Graphics &g)
 
             int numeric = 50 + (int)std::round(linearShufflePos * 25.0f);
             g.setColour(UiThemeColours::cyan());
-            g.setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)));
+            g.setFont(fontHover12);
             g.drawFittedText(juce::String(numeric), (int)(posPt.x - innerR), (int)(posPt.y - innerR), (int)(innerR * 2), (int)(innerR * 2), juce::Justification::centred, 1);
         }
         else if (selectedShuffle >= 1 && selectedShuffle <= shufflePositions.size())
@@ -1523,10 +1573,18 @@ inline void PlaygroundComponent::paint(juce::Graphics &g)
             g.setColour(UiThemeColours::base());
             g.fillEllipse(pos.x - innerR, pos.y - innerR, innerR * 2, innerR * 2);
 
-            static const float sizes[7] = {11, 12, 13, 14, 15, 16, 17};
-            float fontSize = (pos.id >= 1 && pos.id <= 7) ? sizes[pos.id - 1] : 12.0f;
+            const juce::Font shuffleFonts[7] = {
+                juce::Font(juce::FontOptions(11.0f, juce::Font::bold)),
+                juce::Font(juce::FontOptions(12.0f, juce::Font::bold)),
+                juce::Font(juce::FontOptions(13.0f, juce::Font::bold)),
+                juce::Font(juce::FontOptions(14.0f, juce::Font::bold)),
+                juce::Font(juce::FontOptions(15.0f, juce::Font::bold)),
+                juce::Font(juce::FontOptions(16.0f, juce::Font::bold)),
+                juce::Font(juce::FontOptions(17.0f, juce::Font::bold))
+            };
             g.setColour(UiThemeColours::cyan());
-            g.setFont(juce::Font(juce::FontOptions("Arial", fontSize, juce::Font::bold)));
+            int fIdx = (pos.id >= 1 && pos.id <= 7) ? (pos.id - 1) : 1;
+            g.setFont(shuffleFonts[fIdx]);
 
             float offX = 0, offY = 0;
             int si = selectedShuffle - 1;
@@ -1549,20 +1607,31 @@ inline void PlaygroundComponent::paint(juce::Graphics &g)
         // If the editor forced hover points to the small click/pulse control (idx 7),
         // show the concise help text only.
         if (forcedHoverIndex == 7)
-            label = "Sample-click or pulse";
+            label = "Click or Pulse";
         else
             label = hoverTexts[forcedHoverIndex];
     }
     else if (ringHoverSegment >= 0)
         label = "Re-sync at step " + juce::String(ringHoverSegment + 1);
+    else if (hoverIndex == 7)
+    {
+        // Hovering the rotary: show rotary hoverText only
+        if (hoverTexts.size() > 7)
+            label = hoverTexts[7];
+    }
+    else if (clickToPulseHover)
+    {
+        // Hovering the small button inside rotary: show only 'Click or Pulse'
+        label = "Click or Pulse";
+    }
     else if (hoverIndex >= 0 && hoverIndex < hoverTexts.size())
     {
-        // When hovering the small circle (idx 7) we want a concise single-line
-        // help text instead of the numbered long description + appended suffix.
-        if (hoverIndex == 7)
-            label = "Sample-click or pulse";
-        else
-            label = juce::String(hoverIndex + 1) + ": " + hoverTexts[hoverIndex];
+        label = juce::String(hoverIndex + 1) + ": " + hoverTexts[hoverIndex];
+    }
+    else if (rotaryHandleHover && hoverTexts.size() > 7)
+    {
+        // Fallback: show rotary hoverText if rotaryHandleHover is true
+        label = hoverTexts[7];
     }
     else if (hoverShuffleId != -1)
     {
@@ -1581,19 +1650,20 @@ inline void PlaygroundComponent::paint(juce::Graphics &g)
     {
         if (label.isNotEmpty())
             label += " — ";
-        label += "Click - Pulse";
+        label += "Click or Pulse";
     }
     if (hoverTextEnabled && label.isNotEmpty())
     {
         // move hover text up 1px for tighter layout
         auto area = juce::Rectangle<int>(8, getHeight() - 17, getWidth() - 16, 18);
         g.setColour(UiThemeColours::cyan());
-        g.setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)));
+        g.setFont(fontHover12);
         g.drawFittedText(label, area, juce::Justification::centred, 1);
     }
 }
 inline void PlaygroundComponent::paintOverChildren(juce::Graphics &g)
 {
+    // Use member fonts (constructed in component lifetime) to avoid static CoreText teardown crashes
     if (circles.size() <= 1)
         return;
 
@@ -1607,7 +1677,7 @@ inline void PlaygroundComponent::paintOverChildren(juce::Graphics &g)
     g.setColour(col);
     g.fillEllipse(c1.x - outerRScaled, c1.y - outerRScaled, outerRScaled * 2, outerRScaled * 2);
 
-    float insetR = 22.0f;
+    float insetR = 24.0f;
     float insetRScaled = insetR * (1.0f + 0.2f * fOuter);
     g.setColour(UiThemeColours::base());
     g.fillEllipse(c1.x - insetRScaled, c1.y - insetRScaled, insetRScaled * 2, insetRScaled * 2);
@@ -1615,7 +1685,7 @@ inline void PlaygroundComponent::paintOverChildren(juce::Graphics &g)
     int stepNum = externalStepForDisplay > 0 ? externalStepForDisplay : (ring ? ring->getCurrentStepLogical() : -1);
     juce::String stepText = stepNum > 0 ? juce::String(stepNum) : "-";
     g.setColour(UiThemeColours::cyan());
-    g.setFont(juce::Font(juce::FontOptions("Arial", 30.0f, juce::Font::bold)));
+    g.setFont(fontStep30);
     g.drawFittedText(stepText, (int)(c1.x - insetRScaled), (int)(c1.y - insetRScaled), (int)(insetRScaled * 2), (int)(insetRScaled * 2), juce::Justification::centred, 1);
 
     if (circles.size() > 7)
@@ -1639,30 +1709,81 @@ inline void PlaygroundComponent::paintOverChildren(juce::Graphics &g)
         g.setColour(UiThemeColours::base());
         g.fillEllipse(c6.x - insetR6, c6.y - insetR6, insetR6 * 2, insetR6 * 2);
         g.setColour(UiThemeColours::cyan());
-        g.setFont(juce::Font(juce::FontOptions("Arial", 22.0f, juce::Font::bold)));
+        g.setFont(fontMain6_22);
         g.drawFittedText(juce::String(mainCircle6Value), (int)(c6.x - insetR6), (int)(c6.y - insetR6), (int)(insetR6 * 2), (int)(insetR6 * 2), juce::Justification::centred, 1);
         if (popup6.isVisible() || popup6.isAnimating())
             popup6.draw(g, c6.x, c6.y, c6.r);
     }
 
-    if (circles.size() > 3)
+        if (circles.size() > 3)
+        {
+            const auto &c3 = circles.getReference(3);
+            float insetR3 = 17.0f;
+            g.setColour(UiThemeColours::base());
+            g.fillEllipse(c3.x - insetR3, c3.y - insetR3, insetR3 * 2, insetR3 * 2);
+            g.setColour(UiThemeColours::cyan());
+            // If label is a numeric interval (e.g. "4","8","16",...), draw it larger
+            juce::String lbl3 = mainCircle3Label.trim();
+            bool smallText = lbl3.equalsIgnoreCase("RND") || lbl3.equalsIgnoreCase("OFF");
+            bool isNumber = !smallText;
+            if (!smallText)
+            {
+                if (lbl3.isEmpty()) isNumber = false;
+                for (int i = 0; i < lbl3.length(); ++i)
+                {
+                    const juce::juce_wchar ch = lbl3[i];
+                    if (! juce::CharacterFunctions::isDigit(ch)) { isNumber = false; break; }
+                }
+            }
+            if (smallText)
+                g.setFont(fontRndSmall14);
+            else if (isNumber)
+                g.setFont(fontRndNum24);
+            else
+                g.setFont(fontRndSmall14);
+            g.drawFittedText(lbl3, (int)(c3.x - insetR3), (int)(c3.y - insetR3), (int)(insetR3 * 2), (int)(insetR3 * 2), juce::Justification::centred, 1);
+            if (popup3.isVisible() || popup3.isAnimating())
+                popup3.draw(g, c3.x, c3.y, c3.r);
+        }
+
+    // Draw countdown arc on inner circle (idx3) when an auto-trigger interval is set.
+    if (circles.size() > 3 && autoTriggerIntervalBars > 0 && !autoTriggerRandom)
     {
         const auto &c3 = circles.getReference(3);
-        float insetR3 = 17.0f;
-        g.setColour(UiThemeColours::base());
-        g.fillEllipse(c3.x - insetR3, c3.y - insetR3, insetR3 * 2, insetR3 * 2);
-        g.setColour(UiThemeColours::cyan());
-        g.setFont(juce::Font(juce::FontOptions("Arial", 14.0f, juce::Font::bold)));
-        g.drawFittedText(mainCircle3Label, (int)(c3.x - insetR3), (int)(c3.y - insetR3), (int)(insetR3 * 2), (int)(insetR3 * 2), juce::Justification::centred, 1);
-        if (popup3.isVisible() || popup3.isAnimating())
-            popup3.draw(g, c3.x, c3.y, c3.r);
+        const float insetR3 = 17.0f;
+        int interval = juce::jmax(1, autoTriggerIntervalBars);
+        // elapsed completed bars since last auto-trigger
+        double elapsedBars = (double) barsSinceAutoTrigger;
+        // approximate intra-bar progress using ring/external step (1..16)
+        int step = externalStepForDisplay > 0 ? externalStepForDisplay : (ring ? ring->getCurrentStepLogical() : -1);
+        double intra = 0.0;
+        if (step > 0)
+            intra = (double)(juce::jlimit(1, 16, step) - 1) / 16.0; // 0..0.9375
+        double frac = juce::jlimit(0.0, 1.0, (elapsedBars + intra) / (double) interval);
+        if (frac > 0.0001)
+        {
+            const float strokeW = 2.0f;
+            juce::Path arcPath;
+            // Start at 3 o'clock (pointing right), then sweep clockwise
+            const float startAng = 0.0f; // 3 o'clock (right)
+            const float sweep = (float)(frac * juce::MathConstants<float>::twoPi);
+            const float r = insetR3 - strokeW +1.1f ;
+            // Move to arc start point
+            const float sx = c3.x + std::cos(startAng) * r;
+            const float sy = c3.y + std::sin(startAng) * r;
+            arcPath.startNewSubPath(sx, sy);
+            // Clockwise arc: set last arg to true
+            arcPath.addArc(c3.x - r, c3.y - r, r * 2.0f, r * 2.0f, startAng, startAng + sweep, true);
+            g.setColour(UiThemeColours::cyan());
+            g.strokePath(arcPath, juce::PathStrokeType(strokeW, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        }
     }
 
     // (Shuffle debug overlay removed)
     // Status LED (top-right)
-    const float ledR = 6.0f;
-    float cx = (float)getWidth() - 6.0f;
-    float cy = 12.0f;
+    const float ledR = 3.0f;
+    float cx = (float)getWidth() - 3.0f;
+    float cy = 13.5f;
     juce::Colour ledColour;
     juce::String statusLabel;
     switch (statusState)
@@ -1689,19 +1810,18 @@ inline void PlaygroundComponent::paintOverChildren(juce::Graphics &g)
     }
     // Draw subtle outer glow for contrast (LED and status text moved +5px in X)
     g.setColour(UiThemeColours::cyan().withAlpha(0.12f));
-    g.fillEllipse(cx - (ledR + 3.0f), cy - (ledR + 3.0f), (ledR + 3.0f) * 2, (ledR + 3.0f) * 2);
+    g.fillEllipse(cx - (ledR + 1.5f), cy - (ledR + 1.5f), (ledR + 1.5f) * 2, (ledR + 1.5f) * 2);
     g.setColour(ledColour);
     g.fillEllipse(cx - ledR, cy - ledR, ledR * 2, ledR * 2);
     // Thin outer stroke for crisp edge visibility
     g.setColour(UiThemeColours::base().withAlpha(0.9f));
     g.drawEllipse(cx - ledR, cy - ledR, ledR * 2, ledR * 2, 1.2f);
     // Text to left of LED (moved right along with LED)
-    juce::Font sf(juce::FontOptions("Arial", 11.0f, juce::Font::bold));
-    g.setFont(sf);
+    g.setFont(fontStatus10);
     float textRight = cx - ledR + 2.0f;
     juce::Rectangle<float> txtArea(11.0f + 5.0f, cy - 8.0f, textRight - (11.0f + 5.0f), 16.0f);
     g.setColour(UiThemeColours::cyan());
-    g.drawFittedText(statusLabel, txtArea.toNearestInt(), juce::Justification::right, 1);
+    g.drawFittedText(statusLabel, txtArea.toNearestInt(), juce::Justification::centredLeft, 1);
 }
 inline void PlaygroundComponent::mouseDown(const juce::MouseEvent &e)
 {
@@ -1778,6 +1898,9 @@ inline void PlaygroundComponent::mouseDown(const juce::MouseEvent &e)
         else
             patternDragPaintState = !pattern.getStep(hr.index); // flip base state
         pattern.setStep(hr.index, patternDragPaintState);
+        // Notify editor/host that pattern changed
+        if (onPatternChanged)
+            onPatternChanged((uint16_t) pattern.getBitmask());
         repaint();
         return; // swallow
     }
@@ -1931,20 +2054,17 @@ inline void PlaygroundComponent::mouseDown(const juce::MouseEvent &e)
             togglePopup6();
             return;
         }
-        if (hr.index == 7)
-        {
-            isDraggingOffsetRotary = true;
-            offsetDragStart = e.position;
-            offsetRotaryStartT = offsetRotaryT;
-            offsetRotaryT = angleToRotaryT(e.position);
-            if (onClickRateRequested)
-            {
-                int nearest = (int)std::round(offsetRotaryT * (offsetRotarySteps - 1));
-                onClickRateRequested(juce::jlimit(0, offsetRotarySteps - 1, nearest));
-            }
-            repaint();
-            return;
-        }
+        // Do NOT allow rotary to change on click, only on drag
+        // if (hr.index == 7)
+        // {
+        //     isDraggingOffsetRotary = true;
+        //     offsetRotaryT = angleToRotaryT(e.position);
+        //     {
+        //         onClickRateRequested(juce::jlimit(0, offsetRotarySteps - 1, nearest));
+        //     }
+        //     repaint();
+        //     return;
+        // }
         break;
     case ZoneType::ShufflePoint:
     {
@@ -1976,19 +2096,13 @@ inline void PlaygroundComponent::mouseDown(const juce::MouseEvent &e)
         return;
     }
     case ZoneType::RotaryHandle:
-    {
+        // Only start drag, do not change value on click
         isDraggingOffsetRotary = true;
         offsetDragStart = e.position;
         offsetRotaryStartT = offsetRotaryT;
-        offsetRotaryT = angleToRotaryT(e.position);
-        if (onClickRateRequested)
-        {
-            int nearest = (int)std::round(offsetRotaryT * (offsetRotarySteps - 1));
-            onClickRateRequested(juce::jlimit(0, offsetRotarySteps - 1, nearest));
-        }
+        // Do NOT update offsetRotaryT or call onClickRateRequested here
         repaint();
         return;
-    }
     default:
         break;
     }
@@ -2018,6 +2132,8 @@ inline void PlaygroundComponent::mouseDrag(const juce::MouseEvent &e)
             {
                 lastPatternDragWedge = rotated;
                 pattern.setStep(rotated, patternDragPaintState);
+                if (onPatternChanged)
+                    onPatternChanged((uint16_t) pattern.getBitmask());
                 repaint();
             }
         }
@@ -2236,6 +2352,7 @@ inline void PlaygroundComponent::mouseMove(const juce::MouseEvent &e)
             }
         }
     }
+    // Separate hover for rotary and Click Pulse
     switch (hr.type)
     {
     case ZoneType::RingCenter:
@@ -2245,10 +2362,10 @@ inline void PlaygroundComponent::mouseMove(const juce::MouseEvent &e)
         newHover = hr.index;
         break;
     case ZoneType::ClickPulseButton:
-        newHover = 7;
+        newHover = 8; // Unique index for Click Pulse
         break;
     case ZoneType::RotaryHandle:
-        newHover = 7;
+        newHover = 7; // Unique index for rotary
         break;
     case ZoneType::PopupItem3:
         newHover = 3;
@@ -2259,11 +2376,18 @@ inline void PlaygroundComponent::mouseMove(const juce::MouseEvent &e)
     default:
         break;
     }
+    // Track hover for rotary and Click Pulse independently
+    bool rotaryHover = (hr.type == ZoneType::RotaryHandle);
     bool pulseHover = (hr.type == ZoneType::ClickPulseButton);
     if (pulseHover != clickToPulseHover)
     {
         clickToPulseHover = pulseHover;
         setMouseCursor(clickToPulseHover ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+    }
+    if (rotaryHover != rotaryHandleHover)
+    {
+        rotaryHandleHover = rotaryHover;
+        repaint();
     }
     if (newHover != hoverIndex)
     {
@@ -2382,9 +2506,7 @@ inline void PlaygroundComponent::makeButton(int idx)
             repaint();
         };
         // Run indicator is drawn statically in PlaygroundComponent::paint()
-        // so we no longer create a persistent visible child here. Clicks are
         // handled via the ring center callback which forwards to the editor
-        // (APVTS) path.
     }
     else if (idx == 2)
     {
@@ -2559,6 +2681,8 @@ inline void PlaygroundComponent::randomizePatternSteps()
         int stored = uiStep1to16ToStoredIndex(pickUi);
         pattern.setStep(stored, true); // ensure at least one active so fill isn't silent
     }
+    if (onPatternChanged)
+        onPatternChanged((uint16_t) pattern.getBitmask());
 }
 
 // ======= UI setters implemented inline =======
@@ -2567,6 +2691,21 @@ inline void PlaygroundComponent::setPopup3Index(int popupIndex)
     auto labs = popup3.getLabels();
     if (popupIndex >= 0 && popupIndex < labs.size())
         mainCircle3Label = labs.getReference(popupIndex);
+
+    // Update interval and reset arc progress
+    int newInterval = 0;
+    juce::String lbl = mainCircle3Label.trim();
+    if (lbl.equalsIgnoreCase("OFF"))
+        newInterval = 0;
+    else if (lbl.equalsIgnoreCase("RND"))
+        newInterval = 0; // handled elsewhere
+    else
+        newInterval = lbl.getIntValue();
+    if (autoTriggerIntervalBars != newInterval)
+    {
+        autoTriggerIntervalBars = newInterval;
+        barsSinceAutoTrigger = 0;
+    }
     repaint();
 }
 

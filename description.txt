@@ -1,0 +1,52 @@
+function description of UI idx:
+i will use midi numbers to keep writing slim.
+when DAW is playing we count 1 to 16 each bar, starting with bar 1 as the first bar at start (not 0).
+Bar sync always refers to step 1. 
+At DAW start, counting starts with step 1 to step16 continuosly repeating for each following bar.
+
+tick = the unit of a clock message 248, midi has 24 ticks ppq = 6 ticks per step(16th)
+248 = clock message, always sent continuosly after 250. always stopped sending when 252 was sent. (stop exception: IDLE ON in header-submenu)
+250 = start message when triggered , always quantized to the first tick in a 16th step. if idx8 is true , automatically sets resync flag  if idx8 is true, ignores resynv if idx8 = false.
+252 = stop message
+NOW = current step
+editmode = idx2 (on/off) - stepsequencer of pattern visible when ON. clickable inner wedges to set step active/off
+pattern = stepsequencer with 16 steps (1-16 = 1 bar), where active steps (clickable in editmode) will cause a start message (250). the only pattern we are talking about is this!
+pattern only valid /active for 1 BAR, unless idx3 menu was set to 1 (trigger each BAR). if idx8 resync is true, always send 250 after pattern has finished, then continue only clock sends. one-shot!
+pattern/patternsteps can be edited with clicking idx2 on/off.
+grid = 6 clocks per 16th step,  while grid is bended by shuffle .
+resync = start (250) quantize to grid, at next-bar , if next-bar is not NOW, resync flag set and scheduled until NOW = next-bar. 
+next-bar = step 1 * offset step
+offset step is set by idx0 outer ring wedges 1 - 16. If offset step < NOW when flag set, wait until cycle will reach offset-step = NOW.
+
+
+rule 1 = if 250 was send/triggered , if idx8 is true, automatically sets resync flag
+rule 2 = a resync flag is mono. if many events causing a resync flag set within a bar , first flag rules , following flags ignored until resync was fired.
+rule 3 = resync always takes the shortest. example: if a flag was set at step 10, next-bar is 12 (step 1 * offset 12), resync will fire at that step (NOW = 12), not adding another bar-round (1-16).
+
+
+idx0 , the centered big ring - with selectable wedges for offset , inner circle used as runButton to start or stop .
+
+idx1 - medium ring with step numbers showing current step.
+this button is used for manually triggering 250 in sync at the current grid , by aligning 250 with first 248 out of 6 per step.
+so if manually triggered, the next grid-step will send 250 additionally to its clocks per step. 
+it quantizes 250 to next 16th step . first we send 250 followed instantly by 248 at same tick, then send following  5 ticks (start + 6 in total).
+this is 
+
+idx3 = pattern interval (BAR) - pattern will replace selected BAR (à 16 steps) - if interval/bar = 1, pattern will always play(loop) > special >  ignoring resync flag until BAR selection changes, then rule 1. 
+if interval/bar is for example 4, pattern will fire at bar 4, if set to 32, pattern waits 31 bar , then fires/starts. if selection is RND, pattern replaces/fires at random BAR. if OFF no pattern will ever start/fired.
+after pattern finish & idx8 = true > resync (rule 1) , if idx8 = false > pattern finishes without resync, continuing sending clocks.
+
+idx4 - shuffle intensity - either quantized 1-7 (909) or linear 50% - 75% ...dont change anything here
+
+idx5 - switch shuffle from 909 to linear , ON = linear, OFF = 909 ...(ignore for now)
+
+idx6 - clock rate with menu to select different rates: 32 (double tempo), 16 (normal tempo), 8 (half tempo) ,4 (quarter tempo).
+idx6 is not connected to idx8. if idx6 changes value, it always flags resync at next-bar, no matter what state (true/false) idx8 is set.
+
+idx7 - audio click with values: OFF, BEAT, 8TH, 16TH,24ppq. the small button in center of idx8 will switch click to 1 sample click vs 1ms pulse
+
+idx8 - gate resync:  if scheduled/flag set and gate is 0, resync ignored, if gate is 1, resync will fire next-bar.
+
+then : If a rate change sets a resync but an earlier resync target already exists in the same bar, keep the earlier (assumed) or replace? > rule 3!
+
+

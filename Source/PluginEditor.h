@@ -6,6 +6,7 @@
 #include "PluginProcessor.h"
 #include "RingToggle.h"
 #include "UiTheme.h"
+#include "UiComponents.h"
 #include "Pattern.h"
 
 #include "PlaygroundComponent.h"
@@ -27,53 +28,21 @@ public:
     void mouseMove(const juce::MouseEvent&) override;
 
 private:
+    // Header switch toggle (custom accent toggle in header)
+    std::unique_ptr<HeaderSwitchToggle> headerSwitchToggle;
+
+    // Pulse width slider (1–20 ms)
+    std::unique_ptr<juce::Slider> pulseWidthSlider;
+    std::unique_ptr<juce::Label> pulseWidthLabel;
+    std::unique_ptr<juce::Label> pulseWidthValueLabel;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> pulseWidthAttachment;
     ClockSyncAudioProcessor& processor;
 
     // Timer
     void timerCallback() override;
 
     // UI components
-    class FullWidthComboBox : public juce::ComboBox
-    {
-    public:
-        void paint(juce::Graphics& g) override
-        {
-            // Draw combo background only
-            getLookAndFeel().drawComboBox(g, getWidth(), getHeight(), false, 0, 0, 0, 0, *this);
-
-            // Show placeholder when no selection
-            if (getSelectedId() == 0)
-            {
-                juce::String placeholder = getTextWhenNothingSelected();
-                if (placeholder.isNotEmpty())
-                {
-                    g.setColour(findColour(juce::ComboBox::textColourId));
-                    g.setFont(juce::Font(juce::FontOptions("Arial", 13.0f, juce::Font::bold)));
-                    g.drawFittedText(placeholder, getLocalBounds().reduced(6, 0), juce::Justification::centred, 1);
-                }
-            }
-        }
-
-        void resized() override
-        {
-            // Base resized
-            juce::ComboBox::resized();
-
-            // Stretch child label/editor to full width
-            for (auto* c : getChildren())
-            {
-                if (auto* te = dynamic_cast<juce::TextEditor*>(c))
-                {
-                    te->setBounds(getLocalBounds().reduced(6, 0));
-                }
-                else if (auto* lb = dynamic_cast<juce::Label*>(c))
-                {
-                    lb->setBounds(getLocalBounds().reduced(6, 0));
-                    lb->setJustificationType(juce::Justification::centred);
-                }
-            }
-        }
-    } deviceBox;
+    FullWidthComboBox deviceBox;
     juce::TextButton refreshButton { "RESET" };
     juce::TextButton setupButton { "SETUP" };
     // Setup-mode toggles
@@ -86,28 +55,7 @@ private:
     // Name editor helper
     void toggleNameEditorOrCommit();
     // Small center-dot click toggle
-    class SmallDotToggle : public juce::ToggleButton {
-    public:
-        void setColours(juce::Colour offCol, juce::Colour onCol) { off = offCol; on = onCol; repaint(); }
-        void paintButton(juce::Graphics& g, bool, bool) override {
-            auto b = getLocalBounds().toFloat();
-            auto d = std::min(b.getWidth(), b.getHeight());
-            auto r = juce::Rectangle<float>(b.getCentreX() - d * 0.5f, b.getCentreY() - d * 0.5f, d, d);
-            g.setColour(getToggleState() ? on : off);
-            g.fillEllipse(r);
-        }
-        void mouseDown(const juce::MouseEvent& /*e*/) override
-        {
-            setToggleState(! getToggleState(), juce::sendNotification);
-        }
-        void mouseUp(const juce::MouseEvent& /*e*/) override
-        {
-            // suppress default mouseUp behaviour; handled on mouseDown
-        }
-    private:
-        juce::Colour off { juce::Colours::red };
-        juce::Colour on  { juce::Colours::cyan };
-    } clickButton;
+    SmallDotToggle clickButton;
     // Pattern start fine-tune UI removed
     // Idle clock toggle
     RingToggle idleClockToggle;
@@ -117,6 +65,7 @@ private:
     // (If a non-playground fallback mode is reintroduced, restore PopupMenuRing members.)
     // Shared playground component (migrated UI)
     std::unique_ptr<PlaygroundComponent> playgroundComp;
+    std::unique_ptr<ArrowDownComponent> arrowDown;
 
     // UI timing
     double lastUiUpdateMs { 0.0 };
@@ -138,17 +87,7 @@ private:
     std::unique_ptr<juce::TextEditor> nameEntryEditor;
 
     // Minimal help toggle: transparent background, only draws bold '?' text.
-    class HelpButton : public juce::TextButton {
-    public:
-        HelpButton() : juce::TextButton("?") {}
-        void paintButton(juce::Graphics& g, bool, bool) override {
-            // Use toggle state to choose colour: when ON -> cyan, when OFF -> darker cyan
-            juce::Colour col = getToggleState() ? UiThemeColours::cyan() : UiThemeColours::cyan().darker(1.0f);
-            g.setColour(col);
-            g.setFont(juce::Font(juce::FontOptions("Arial", 18.0f, juce::Font::bold)));
-            g.drawFittedText(getButtonText(), getLocalBounds(), juce::Justification::centred, 1);
-        }
-    } helpToggle;
+    HelpButton helpToggle;
     
 
     // LED animation
@@ -267,6 +206,7 @@ private:
     bool patternDragActive { false }; // true while mouse dragging over pattern
     bool patternDragSetState { false }; // desired state (on/off) applied to dragged wedges
     bool patternDragTouched[16] { false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false }; // prevent re-applying
+    int lastClickedStoredIndex { -1 }; // last clicked/dragged stored step index (0..15) for debug display
     void pushPatternStateToProcessor();
     void updatePatternParamFromPopup3(int popupIndex);
     void mouseDrag(const juce::MouseEvent& e) override; // implement pattern drag

@@ -240,9 +240,14 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
                 pParam->setValueNotifyingHost(on ? 1.0f : 0.0f);
                 pParam->endChangeGesture();
             }
-            // Schedule a resync immediately when Run is toggled ON
+            // Schedule a resync immediately when Run is toggled ON at the currently selected OFFSET step
             if (on && playgroundComp && playgroundComp->onResyncStepRequested)
-                playgroundComp->onResyncStepRequested(1); // step 1 = bar start
+            {
+                int offsetStep = 1;
+                if (auto* pi = dynamic_cast<juce::AudioParameterInt*>(processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramResyncOffsetStep)))
+                    offsetStep = juce::jlimit(1, 16, pi->get());
+                playgroundComp->onResyncStepRequested(offsetStep);
+            }
         };
         playgroundComp->onTriggerOnceRequested = [this](){
             ledPulseTarget = 1.0f; ledAnimator.start(); processor.requestTriggerOnce();
@@ -332,10 +337,11 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         playgroundComp->setRunState(runParamCached);
         if (auto* pi = dynamic_cast<juce::AudioParameterInt*>(apvts.getParameter(ClockSyncAudioProcessor::paramResyncOffsetStep)))
         {
-            playgroundComp->setResyncStepSelected(pi->get());
-            // Schedule a resync at the next bar when offset step changes
+            const int offsetStep = juce::jlimit(1, 16, pi->get());
+            playgroundComp->setResyncStepSelected(offsetStep);
+            // Schedule a resync at the next bar using the selected OFFSET step
             if (playgroundComp->onResyncStepRequested)
-                playgroundComp->onResyncStepRequested(1); // step 1 = bar start
+                playgroundComp->onResyncStepRequested(offsetStep);
         }
         int displayed = 16; switch (rateIndexCached){ case 0: displayed = 32; break; case 1: displayed = 16; break; case 2: displayed = 8; break; case 3: displayed = 4; break; default: break; }
         playgroundComp->setClockRateIndexValue(displayed);
@@ -382,7 +388,6 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         pulseWidthSlider = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::NoTextBox);
         pulseWidthSlider->setRange(1, 20, 1);
         pulseWidthSlider->setTextValueSuffix(" ms");
-        //pulseWidthSlider->setTooltip("Pulse Width (ms): 1–20 ms");
         pulseWidthSlider->setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
         pulseWidthSlider->setColour(juce::Slider::textBoxTextColourId, UiThemeColours::cyan());
         pulseWidthSlider->setColour(juce::Slider::thumbColourId, UiThemeColours::cyan());

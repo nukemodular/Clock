@@ -1,3 +1,4 @@
+
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -10,6 +11,10 @@ public:
     //==============================================================================
     ClockSyncAudioProcessor();
     ~ClockSyncAudioProcessor() override = default;
+
+    // Pulse width in ms (1–20, automatable, stored in APVTS)
+    void setPulseWidthMs(int ms);
+    int getPulseWidthMs() const;
 
     //==============================================================================
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
@@ -60,6 +65,24 @@ public:
     double getUiBpm() const { return uiBpm.load(std::memory_order_relaxed); }
     // Expose cached host bar number to UI/editor (-1 when unknown)
     int getUiExternalBarNumber() const { return uiExternalBarNumber.load(std::memory_order_relaxed); }
+    // Expose resync target and pending pattern restart target for UI debugging
+    long long getResyncTargetBar() const { return resyncTargetBar.load(std::memory_order_relaxed); }
+    int getResyncTargetStep() const { return resyncTargetStep.load(std::memory_order_relaxed); }
+    long long getPendingPatternRestartTargetBar() const { return pendingPatternRestartTargetBar.load(std::memory_order_relaxed); }
+    // Expose number of pending pattern PPQ entries and pending shuffle change for debugging
+    int getPendingPatternCount() const;
+    int getPendingShuffleStep() const;
+    bool getPendingBarRestart() const { return pendingBarRestart.load(std::memory_order_relaxed); }
+    bool getPendingStartFlag() const { return pendingStart; }
+    int getPendingRateIndex() const { return pendingRateIndex; }
+    long long getLastPatternFiredBar() const { return lastPatternFiredBar; }
+    long long getLastPatternRestartScheduledBar() const { return lastPatternRestartScheduledBar; }
+    long long getNextRandomPatternTargetBar() const { return nextRandomPatternTargetBar; }
+    // Diagnostics getters
+    int getLastStartSource() const;
+    int getPatternStartCount() const;
+    int getBarRestartStartCount() const;
+    int getResyncStartCount() const;
     // Expose cached time-signature and ppq-last-bar-start to UI/editor
     int getUiTimeSigNumerator() const;
     int getUiTimeSigDenominator() const;
@@ -103,14 +126,20 @@ public:
         // no internally generated Starts (manual trigger, pattern steps, bar restarts) are allowed. Host transport
         // Start/Continue remains unaffected.
         bool shouldAllowGeneratedStart() const noexcept {
-            int mode = patternBarsMode.load(std::memory_order_relaxed);
-            if (mode > 0) {
-                uint16_t mask = patternStepsMask.load(std::memory_order_relaxed);
-                if (mask == 0) return false;
-            }
-            return true;
+                // If Run is explicitly OFF, suppress internally generated Starts
+                // (pattern-driven, bar-restarts, resyncs). Manual triggers should
+                // still be able to cause a Start via the dedicated trigger path.
+                if (! runActive) return false;
+                int mode = patternBarsMode.load(std::memory_order_relaxed);
+                if (mode > 0) {
+                    uint16_t mask = patternStepsMask.load(std::memory_order_relaxed);
+                    if (mask == 0) return false;
+                }
+                return true;
         }
 private:
+    std::atomic<int> pulseWidthMs { 1 }; // mirror for fast access, but value comes from APVTS
+    juce::AudioParameterInt* pulseWidthParam = nullptr;
     //==============================================================================
     juce::AudioProcessorValueTreeState parameters;
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
@@ -151,6 +180,8 @@ private:
     float clickEnv { 0.0f };
     float clickGainLinear { 0.5f };
     float lastClickLevelDbCached { std::numeric_limits<float>::quiet_NaN() };
+    // Carry-over for click pulse tails beyond block end to ensure fixed ms-wide pulses across blocks.
+    int clickHoldRemainingSamples { 0 };
 
     // External MIDI output (device only)
     std::unique_ptr<juce::MidiOutput> externalMidiOut;
@@ -179,6 +210,11 @@ private:
     std::atomic<int> lastStartStep { -1 }; // 1..16 when last Start emitted
     // Flag set when host transport START edge observed; editor may consume to trigger UI reset
     std::atomic<bool> uiHostStartPending { false };
+    // Diagnostics: source and counters for last Start emission (1=pattern,2=barRestart,3=resync,4=host)
+    std::atomic<int> lastStartSource { 0 };
+    std::atomic<int> patternStartCount { 0 };
+    std::atomic<int> barRestartStartCount { 0 };
+    std::atomic<int> resyncStartCount { 0 };
     // Behaviour mode
     std::atomic<bool> legacyModeEnabled { false }; // false => modern (default), true => legacy pre-stop gating
     // Pattern sequencer state
@@ -192,7 +228,7 @@ private:
     // or by rate change (unconditional), or pattern completion (idx3≠1 & idx8 TRUE), it schedules a future Start at
     // offset step either in current bar (if ahead) or next bar (if behind). Replacement only if new target earlier.
     std::atomic<bool> resyncPending { false };            // true when a target is scheduled
-    std::atomic<long long> resyncTargetBar { -1 };        // bar index (0-based) where resync should fire
+    std::atomic<long long> resyncTargetBar { -1 };        // bar index (1-based) where resync should fire
     std::atomic<int> resyncTargetStep { -1 };             // 1..16 step within target bar
     long long lastPatternFiredBar { -1 }; // last bar number pattern fired
     long long nextRandomPatternTargetBar { -1 }; // target bar for random firing
@@ -211,11 +247,12 @@ private:
     void updatePatternParams();
     void preparePatternForBar(double barStartPPQ, double barLenQ);
     // suppressDiag: when true, internal PATTERN_DIAG logging is reduced for idempotent second pass.
-    void tryFirePattern(double ppqStart, double barLenQ, double barStartPPQ, int numSamples, juce::MidiBuffer& midi, juce::MidiBuffer& extClock, bool suppressDiag = false);
+    void tryFirePattern(double ppqStart, double barLenQ, double barStartPPQ, int numSamples, juce::MidiBuffer& midi, juce::MidiBuffer& extClock, bool suppressDiag = false, bool preview = false);
     int getPatternBarIntervalFromMode(int mode) const;
     // Attempt to (re)schedule resync target obeying shortest precedence.
     void attemptScheduleResync(long long currentBar, int currentStep, int offsetStep, bool force /* rate change */);
-    long long computeCurrentBar(double ppqStart, double barLenQ) const { return (long long) std::floor(ppqStart / juce::jmax(1e-9, barLenQ)); }
+    // Compute 1-based bar index for a given PPQ position (first bar == 1).
+    long long computeCurrentBar(double ppqStart, double barLenQ) const { return (long long) std::floor(ppqStart / juce::jmax(1e-9, barLenQ)) + 1; }
     void setPatternSteps(uint16_t mask) { patternStepsMask.store(mask, std::memory_order_relaxed); }
     void setPatternBarsMode(int mode) { patternBarsMode.store(mode, std::memory_order_relaxed); }
 
@@ -231,6 +268,11 @@ private:
     double fracAccPrimaryAfter  { 0.0 };
     double lastBpmForAcc { -1.0 };
     void resetAccumulators();
+    // Duplicate suppression helper: treats same bar+step or near-simultaneous
+    // sample offsets within `toleranceSamples` as duplicates.
+    // Increased default tolerance to cover small timing differences between
+    // pattern-driven and bar-restart scheduling paths (helps avoid double-triggers).
+    bool isDuplicateStart(long long barForStart, int stepForStart, int sampleOffset, int toleranceSamples = 64) const;
     struct BarRestartWindow { int gapStart{-1}; int gapEnd{-1}; int startSample{-1}; bool hasBoundary() const { return startSample >= 0; } };
     BarRestartWindow handleBarAlignedChanges(const juce::AudioPlayHead::CurrentPositionInfo& pos,
                                              int numSamples,
@@ -244,3 +286,9 @@ private:
 inline int ClockSyncAudioProcessor::getUiTimeSigNumerator() const { return uiTimeSigNumerator.load(std::memory_order_relaxed); }
 inline int ClockSyncAudioProcessor::getUiTimeSigDenominator() const { return uiTimeSigDenominator.load(std::memory_order_relaxed); }
 inline double ClockSyncAudioProcessor::getUiPpqPositionOfLastBarStart() const { return uiPpqPositionOfLastBarStart.load(std::memory_order_relaxed); }
+
+    // Diagnostics getters
+    inline int ClockSyncAudioProcessor::getLastStartSource() const { return lastStartSource.load(std::memory_order_relaxed); }
+    inline int ClockSyncAudioProcessor::getPatternStartCount() const { return patternStartCount.load(std::memory_order_relaxed); }
+    inline int ClockSyncAudioProcessor::getBarRestartStartCount() const { return barRestartStartCount.load(std::memory_order_relaxed); }
+    inline int ClockSyncAudioProcessor::getResyncStartCount() const { return resyncStartCount.load(std::memory_order_relaxed); }
