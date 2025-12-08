@@ -110,7 +110,13 @@ public:
         if (lastStepIndex >= 0)
             flashSegmentRaw(lastStepIndex, 1.0f, true, false);
     }
-    void triggerFullRingFlash(float intensity = 1.0f) { fullRingFlash = juce::jlimit(0.0f, 1.5f, intensity); }
+    void triggerFullRingFlash(float intensity = 1.0f)
+    {
+        fullRingFlash = juce::jlimit(0.0f, 1.5f, intensity);
+        // Ensure the decay timer is running so the cyan overlay fades out.
+        if (! isTimerRunning()) startTimerHz(60);
+        repaint();
+    }
     // state setters
     void setSpeedMultiplier(double m) { speedMultiplier = juce::jlimit(0.25, 4.0, m); }
     void setBpm(double b)
@@ -527,24 +533,20 @@ private:
             if (ringFlashes[i] > 0.0f || segmentFade[i] > 0.0f)
                 any = true;
         }
+        // Decay full ring flash
         if (fullRingFlash > 0.0f)
         {
             fullRingFlash *= 0.92f;
             if (fullRingFlash < 0.01f)
                 fullRingFlash = 0.0f;
-            else
-                any = true;
+            any = true;
         }
-        if (!any && !isPlaying)
+
+        if (any)
+            repaint();
+        else
             stopTimer();
     }
-    // members
-    bool isPlaying = false;
-    double bpm = 120.0;
-    double playStartMs = 0.0;
-    double masterStartMs = 0.0;
-    double lastTickMs = 0.0;
-    double tickAccumMs = 0.0;
     int lastStepIndex = -1;
     int selected = -1;
     int hovered = -1;
@@ -555,6 +557,13 @@ private:
     double speedMultiplier = 1.0;
     bool useExternalPlayhead = false;
     int externalPlayheadRaw = -1;
+    // timing/state
+    double masterStartMs = 0.0;
+    double playStartMs = 0.0;
+    double lastTickMs = 0.0;
+    double tickAccumMs = 0.0;
+    double bpm = 120.0;
+    bool isPlaying = false;
     float fullRingFlash = 0.0f;
     juce::Array<float> ringFlashes;
     juce::Array<float> segmentFade;
@@ -630,6 +639,8 @@ public:
     std::function<void(uint16_t)> onPatternChanged;
     // Additional callbacks the editor can wire for UI-only toggles
     std::function<void(bool)> onLinearShuffleModeChanged;
+    // Linear shuffle amount callback: sends continuous 0.5..0.75 range to editor
+    std::function<void(float)> onLinearShuffleAmountChanged;
 
     // External sync/setters
     // setRunState(on, notifyParam=true): when notifyParam==true this is a user action
@@ -798,19 +809,14 @@ public:
     juce::Random autoTriggerRng;       // random source for RND mode
     bool patternEditMode = false;      // active when pattern edit button (circle idx2) toggled on
     bool patternBarActive = false;     // true while pattern is firing steps this bar (one-bar fill unless interval=1 for continuous)
-    int rndPatternAmount = 50;         // 1..100 randomization density / probability
+    int rndPatternAmount = 6;          // 1..16: exact number of randomized steps
     bool autoRandomizePattern = false; // AUTO toggle: randomize pattern each time it engages
     bool rndAmountDragging = false;
     int rndAmountStart = 50;
     juce::Point<float> rndDragOrigin{0, 0};
     float rndTriggerFlash = 0.0f; // transient flash for RND button
     // Status LED recovery (header right side)
-    enum class StatusState
-    {
-        Idle,
-        Armed,
-        Pending
-    };
+    enum class StatusState { Idle, Armed, Pending };
     StatusState statusState = StatusState::Idle;
     float statusPulse = 0.0f; // pulse animation for Pending
     void setStatusState(StatusState s)
@@ -946,9 +952,12 @@ inline PlaygroundComponent::PlaygroundComponent()
                         onAutoTriggerRequested();
                 }
 
-            // End of bar: disable fill unless continuous (interval == 1)
+            // End of bar: the current pattern bar has just finished.
+            // Reset the global bar counter so the cyan progress starts at 0
+            // for the next bar, regardless of interval mode.
             if (patternBarActive && logical == 15)
             {
+                barsSinceAutoTrigger = 0; // begin counting fresh next bar
                 if (autoTriggerRandom || autoTriggerIntervalBars != 1)
                     patternBarActive = false;
             }
@@ -1096,6 +1105,9 @@ inline void PlaygroundComponent::setExternalBarNumber(int barNumber)
         return;
 
     int previous = lastExternalBarNumber;
+    // Capture whether the previous bar was a pattern-active bar so we can
+    // reset the progress counter right after it finishes.
+    const bool prevBarWasActive = (previous != -1) ? patternBarActive : false;
     lastExternalBarNumber = barNumber;
 
     // First time initialization: don't trigger immediately, just align counters
@@ -1106,7 +1118,15 @@ inline void PlaygroundComponent::setExternalBarNumber(int barNumber)
         return;
     }
 
-    // A new bar has begun (host-provided). Decide whether this bar should be a pattern fill
+    // A new bar has begun (host-provided).
+    // If the previous bar was a pattern bar, reset the progress counter now
+    // so the cyan progress starts at 0 for the new bar.
+    if (prevBarWasActive)
+    {
+        barsSinceAutoTrigger = 0;
+    }
+
+    // Decide whether this bar should be a pattern fill
     if (autoTriggerRandom)
     {
         if (autoTriggerRng.nextFloat() < (rndPatternAmount / 100.0f))
@@ -1380,7 +1400,9 @@ inline void PlaygroundComponent::paint(juce::Graphics &g)
     // the red donut in z-order. Keep the magenta diagnostic outline visible
     // in Release builds.
     juce::Rectangle<float> runRectFloat;
-    if (circles.size() > 0)
+    // Draw stop diagonal only when stopped AND pattern edit mode is OFF.
+    // In pattern edit mode, the diagonal is always hidden regardless of state.
+    if (circles.size() > 0 && !runState && !patternEditMode)
     {
         const auto &c0 = circles.getReference(0);
         auto r = RunButton::suggestedBoundsForCentre((int)std::round(c0.x), (int)std::round(c0.y));
@@ -1394,6 +1416,7 @@ inline void PlaygroundComponent::paint(juce::Graphics &g)
     // Draw the red donut (outer ring minus inner hole) so it paints on top of
     // the statically drawn run indicator above. This restores the original
     // visual where the run indicator sits behind the donut.
+    // Always draw the red donut background (outer circle), even in pattern edit mode
     if (circles.size() > 0)
     {
         const auto &c0 = circles.getReference(0);
@@ -1450,9 +1473,10 @@ inline void PlaygroundComponent::paint(juce::Graphics &g)
         // Amount rectangle (no rounded corners)
         g.setColour(UiThemeColours::accent().withAlpha(0.33f));
         g.fillRect(amountRect);
+        // Display random amount as 1..16
         g.setColour(UiThemeColours::cyan());
         g.setFont(fontMid);
-        g.drawFittedText(juce::String(rndPatternAmount), amountRect.toNearestInt(), juce::Justification::centred, 1);
+        g.drawFittedText(juce::String(juce::jlimit(1, 16, rndPatternAmount)), amountRect.toNearestInt(), juce::Justification::centred, 1);
         g.setColour(UiThemeColours::accent().withAlpha(0.66f));
         g.drawRect(amountRect);
         // Draw RND with rounded BOTTOM corners only (flash cyan when triggered)
@@ -1574,13 +1598,13 @@ inline void PlaygroundComponent::paint(juce::Graphics &g)
             g.fillEllipse(pos.x - innerR, pos.y - innerR, innerR * 2, innerR * 2);
 
             const juce::Font shuffleFonts[7] = {
-                juce::Font(juce::FontOptions(11.0f, juce::Font::bold)),
-                juce::Font(juce::FontOptions(12.0f, juce::Font::bold)),
-                juce::Font(juce::FontOptions(13.0f, juce::Font::bold)),
-                juce::Font(juce::FontOptions(14.0f, juce::Font::bold)),
-                juce::Font(juce::FontOptions(15.0f, juce::Font::bold)),
-                juce::Font(juce::FontOptions(16.0f, juce::Font::bold)),
-                juce::Font(juce::FontOptions(17.0f, juce::Font::bold))
+                juce::Font(juce::FontOptions("Arial", 11.0f, juce::Font::bold)),
+                juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)),
+                juce::Font(juce::FontOptions("Arial", 13.0f, juce::Font::bold)),
+                juce::Font(juce::FontOptions("Arial", 14.0f, juce::Font::bold)),
+                juce::Font(juce::FontOptions("Arial", 15.0f, juce::Font::bold)),
+                juce::Font(juce::FontOptions("Arial", 16.0f, juce::Font::bold)),
+                juce::Font(juce::FontOptions("Arial", 17.0f, juce::Font::bold))
             };
             g.setColour(UiThemeColours::cyan());
             int fIdx = (pos.id >= 1 && pos.id <= 7) ? (pos.id - 1) : 1;
@@ -1746,36 +1770,50 @@ inline void PlaygroundComponent::paintOverChildren(juce::Graphics &g)
                 popup3.draw(g, c3.x, c3.y, c3.r);
         }
 
-    // Draw countdown arc on inner circle (idx3) when an auto-trigger interval is set.
+    // Draw countdown that starts as a full circle and decreases counterclockwise.
+    // For interval=4: full -> 3/4 after 1 bar -> 1/2 after 2 bars -> 1/4 at the start of the firing bar (3 o'clock to 12) -> 0 by the end of the firing bar.
     if (circles.size() > 3 && autoTriggerIntervalBars > 0 && !autoTriggerRandom)
     {
         const auto &c3 = circles.getReference(3);
         const float insetR3 = 17.0f;
-        int interval = juce::jmax(1, autoTriggerIntervalBars);
-        // elapsed completed bars since last auto-trigger
-        double elapsedBars = (double) barsSinceAutoTrigger;
-        // approximate intra-bar progress using ring/external step (1..16)
+        const int interval = juce::jmax(1, autoTriggerIntervalBars);
+        // Compute elapsed progress across the interval so remaining = 1 - progress.
+        const int currentBar = juce::jmax(1, lastExternalBarNumber);
+        const int mod = (currentBar > 0) ? (currentBar % interval) : 0;
+        // Bars elapsed before the current bar within the cycle:
+        // For interval=4: mod=1 -> 0, mod=2 -> 1, mod=3 -> 2, mod=0 (firing bar) -> 3
+        int elapsedBars = 0;
+        if (interval > 0)
+            elapsedBars = (mod == 0) ? (interval - 1) : (mod - 1);
+        // Intra-bar progress from step (0..15 -> 0..15/16)
         int step = externalStepForDisplay > 0 ? externalStepForDisplay : (ring ? ring->getCurrentStepLogical() : -1);
         double intra = 0.0;
         if (step > 0)
-            intra = (double)(juce::jlimit(1, 16, step) - 1) / 16.0; // 0..0.9375
-        double frac = juce::jlimit(0.0, 1.0, (elapsedBars + intra) / (double) interval);
-        if (frac > 0.0001)
+            intra = (double)(juce::jlimit(1, 16, step) - 1) / 16.0;
+        // Progress through cycle and remaining fraction
+        double progress = ((double) elapsedBars + intra) / (double) interval; // 0..1
+        const double eps = 1.0 / 512.0;
+        if (progress < eps) progress = 0.0;
+        if (progress > 1.0 - eps) progress = 1.0;
+        const float remaining = juce::jlimit(0.0f, 1.0f, (float)(1.0 - progress));
+        // Draw a subtracting CCW arc: start full at 12 o'clock, shrink to empty by end of firing bar.
         {
             const float strokeW = 2.0f;
-            juce::Path arcPath;
-            // Start at 3 o'clock (pointing right), then sweep clockwise
-            const float startAng = 0.0f; // 3 o'clock (right)
-            const float sweep = (float)(frac * juce::MathConstants<float>::twoPi);
-            const float r = insetR3 - strokeW +1.1f ;
-            // Move to arc start point
-            const float sx = c3.x + std::cos(startAng) * r;
-            const float sy = c3.y + std::sin(startAng) * r;
-            arcPath.startNewSubPath(sx, sy);
-            // Clockwise arc: set last arg to true
-            arcPath.addArc(c3.x - r, c3.y - r, r * 2.0f, r * 2.0f, startAng, startAng + sweep, true);
-            g.setColour(UiThemeColours::cyan());
-            g.strokePath(arcPath, juce::PathStrokeType(strokeW, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            const float r = insetR3 - strokeW + 1.1f;
+            const float sweep = remaining * juce::MathConstants<float>::twoPi;
+            if (sweep > 0.0001f)
+            {
+                const float startAt12 = -juce::MathConstants<float>::halfPi; // 12 o'clock
+                // Rotate +90° to correct visual offset from 9 → 12
+                const float startAng = startAt12 + juce::MathConstants<float>::halfPi;
+                // JUCE's coordinate system has +Y down; adding angle sweeps visually counterclockwise.
+                const float endAng = startAng + sweep; // subtract CCW toward empty
+                juce::Path arcPath;
+                // Start a new subpath to avoid any line joining from previous path endpoints.
+                arcPath.addArc(c3.x - r, c3.y - r, r * 2.0f, r * 2.0f, startAng, endAng, true);
+                g.setColour(UiThemeColours::cyan());
+                g.strokePath(arcPath, juce::PathStrokeType(strokeW, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            }
         }
     }
 
@@ -1936,7 +1974,8 @@ inline void PlaygroundComponent::mouseDown(const juce::MouseEvent &e)
         {
             if (e.getNumberOfClicks() > 1)
             {
-                rndPatternAmount = 50;
+                // Reset to a sensible mid value within 1..16
+                rndPatternAmount = 8;
                 rndAmountDragging = false;
                 repaint();
                 return;
@@ -1967,8 +2006,8 @@ inline void PlaygroundComponent::mouseDown(const juce::MouseEvent &e)
                 mainCircle3Label = labs[clicked];
             // Map popup3 selection to auto trigger scheduling.
             // Indices: 0:RND 1:64 2:32 3:16 4:8 5:4 6:2 7:1 8:OFF
-            // NOTE: do not reset barsSinceAutoTrigger here — changing the
-            // interval should not immediately schedule or force a restart.
+            // Reset progress counter on change so cyan progress respects the
+            // new global bar count immediately.
             autoTriggerRandom = false;
             autoTriggerIntervalBars = 0;
             switch (clicked)
@@ -2002,6 +2041,9 @@ inline void PlaygroundComponent::mouseDown(const juce::MouseEvent &e)
                 autoTriggerIntervalBars = 0;
                 break; // OFF
             }
+            // Changing interval while running should restart the progress
+            // from 0 so the arc aligns with the new bar count immediately.
+            barsSinceAutoTrigger = 0;
             popup3.startCollapse();
             flashes.set(3, 1.0f);
             startFadeTimer();
@@ -2076,12 +2118,14 @@ inline void PlaygroundComponent::mouseDown(const juce::MouseEvent &e)
             // Map shuffle id (1..N) to linear position [0..1]
             int n = shufflePositions.size();
             linearShufflePos = juce::jlimit(0.0f, 1.0f, (sid - 1) / (float)(n - 1));
+            linearShuffleAmount = 0.5f + 0.25f * linearShufflePos;
             // Update selectedShuffle for consistency (round to nearest)
             selectedShuffle = sid;
             isDraggingShuffle = true;
             isDraggingLinear = true;
-            if (onShuffleStepRequested)
-                onShuffleStepRequested(juce::jlimit(1, n, selectedShuffle));
+            if (onLinearShuffleAmountChanged)
+                onLinearShuffleAmountChanged(linearShuffleAmount);
+            // Do not notify discrete shuffle step while in linear mode to avoid snapping
             repaint();
             return;
         }
@@ -2141,9 +2185,10 @@ inline void PlaygroundComponent::mouseDrag(const juce::MouseEvent &e)
     }
     if (patternEditMode && rndAmountDragging)
     {
+        // Map drag to 1..16 range; keep sensitivity reasonable.
         float dy = e.position.y - rndDragOrigin.y; // drag up decreases y -> increase amount
-        int delta = (int)std::round(-dy / 2.0f);   // sensitivity
-        rndPatternAmount = juce::jlimit(1, 100, rndAmountStart + delta);
+        int delta = (int)std::round(-dy / 4.0f);   // slightly slower sensitivity
+        rndPatternAmount = juce::jlimit(1, 16, rndAmountStart + delta);
         repaint();
         return;
     }
@@ -2153,12 +2198,9 @@ inline void PlaygroundComponent::mouseDrag(const juce::MouseEvent &e)
         {
             linearShufflePos = pointToShufflePolylineT(e.position);
             linearShuffleAmount = 0.5f + 0.25f * linearShufflePos;
-            if (onShuffleStepRequested)
-            {
-                int n = shufflePositions.size();
-                int nearest = 1 + (int)std::round(linearShufflePos * (n - 1));
-                onShuffleStepRequested(juce::jlimit(1, n, nearest));
-            }
+            if (onLinearShuffleAmountChanged)
+                onLinearShuffleAmountChanged(linearShuffleAmount);
+            // Suppress discrete shuffle notifications in linear mode
             int n = shufflePositions.size();
             int near2 = 1 + (int)std::round(linearShufflePos * (n - 1));
             if (near2 != selectedShuffle)
@@ -2229,6 +2271,8 @@ inline void PlaygroundComponent::mouseUp(const juce::MouseEvent &e)
             int nearest = 1 + (int)std::round(linearShufflePos * (n - 1));
             selectedShuffle = juce::jlimit(1, n, nearest);
             linearShuffleAmount = 0.5f + 0.25f * linearShufflePos;
+            if (onLinearShuffleAmountChanged)
+                onLinearShuffleAmountChanged(linearShuffleAmount);
             repaint();
             return;
         }
@@ -2664,22 +2708,25 @@ inline void PlaygroundComponent::startBeatPulse()
 }
 inline void PlaygroundComponent::randomizePatternSteps()
 {
-    // Randomization respects rndPatternAmount as activation probability per UI step (1..16)
-    float p = rndPatternAmount / 100.0f;
-    int activeCount = 0;
-    for (int ui = 1; ui <= 16; ++ui)
+    // Randomize exactly N UI steps (N = rndPatternAmount, clamped to 1..16).
+    const int N = juce::jlimit(1, 16, rndPatternAmount);
+    // Clear all steps first
+    for (int i = 0; i < 16; ++i)
+        pattern.setStep(i, false);
+    // Pick N unique UI steps
+    juce::Array<int> all;
+    for (int ui = 1; ui <= 16; ++ui) all.add(ui);
+    // Fisher-Yates shuffle using autoTriggerRng
+    for (int i = all.size() - 1; i > 0; --i)
     {
-        bool on = autoTriggerRng.nextFloat() < p;
-        int stored = uiStep1to16ToStoredIndex(ui);
-        pattern.setStep(stored, on);
-        if (on)
-            ++activeCount;
+        int j = autoTriggerRng.nextInt(i + 1);
+        std::swap(all.getReference(i), all.getReference(j));
     }
-    if (activeCount == 0)
+    for (int k = 0; k < N && k < all.size(); ++k)
     {
-        int pickUi = 1 + autoTriggerRng.nextInt(16);
-        int stored = uiStep1to16ToStoredIndex(pickUi);
-        pattern.setStep(stored, true); // ensure at least one active so fill isn't silent
+        int ui = all[k];
+        int stored = uiStep1to16ToStoredIndex(ui);
+        pattern.setStep(stored, true);
     }
     if (onPatternChanged)
         onPatternChanged((uint16_t) pattern.getBitmask());

@@ -127,14 +127,8 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     // Status bar (LED + status string) – painted above playground
     statusBar = std::make_unique<StatusBarComponent>();
     addAndMakeVisible(*statusBar);
-    // Ensure statusBar has an initial geometry so it is visible immediately
-    // (resized() will update this later). This prevents the header background
-    // from covering the status area before the first explicit resized()/repaint().
+    // Initialize visible content (bounds set centrally in resized()).
     {
-        const int headerH = 30;
-        const int w = 50;
-        statusBar->setBounds(getWidth() - w - 5, 0, w, headerH);
-        // Initialize visible content without changing colour/alpha.
         juce::String st = idleModeButton.getToggleState() ? "IDLE" : "STOP";
         statusBar->setStatusText(st);
         statusBar->setLedLevel(ledLevel);
@@ -155,8 +149,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     addAndMakeVisible(*headerSwitchToggle);
     headerSwitchToggle->setSize(12, 20);
     headerSwitchToggle->setVisible(true);
-    // Force absolute placement to match design: x=286,y=5,w=10,h=20
-    headerSwitchToggle->setBounds(286, 5, 10, 20);
+    // Geometry set centrally in resized(); keep interaction flags here.
     headerSwitchToggle->setInterceptsMouseClicks(true, true);
     headerSwitchToggle->toFront(true);
     headerSwitchToggle->setAlwaysOnTop(true);
@@ -167,9 +160,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         int extra = (!on && (setupSubmenuTargetOn || setupSubmenuProgress > 0.0f)) ? (int) std::round(setupSubmenuProgress * 25.0f) : 0;
         setSize(getWidth(), baseH + extra);
     };
-    nameMidiSwitch.setVisible(true);
-    refreshButton.setVisible(true);
-    setupButton.setVisible(true);
+    // Header visibility handled centrally via updateHeaderVisibility()
     // Ensure pulseWidthValueLabel is always constructed before use
     if (!pulseWidthValueLabel)
     {
@@ -256,6 +247,8 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
             manualTriggerPlayheadDelta = (selectedResyncStepCached > 0)
                 ? (selectedResyncStepCached - manualTriggerRelativeStepAtTrigger + 16) % 16 : 0;
             if (playgroundComp) playgroundComp->flashSegmentLogical(manualTriggerRelativeStepAtTrigger);
+            // Shift dancer phase by one 16th (3 frames) on manual trigger
+            if (dancerFrameCount > 0) dancerFrameOffset = (dancerFrameOffset + 3) % dancerFrameCount;
             repaint(ringArea);
         };
         // Automatic pattern playback should NOT call into `processor.requestTriggerOnce()`
@@ -360,9 +353,18 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
             playgroundComp->setPopup3Index(popupIndex);
             processor.getAPVTS().state.setProperty("ui.popup3Index", popupIndex, nullptr);
         }
-        // Persist linear shuffle toggle when changed in the playground
+        // Persist linear shuffle toggle and wire amount changes immediately
         playgroundComp->onLinearShuffleModeChanged = [this](bool on){
             processor.getAPVTS().state.setProperty("ui.linearShuffleMode", on, nullptr);
+        };
+        playgroundComp->onLinearShuffleAmountChanged = [this](float amount) {
+            // Map 0.5..0.75 to 0..1 for param `shuffleLinear`
+            float t01 = juce::jlimit(0.0f, 1.0f, (amount - 0.5f) / 0.25f);
+            if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramShuffleLinear)) {
+                p->beginChangeGesture();
+                p->setValueNotifyingHost(t01);
+                p->endChangeGesture();
+            }
         };
         // Restore shuffle visual selection from parameter (if present)
         if (auto* sh = dynamic_cast<juce::AudioParameterInt*>(processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramShuffleStep)))
@@ -423,14 +425,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     // Ensure default ComboBox label doesn't draw; use FullWidthComboBox overlay colour instead
     nameBox.setColour(juce::ComboBox::textColourId, juce::Colours::transparentBlack);
     nameBox.setColour(FullWidthComboBox::overlayTextColourId, UiThemeColours::cyan());
-    nameBox.setVisible(nameMidiSwitch.getToggleState());
-    deviceBox.setVisible(!nameMidiSwitch.getToggleState());
-    // refreshButton and setupButton are always visible, do not change their visibility here
-    idleModeButton.setVisible(false);
-    legacyModernButton.setVisible(false);
-    sppButton.setVisible(false);
-    pulseWidthSlider->setVisible(false);
-    pulseWidthValueLabel->setVisible(false);
+    // Defer combo/header/submenu visibility to centralized helpers
     // NAME/MIDI toggle initial appearance
     {
         const bool showName = nameMidiSwitch.getToggleState();
@@ -445,23 +440,30 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         // If submenu is open, close it by toggling setupButton and setting animation flags
         // if (setupButton.getToggleState())
         // {   
-             
-            
-        //     setupSubmenuTargetOn = false;
+            // Linear shuffle wiring done during initialisation; no header/NAME toggle dependency
         //     setupSubmenuAnimatingHide = true;
         //     setupButton.setToggleState(false, juce::sendNotification);
         //     //  updateSetupSubmenuLayout(); repaint(); return;
         //     if (setupAnimator)
         //         setupAnimator->start();
                
+                // Sync playground handle from parameter value (once here too in case of user toggling NAME/MIDI)
+                if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramShuffleLinear)) {
+                    float t01 = p->getValue();
+                    float amount = 0.5f + 0.25f * juce::jlimit(0.0f, 1.0f, t01);
+                    if (playgroundComp)
+                        playgroundComp->setLinearShuffleModeState((bool) processor.getAPVTS().state.getProperty("ui.linearShuffleMode", false));
+                    if (playgroundComp->onLinearShuffleAmountChanged)
+                        playgroundComp->onLinearShuffleAmountChanged(amount);
+                }
         // }
         const bool showName = nameMidiSwitch.getToggleState();
         nameMidiSwitch.setButtonText(showName ? "MIDI" : "NAME");
         auto txtCol = (showName ? UiThemeColours::accent() : UiThemeColours::cyan());
         nameMidiSwitch.setColour(juce::TextButton::textColourOffId, txtCol);
         nameMidiSwitch.setColour(juce::TextButton::textColourOnId,  txtCol);
-        nameBox.setVisible(showName);
-        deviceBox.setVisible(!showName);
+        // Centralized header visibility update
+        updateHeaderVisibility();
         // setupButton and refreshButton are always visible, do not change their visibility here
         if (showName) { loadInstrumentNamesFromState(); populateNameBox(); nameBox.toFront(true); }
         else { deviceBox.toFront(true); }
@@ -469,6 +471,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         resized(); repaint(0,0,getWidth(), 34);
         processor.getAPVTS().state.setProperty("ui.showNameMode", showName, nullptr);
     };
+        if (auto* sh = dynamic_cast<juce::AudioParameterInt*>(processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramShuffleStep)))
 
     // Setup submenu animator
     setupAnimator = std::make_unique<juce::Animator>(juce::ValueAnimatorBuilder{}
@@ -562,6 +565,123 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
 
     // Ensure submenu controls are laid out and visibility is correct after construction
     updateSetupSubmenuLayout();
+
+    // Create bottom-right setup corner button with SVG icon (setup.svg).
+    // For now it's just clickable (no wiring yet).
+    if (! setupCornerButton)
+    {
+        // Use ImageFitted so JUCE does not paint a default grey button background
+        setupCornerButton = std::make_unique<juce::DrawableButton>("setupCorner", juce::DrawableButton::ImageFitted);
+        addAndMakeVisible(*setupCornerButton);
+        setupCornerButton->setInterceptsMouseClicks(true, true);
+        setupCornerButton->setTooltip("setup");
+        setupCornerButton->setAlwaysOnTop(true);
+
+        auto loadSvgDrawable = []() -> std::unique_ptr<juce::Drawable>
+        {
+            // Load embedded setup.svg from BinaryData to avoid host-dependent file paths
+            if (auto d = juce::Drawable::createFromImageData(BinaryData::setup_svg, BinaryData::setup_svgSize))
+                return d;
+            return nullptr;
+        };
+
+        setupCornerDrawable = loadSvgDrawable();
+        setupSvgLoaded = (setupCornerDrawable != nullptr);
+        if (setupCornerDrawable)
+        {
+            // Build tinted OFF/ON drawable images (cyan darker for OFF, cyan for ON)
+            auto makeTintedDrawable = [&](juce::Colour tint) -> std::unique_ptr<juce::Drawable> {
+                const int imgSz = 64;
+                juce::Image img(juce::Image::ARGB, imgSz, imgSz, true);
+                {
+                    juce::Graphics gg(img);
+                    juce::Rectangle<float> area(0, 0, (float) imgSz, (float) imgSz);
+                    setupCornerDrawable->drawWithin(gg, area, juce::RectanglePlacement::centred, 1.0f);
+                }
+                // Recolour all non-transparent pixels to the given tint, preserving alpha
+                juce::Image::BitmapData bd(img, juce::Image::BitmapData::readWrite);
+                for (int y = 0; y < imgSz; ++y)
+                    for (int x = 0; x < imgSz; ++x)
+                    {
+                        auto col = bd.getPixelColour(x, y);
+                        if (col.getAlpha() > 0)
+                            bd.setPixelColour(x, y, tint.withAlpha(col.getFloatAlpha()));
+                    }
+                auto di = std::make_unique<juce::DrawableImage>();
+                di->setImage(img);
+                return di;
+            };
+
+            setupCornerOffDrawable = makeTintedDrawable(UiThemeColours::cyan().darker(1.0f));
+            setupCornerOnDrawable  = makeTintedDrawable(UiThemeColours::cyan());
+
+            setupCornerButton->setImages(
+                setupCornerOffDrawable.get(), setupCornerOffDrawable.get(), setupCornerOnDrawable.get(), setupCornerOffDrawable.get(),
+                setupCornerOnDrawable.get(),  setupCornerOnDrawable.get(),  setupCornerOnDrawable.get(),  setupCornerOnDrawable.get());
+            setupCornerButton->setColour(juce::DrawableButton::backgroundColourId, juce::Colours::transparentBlack);
+            setupCornerButton->setColour(juce::DrawableButton::backgroundOnColourId, juce::Colours::transparentBlack);
+            setupCornerButton->setOpaque(false);
+            setupCornerButton->setWantsKeyboardFocus(false);
+            setupCornerButton->setColour(juce::DrawableButton::textColourId, juce::Colours::transparentBlack);
+            // Make it toggle visually (no behavior wiring yet)
+            setupCornerButton->setClickingTogglesState(true);
+            // Draw icon half-sized within the button bounds
+            setupCornerButton->setEdgeIndent(7);
+        }
+        // Independent toggle button: open/close a canvas overlay (not linked to header submenu)
+        setupCornerButton->onClick = [this]() {
+            if (! setupCornerButton) return;
+            setupOverlayVisible = setupCornerButton->getToggleState();
+            // Create/remove a transparent component to consume mouse inside overlay bounds
+            if (setupOverlayVisible)
+            {
+                if (! setupOverlayComp)
+                {
+                    setupOverlayComp = std::make_unique<juce::Component>();
+                    setupOverlayComp->setInterceptsMouseClicks(true, false);
+                    addAndMakeVisible(*setupOverlayComp);
+                    setupOverlayComp->toFront(true);
+                    // Create close button (X)
+                    setupOverlayClose = std::make_unique<juce::TextButton>("X");
+                    setupOverlayClose->setClickingTogglesState(false);
+                    setupOverlayClose->setColour(juce::TextButton::textColourOffId, UiThemeColours::cyan());
+                    setupOverlayClose->setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+                    setupOverlayClose->setColour(juce::TextButton::buttonOnColourId, juce::Colours::transparentBlack);
+                    addAndMakeVisible(*setupOverlayClose);
+                    setupOverlayClose->onClick = [this]() {
+                        if (setupCornerButton)
+                            setupCornerButton->setToggleState(false, juce::sendNotification);
+                        setupOverlayVisible = false;
+                        setupOverlayComp.reset();
+                        setupOverlayClose.reset();
+                        repaint();
+                    };
+                }
+                // Position overlay comp to match visual overlay rect
+                const int overlayW = 240;
+                const int overlayH = 180;
+                const int headerH = 30;
+                const int canvasH = juce::jmax(0, getHeight() - headerH);
+                const int x = (getWidth() - overlayW) / 2;
+                const int y = headerH + (canvasH - overlayH) / 2;
+                setupOverlayComp->setBounds(x, y, overlayW, overlayH);
+                if (setupOverlayClose)
+                    setupOverlayClose->setBounds(x + overlayW - 22, y + 6, 16, 16);
+            }
+            else
+            {
+                setupOverlayComp.reset();
+                setupOverlayClose.reset();
+            }
+            repaint();
+        };
+    }
+    // Setup corner button placement handled in resized(); visibility centralized.
+    if (setupCornerButton) setupCornerButton->toFront(true);
+
+    // Centralize initial visibility and layout.
+    updateHeaderVisibility();
+    resized();
 }
 
 void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
@@ -592,6 +712,8 @@ void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
         // sit between the dancer and the ring wedges with correct z-order. The
         // editor no longer draws it here to avoid duplicate/ misplaced renders.
     }
+    // Build number drawing moved to paintOverChildren to ensure visibility
+
     // Pattern ring drawn in paintOverChildren when edit mode active (to appear above playground).
 }
 
@@ -622,6 +744,17 @@ HitResult ClockSyncAudioProcessorEditor::routeHit(const juce::MouseEvent& e, boo
 
 void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
 {
+    // Build number: render above base/content but below submenu/header
+    {
+        g.setColour(UiThemeColours::cyan().withAlpha(0.95f));
+        g.setFont(juce::Font(juce::FontOptions("Arial", 10.0f, juce::Font::bold)));
+        juce::String buildText = juce::String(PLUGIN_VERSION_WITH_BUILD);
+        const int x = 10;
+        const int y = 30; // just under the 30px header
+        const int w = 220;
+        const int h = 16;
+        g.drawFittedText(buildText, juce::Rectangle<int>(x, y, w, h), juce::Justification::left, 1);
+    }
     // Submenu should draw first (behind header) so header masks its top portion.
     const bool submenuActive = (setupSubmenuTargetOn || setupSubmenuProgress > 0.0f);
     if (submenuActive)
@@ -633,7 +766,7 @@ void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
         juce::Rectangle<float> submenuRect(0.0f, topY, (float)getWidth(), submenuH);
         // Drop shadow for submenu (lighter & smaller than header shadow). Draw first, then fill.
         {
-            juce::DropShadow ds(juce::Colours::black.withAlpha(0.30f), 10, juce::Point<int>(0, 4));
+            juce::DropShadow ds(juce::Colours::black.withAlpha(0.45f), 14, juce::Point<int>(0, 6));
             // Slightly shrink width to avoid horizontal bleed; allow a couple px extra height for blur.
             auto shadowInt = submenuRect.toNearestInt().expanded(-2, 2);
             ds.drawForRectangle(g, shadowInt);
@@ -715,6 +848,16 @@ void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
 
     // Skip fallback ring/dancer drawing when playground is active.
 
+    // (Removed) No header diagnostics per user request
+
+    // --- Diagnostics: SVG missing indicator near setup icon ---
+    if (!setupSvgLoaded)
+    {
+        g.setColour(juce::Colours::red);
+        g.setFont(juce::Font(juce::FontOptions("Arial", 10.0f, juce::Font::bold)));
+        g.drawFittedText("SVG MISSING", juce::Rectangle<int>(getWidth()-100, getHeight()-40, 96, 16), juce::Justification::centredRight, 1);
+    }
+
 
     // Draw popup menu rings (if configured). Place them at the centres of
     // the components they replace so they visually substitute the legacy UI.
@@ -733,22 +876,27 @@ void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
     // StatusBarComponent now paints status + LED.
 
     // Debug offset panel removed per user request to declutter lower area during shuffle hit testing.
-    // Draw small build number at lower-right (same vertical region as hoverText)
+    // Draw the independent setup overlay on top of everything (front-most)
+    if (setupOverlayVisible)
     {
-        // Compute build-only string from PLUGIN_VERSION_WITH_BUILD macro (extract trailing "build N").
-        juce::String ver = PLUGIN_VERSION_WITH_BUILD;
-        juce::String buildStr = ver;
-        const int idx = ver.indexOf("build ");
-        if (idx >= 0)
-            buildStr = ver.substring(idx + 6); // number and trailing
-        g.setColour(UiThemeColours::accent().darker(3.33f));
-        // Use the newer FontOptions-based constructor to avoid deprecated API warnings
-        g.setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::plain)));
-        const int pad = 6;
-        juce::Rectangle<int> r(getWidth() - 80, 224, 74, 16);
-        g.drawFittedText("3.0." + buildStr.trim(), r, juce::Justification::centredRight, 1);
+        const int overlayW = 240;
+        const int overlayH = 180;
+        const int headerH = 30;
+        const int canvasH = juce::jmax(0, getHeight() - headerH);
+        const int x = (getWidth() - overlayW) / 2;
+        const int y = headerH + (canvasH - overlayH) / 2;
+        juce::Rectangle<float> rc((float)x, (float)y, (float)overlayW, (float)overlayH);
+        // Semi-transparent base colour with rounded corners
+        g.setColour(UiThemeColours::base().withAlpha(0.88f));
+        g.fillRoundedRectangle(rc, 6.0f);
+        // Optional subtle outline
+        g.setColour(UiThemeColours::cyan().withAlpha(0.33f));
+        g.drawRoundedRectangle(rc, 6.0f, 1.0f);
+        // Title
+        g.setColour(UiThemeColours::cyan());
+        g.setFont(juce::Font(juce::FontOptions("Arial", 13.0f, juce::Font::bold)));
+        g.drawFittedText("MIDI Remote Setup", rc.toNearestInt().reduced(10, 8).removeFromTop(18), juce::Justification::centredLeft, 1);
     }
-
     // Debug stack (left side): show last clicked stored step, logical mapping, host bar and scheduled targets
     // {
     //     const int leftX = 6;
@@ -828,6 +976,8 @@ void ClockSyncAudioProcessorEditor::resized()
         // comboboxes share same bounds; only one visible at a time
         deviceBox.setBounds(comboX, marginY + 1 , comboW, contentH - 2);
         nameBox.setBounds(comboX, marginY + 1, comboW, contentH - 2);
+        // Centralize header visibility each layout pass
+        updateHeaderVisibility();
 
         // Setup submenu layout now handled in paintOverChildren via animation; initial hidden position set here.
         updateSetupSubmenuLayout();
@@ -873,8 +1023,12 @@ void ClockSyncAudioProcessorEditor::resized()
         // Resync step selection handled by ring segments.
 
         // Help toggle: keep its authored placement relative to canvas (use previous explicit position)
-        const int helpSize = 25;
-        helpToggle.setBounds(0, 215, helpSize, helpSize); // moved +5px in Y
+        const int helpSize = 30;
+        helpToggle.setBounds(0, 210, helpSize, helpSize); // align with setup icon
+        if (setupCornerButton){
+            setupCornerButton->setBounds(getWidth() - helpSize, 210, helpSize, helpSize);
+            setupCornerButton->setEdgeIndent(helpSize / 4);
+        }
     }
     else
     {
@@ -884,7 +1038,11 @@ void ClockSyncAudioProcessorEditor::resized()
         // shuffleScaleToggle removed.
         // no legacy triggerRect fallback
         // stepOffsetMenu no longer present.
-        const int helpSize = 25; helpToggle.setBounds(0, 215, helpSize, helpSize); // moved +5px in Y (fallback)
+        const int helpSize = 30; helpToggle.setBounds(0, 210, helpSize, helpSize); // align with setup icon (fallback)
+        if (setupCornerButton){
+            setupCornerButton->setBounds(getWidth() - helpSize, 210, helpSize, helpSize);
+            setupCornerButton->setEdgeIndent(helpSize / 4);
+        }
     }
 
     // Position status bar inside header (right-aligned region)
@@ -893,7 +1051,7 @@ void ClockSyncAudioProcessorEditor::resized()
         // Provide area matching previous manual drawing region (right segment of header minus margins)
         const int headerH = 30;
         const int w = 50; // width for text + LED
-        statusBar->setBounds(getWidth() - w - 5, 0, w, headerH);
+        statusBar->setBounds(getWidth() - w - 6, 0, w, headerH);
     }
 
     // Force absolute placement to keep toggle at exact design coordinates.
@@ -903,6 +1061,34 @@ void ClockSyncAudioProcessorEditor::resized()
         headerSwitchToggle->toFront(true);
         headerSwitchToggle->setAlwaysOnTop(true);
     }
+}
+
+bool ClockSyncAudioProcessorEditor::keyPressed(const juce::KeyPress& key)
+{
+    if (setupOverlayVisible && key == juce::KeyPress(juce::KeyPress::escapeKey))
+    {
+        if (setupCornerButton)
+            setupCornerButton->setToggleState(false, juce::sendNotification);
+        setupOverlayVisible = false;
+        setupOverlayComp.reset();
+        setupOverlayClose.reset();
+        repaint();
+        return true;
+    }
+    return false;
+}
+
+// Centralized header visibility management
+void ClockSyncAudioProcessorEditor::updateHeaderVisibility()
+{
+    const bool showName = nameMidiSwitch.getToggleState();
+    nameBox.setVisible(showName);
+    deviceBox.setVisible(!showName);
+    nameMidiSwitch.setVisible(true);
+    refreshButton.setVisible(true);
+    setupButton.setVisible(true);
+    if (statusBar) statusBar->setVisible(true);
+    if (setupCornerButton) setupCornerButton->setVisible(true);
 }
 
 // Update setup submenu button positions based on current animation progress (without repaint).
@@ -1423,6 +1609,24 @@ void ClockSyncAudioProcessorEditor::timerCallback()
         statusBar->setStatusText(st);
         statusBar->setLedLevel(ledLevel);
     }
+    // Consume pattern-triggered idx1 blink requests and mirror manual click visuals
+    {
+        const int blinkStep = processor.consumeUiIdx1BlinkStep(); // 1..16 or 0 if none
+        if (blinkStep > 0)
+        {
+            // Flash idx1 like manual click: pulse LED and trigger playground visuals
+            ledPulseTarget = 1.0f; ledAnimator.start();
+            if (playgroundComp)
+            {
+                (void) playgroundComp->handleExternalClickIndex(1);
+                playgroundComp->flashSegmentLogical(blinkStep);
+            }
+            // Shift dancer by one step (3 frames) on pattern Start
+            if (dancerFrameCount > 0)
+                dancerFrameOffset = (dancerFrameOffset + 3) % dancerFrameCount;
+            needRing = true;
+        }
+    }
     if (needAll) { repaint(); return; }
     if (needRing) repaint(ringArea);
     // Trigger updates can affect the ring drawing (visual slice near trigger). Ensure
@@ -1475,27 +1679,62 @@ void ClockSyncAudioProcessorEditor::drawDancer(juce::Graphics& g)
 {
     if (dancerFrameCount <= 0 || dancerFrames.empty() || ringArea.isEmpty()) return;
     const unsigned long long pulses = processor.getUiClockCounter();
-    if (runParamCached && dancerFrameCount > 1)
+    if (dancerFrameCount > 1)
     {
-        // Map clock division (rateIndexCached) to dancer pulses-per-quarter:
-        // 32 -> 24 PPQ, 16 -> 12 PPQ, 8 -> 6 PPQ, 4 -> 6 PPQ
-        int pulsesInQuarter = 24; // default for 32
-        switch (rateIndexCached)
+        const bool isRunning = processor.getUiIsRunning();
+        const bool clocksAdvancing = isRunning && (pulses != dancerLastDrawnClockCounter);
+        if (isRunning)
         {
-            case 0: pulsesInQuarter = 24; break; // division 32
-            case 1: pulsesInQuarter = 12; break; // division 16
-            case 2: pulsesInQuarter = 6;  break; // division 8
-            case 3: pulsesInQuarter = 6;  break; // division 4
-            default: pulsesInQuarter = 24; break;
+            if (clocksAdvancing)
+            {
+                // Normal mode: advance strictly on MIDI clocks using PPQ mapping.
+                int pulsesInQuarter = 24; // default for 32
+                switch (rateIndexCached)
+                {
+                    case 0: pulsesInQuarter = 24; break; // division 32
+                    case 1: pulsesInQuarter = 12; break; // division 16
+                    case 2: pulsesInQuarter = 6;  break; // division 8
+                    case 3: pulsesInQuarter = 6;  break; // division 4
+                    default: pulsesInQuarter = 24; break;
+                }
+                const int scaledCycle = pulsesInQuarter * 4; // global 0.25x speed
+                const int pInCycle = (int) (pulses % (unsigned long long) scaledCycle);
+                int frameIdx = (pInCycle * dancerFrameCount) / scaledCycle;
+                frameIdx = juce::jlimit(0, dancerFrameCount - 1, frameIdx);
+                // Apply frame offset (shift by multiples of 3 on triggers)
+                if (dancerFrameCount > 0)
+                {
+                    int off = dancerFrameOffset % dancerFrameCount;
+                    if (off < 0) off += dancerFrameCount;
+                    frameIdx = (frameIdx + off) % dancerFrameCount;
+                }
+                dancerLastFrame = frameIdx;
+                dancerLastDrawnClockCounter = pulses;
+            }
+            // else: running but no new clock -> hold last frame (no fallback animation)
         }
-        // Apply global dancer speed scale (0.25x) by enlarging the effective cycle length.
-        // Equivalent to dividing frame advancement by 4.
-        const int scaledCycle = pulsesInQuarter * 4; // slower cycle
-        const int pInCycle = (int) (pulses % (unsigned long long) scaledCycle);
-        int frameIdx = (pInCycle * dancerFrameCount) / scaledCycle;
-        frameIdx = juce::jlimit(0, dancerFrameCount - 1, frameIdx);
-        dancerLastFrame = frameIdx;
-        dancerLastDrawnClockCounter = pulses;
+        else
+        {
+            // Not running: show presync/idle 3-frame ping-pong only when transport is stopped.
+            const bool presync = processor.getUiPendingStart() || processor.getUiNextRestartPending();
+            const double bpm = juce::jmax(1.0, processor.getUiBpm());
+            const double quarterMs = (60.0 / bpm) * 1000.0;
+            const double nowMs = juce::Time::getMillisecondCounterHiRes();
+            const double tInQuarter = std::fmod(nowMs, quarterMs);
+            const int frames3 = juce::jmin(3, dancerFrameCount);
+            double x = (tInQuarter / quarterMs) * 2.0; // 0..2 over one quarter
+            if (x > 2.0) x -= std::floor(x);
+            double tri = 1.0 - std::fabs(x - 1.0); // 0..1..0 triangle
+            int localIdx = (int) std::floor(tri * (double) (frames3 - 1) + 0.5);
+            localIdx = juce::jlimit(0, frames3 - 1, localIdx);
+            int off = dancerFrameCount > 0 ? (dancerFrameOffset % dancerFrameCount) : 0;
+            if (off < 0) off += dancerFrameCount;
+            int blockStart = (off / 3) * 3; // nearest lower multiple of 3
+            int frameIdx = (blockStart + localIdx) % dancerFrameCount;
+            dancerLastFrame = frameIdx;
+            // Note: presync and fully idle use the same visual; differing only by transport state.
+            juce::ignoreUnused(presync);
+        }
     }
     juce::Drawable* drawable = dancerFrames[(size_t) dancerLastFrame].get();
     if (! drawable) return;
@@ -2144,7 +2383,7 @@ void ClockSyncAudioProcessorEditor::showNewNameDialog()
 
     nameEntryEditor = std::make_unique<juce::TextEditor>();
     nameEntryEditor->setText(juce::String());
-    nameEntryEditor->setFont(juce::Font(juce::FontOptions("Arial", 14.0f, juce::Font::plain)));
+    nameEntryEditor->setFont(juce::Font(juce::FontOptions("Arial", 14.0f, juce::Font::bold)));
     // Parent the inline editor to the top-level window so it appears above
     // other UI (including host-drawn overlays). Convert nameBox coords.
     nameEntryEditor->setColour(juce::TextEditor::textColourId, UiThemeColours::cyan());
@@ -2213,7 +2452,7 @@ void ClockSyncAudioProcessorEditor::toggleNameEditorOrCommit()
 
     nameEntryEditor = std::make_unique<juce::TextEditor>();
     nameEntryEditor->setText(cur);
-    nameEntryEditor->setFont(juce::Font(juce::FontOptions("Arial", 14.0f, juce::Font::plain)));
+    nameEntryEditor->setFont(juce::Font(juce::FontOptions("Arial", 14.0f, juce::Font::bold)));
     // Parent the inline editor to the top-level window so it appears above
     // other UI (including host-drawn overlays). Convert nameBox coords.
     nameEntryEditor->setColour(juce::TextEditor::textColourId, UiThemeColours::cyan());

@@ -391,7 +391,7 @@ public:
     void paint(juce::Graphics& g) override
     {
         auto b = getLocalBounds();
-        auto textArea = b.withTrimmedLeft(12);
+        auto textArea = b.withTrimmedLeft(10);
         g.setColour(UiThemeColours::cyan());
         g.setFont(juce::Font(juce::FontOptions("Arial", 10.0f, juce::Font::bold)));
         g.drawFittedText(statusText, textArea, juce::Justification::centredLeft, 1);

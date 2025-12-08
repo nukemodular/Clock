@@ -88,6 +88,21 @@ private:
 
     // Minimal help toggle: transparent background, only draws bold '?' text.
     HelpButton helpToggle;
+    // Bottom-right setup corner button (SVG icon)
+    std::unique_ptr<juce::DrawableButton> setupCornerButton;
+    std::unique_ptr<juce::Drawable> setupCornerDrawable; // keep SVG drawable alive
+    // Tinted variants for OFF/ON states (keep alive for DrawableButton images)
+    std::unique_ptr<juce::Drawable> setupCornerOffDrawable;
+    std::unique_ptr<juce::Drawable> setupCornerOnDrawable;
+    bool setupSvgLoaded { false }; // diagnostic: true if assets/setup.svg loaded
+
+    // Canvas overlay toggled by setup.svg (independent of header submenu)
+    bool setupOverlayVisible { false };
+    std::unique_ptr<juce::Component> setupOverlayComp; // consumes mouse inside overlay bounds
+    std::unique_ptr<juce::TextButton> setupOverlayClose; // "X" close affordance inside overlay
+
+    // Handle Escape to close overlay when visible
+    bool keyPressed(const juce::KeyPress& key) override;
     
 
     // LED animation
@@ -162,6 +177,8 @@ private:
 
     // Layout helper for animated submenu
     void updateSetupSubmenuLayout();
+    // Centralized visibility helper for header components
+    void updateHeaderVisibility();
 
     
     
@@ -194,6 +211,7 @@ private:
     int dancerFrameCount { 0 };              // number of loaded frames
     int dancerLastFrame { 0 };               // last computed frame index
     unsigned long long dancerLastDrawnClockCounter { 0 }; // last clock counter used for frame selection
+    int dancerFrameOffset { 0 };              // frame offset in frames; increments by 3 on triggers
     static constexpr int kDancerRefW = 355;  // reference design width
     static constexpr int kDancerRefH = 500;  // reference design height
     // Option: divisor for clock pulses per frame advance (1 => every pulse; 24 => quarter-note cycle)

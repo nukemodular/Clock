@@ -45,7 +45,7 @@ public:
     void drawButtonText(juce::Graphics& g, juce::TextButton& b, bool, bool) override
     {
         g.setColour(UiThemeColours::base());
-        g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)));
         g.drawFittedText(b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, 1);
     }
 
@@ -54,13 +54,13 @@ public:
         juce::ignoreUnused(isMouseOverButton, isButtonDown);
         drawButtonBackground(g, b, juce::Colours::transparentBlack, isMouseOverButton, isButtonDown);
         g.setColour(UiThemeColours::base());
-        g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)));
         g.drawFittedText(b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, 1);
     }
 
     void drawComboBox(juce::Graphics& g, int w, int h, bool, int, int, int, int, juce::ComboBox& box) override;
 
-    juce::Font getPopupMenuFont() override { return juce::Font(juce::FontOptions(12.0f, juce::Font::bold)); }
+    juce::Font getPopupMenuFont() override { return juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)); }
     juce::Font getComboBoxFont(juce::ComboBox&) override { return getPopupMenuFont(); }
 
     void drawPopupMenuBackground(juce::Graphics& g, int w, int h) override

@@ -63,6 +63,9 @@ public:
     bool getUiPendingStart() const { return uiPendingStart.load(std::memory_order_relaxed); }
     bool getUiNextRestartPending() const { return uiNextRestartPending.load(std::memory_order_relaxed); }
     double getUiBpm() const { return uiBpm.load(std::memory_order_relaxed); }
+    // Preview ring phase for pattern interval (0.0..1.0) and interval size
+    double getUiPreviewPhase() const { return uiPreviewPhase.load(std::memory_order_relaxed); }
+    int getUiPreviewInterval() const { return uiPreviewInterval.load(std::memory_order_relaxed); }
     // Expose cached host bar number to UI/editor (-1 when unknown)
     int getUiExternalBarNumber() const { return uiExternalBarNumber.load(std::memory_order_relaxed); }
     // Expose resync target and pending pattern restart target for UI debugging
@@ -89,6 +92,8 @@ public:
     double getUiPpqPositionOfLastBarStart() const;
     // Consume and clear the host-start pending flag (atomic fetch-and-clear)
     bool consumeUiHostStartPending() { return uiHostStartPending.exchange(false, std::memory_order_acq_rel); }
+    // Consume a pending idx1 blink step set by pattern triggers (returns 1..16, or 0 if none)
+    int consumeUiIdx1BlinkStep() { return uiBlinkIdx1Step.exchange(0, std::memory_order_acq_rel); }
     
 
     // Legacy mode: when enabled we emit a MIDI Stop a few ticks before each scheduled Start
@@ -113,6 +118,7 @@ public:
     static inline const juce::String paramTriggerModeEnabled { "triggerModeEnabled" }; // follow trigger with bar restart
     static inline const juce::String paramResyncOffsetStep { "resyncOffsetStep" }; // 1..16, step within bar where (re)start happens
     static inline const juce::String paramShuffleStep { "shuffleStep" }; // 1..7 discrete swing amount (1 none .. 7 heavy)
+    static inline const juce::String paramShuffleLinear { "shuffleLinear" }; // 0..1 continuous (used when linear mode enabled)
     static inline const juce::String paramDiagnostics { "diagnostics" }; // enable brief timing logs
     static inline const juce::String paramPatternBars { "patternBars" }; // OFF,1,2,4,8,16,32,64,RND
     static inline const juce::String paramPatternSteps { "patternSteps" }; // 16-bit bitmask persisted (default non-zero for first logical step)
@@ -152,6 +158,8 @@ private:
     // Bar-aligned scheduling
     int currentRateIndex { 1 }; // default 1 => 1/16 => 24
     int pendingRateIndex { -1 };
+    // Guard to ensure a rate-change realign schedules only one restart and does not re-fire next bar
+    std::atomic<bool> rateRealignActive { false };
     bool runActive { true };
     bool pendingStart { false };
     bool forceNextBarStart { false }; // when true, pendingStart will target the NEXT bar (always wrap) + offset step
@@ -167,6 +175,10 @@ private:
     int currentShuffleStep { 1 }; // active shuffle step (1..7)
     int pendingShuffleStep { -1 }; // scheduled shuffle change (apply at next 8th boundary)
     double applyShuffleAtPPQ { -1.0 }; // unswung PPQ position where pending shuffle becomes active
+    // Linear shuffle application: cache effective value and apply changes at next unswung 1/8 boundary
+    float currentLinearShuffleNorm { 0.0f };   // effective linear shuffle [0..1] used for timing
+    float pendingLinearShuffleNorm { -1.0f };  // pending linear shuffle change [0..1], applied at boundary
+    double applyLinearShuffleAtPPQ { -1.0 };   // PPQ position of next unswung 1/8 where pending linear becomes active
     bool suppressClockAtBoundaryOnce { false };       // when true, skip sending clock on the exact Start frame once
 
     // Diagnostics
@@ -195,6 +207,9 @@ private:
     std::atomic<bool> uiPendingStart { false };
     std::atomic<bool> uiNextRestartPending { false }; // show "NEXT" when a bar+offset restart is scheduled
     std::atomic<double> uiBpm { 120.0 }; // host tempo (fallback 120)
+    // Preview ring: phase 0..1 for current pattern interval, and interval size (bars)
+    std::atomic<double> uiPreviewPhase { 0.0 };
+    std::atomic<int> uiPreviewInterval { 0 };
     // Cached host-provided bar number (1-based). -1 means unknown/not provided.
     std::atomic<int> uiExternalBarNumber { -1 };
     // Cached host-provided time signature and last-bar PPQ. Denominator==0 => unknown.
@@ -210,6 +225,8 @@ private:
     std::atomic<int> lastStartStep { -1 }; // 1..16 when last Start emitted
     // Flag set when host transport START edge observed; editor may consume to trigger UI reset
     std::atomic<bool> uiHostStartPending { false };
+    // UI-only signal: when a pattern step triggers, request an idx1 blink with the logical step (1..16)
+    std::atomic<int> uiBlinkIdx1Step { 0 };
     // Diagnostics: source and counters for last Start emission (1=pattern,2=barRestart,3=resync,4=host)
     std::atomic<int> lastStartSource { 0 };
     std::atomic<int> patternStartCount { 0 };
@@ -230,6 +247,10 @@ private:
     std::atomic<bool> resyncPending { false };            // true when a target is scheduled
     std::atomic<long long> resyncTargetBar { -1 };        // bar index (1-based) where resync should fire
     std::atomic<int> resyncTargetStep { -1 };             // 1..16 step within target bar
+    // Distinguish resync requests originating from OFFSET changes (force=false)
+    // vs. those from rate changes (force=true), so we can co-emit a clock
+    // only for even OFFSET changes per user request.
+    std::atomic<bool> resyncFromOffsetPending { false };
     long long lastPatternFiredBar { -1 }; // last bar number pattern fired
     long long nextRandomPatternTargetBar { -1 }; // target bar for random firing
     long long lastPatternRestartScheduledBar { -1 }; // bar number where a trigger-mode restart was scheduled from pattern
@@ -246,6 +267,9 @@ private:
     int lastBarRestartStartSampleInBlock { -1 };
     void updatePatternParams();
     void preparePatternForBar(double barStartPPQ, double barLenQ);
+    // Recompute remaining pattern targets in current bar using latest shiftQ,
+    // keeping only those at or after fromPPQ.
+    void rescheduleRemainingPatternTargets(double barStartPPQ, double barLenQ, double fromPPQ);
     // suppressDiag: when true, internal PATTERN_DIAG logging is reduced for idempotent second pass.
     void tryFirePattern(double ppqStart, double barLenQ, double barStartPPQ, int numSamples, juce::MidiBuffer& midi, juce::MidiBuffer& extClock, bool suppressDiag = false, bool preview = false);
     int getPatternBarIntervalFromMode(int mode) const;
@@ -261,6 +285,9 @@ private:
     void updateDerivedParams();
     void generateClockAndClick(const juce::AudioPlayHead::CurrentPositionInfo& pos,
                                juce::AudioBuffer<float>&, juce::MidiBuffer&);
+    // Unified swing amount in quarter-notes (quantized or linear when enabled)
+    double getCurrentShiftQ(double barLenQ) const;
+    float getEffectiveLinearShuffleValue() const; // returns cached effective linear shuffle [0..1]
     // Persistent fractional accumulators for primary pulses (conservative persistence)
     // These carry fractional rounding remainders across blocks to reduce ±1-sample jitter
     // but are reset conservatively on transport/tempo/sample-rate/rate changes.
@@ -278,6 +305,34 @@ private:
                                              int numSamples,
                                              juce::MidiBuffer& midi,
                                              juce::MidiBuffer& extBuffer);
+
+    // Shared helper: emits MIDI Start at the first clock of target logical step
+    // using the same shuffle/parity grid as manual idx1. Co-emits the clock at
+    // that exact frame; does not suppress it. Returns true if scheduled within
+    // the current block.
+    bool emitStartAtFirstClock(int targetLogicalStep1to16,
+                               const juce::AudioPlayHead::CurrentPositionInfo& pos,
+                               int numSamples,
+                               juce::MidiBuffer& midi,
+                               juce::MidiBuffer& extClock,
+                               long long targetBar1Based,
+                               int tickAdjust = 0,
+                               bool resetAccums = true);
+
+    // Defer resync scheduling until a pending shuffle change has been applied
+    std::atomic<bool> resyncDeferredUntilShuffle { false };
+
+    // UI-only toggle persisted in APVTS state: when true, use linear shuffle mapping
+    // from 50% to 75% instead of quantised TR-909 style steps.
+    bool isLinearShuffleEnabled() const;
+    float getLinearShuffleValue() const; // 0..1 from parameter when linear mode is enabled
+    long long deferredResyncBar { -1 };
+    int deferredResyncCurrentStep { -1 };
+    int deferredResyncOffsetStep { -1 };
+
+    // Even-offset pretrigger: when true, schedule at step-1 but emit Start at OFFSET step.
+    std::atomic<bool> evenOffsetPretrigger { false };
+    int pretriggerTargetStep { -1 }; // 1..16 target step to fire after pretrigger at step-1
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ClockSyncAudioProcessor)
 };
