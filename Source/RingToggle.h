@@ -1,20 +1,21 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "UiTheme.h"
 
 // Simple elliptical toggle button (30x30 by design)
-// - Outer: kAccent filled ellipse
-// - Middle: inner ellipse reduced(8.0f) in kBase
-// - When ON: draw additional ellipse reduced(12.0f) in kCyan; when OFF: hide this cyan ellipse
+// - Outer: UiThemeColours::accent() filled ellipse
+// - Middle: inner ellipse reduced(8.0f) in UiThemeColours::base()
+// - When ON: draw additional ellipse reduced(12.0f) in UiThemeColours::cyan(); when OFF: hide this cyan ellipse
 // Usage: set size to at least 30x30; you can place larger, it will center a 30x30 disk
 class RingToggle : public juce::ToggleButton
 {
 public:
-    RingToggle() = default;
+    RingToggle(UiThemeColours& t) : theme(t) {}
 
-    void setColours(juce::Colour accent, juce::Colour base, juce::Colour cyan)
+    void setColours(juce::Colour, juce::Colour, juce::Colour)
     {
-        kAccent = accent; kBase = base; kCyan = cyan; repaint();
+        repaint();
     }
 
     // Preferred size helper
@@ -29,15 +30,15 @@ public:
         auto rf = square.toFloat();
 
         // Outer accent disk
-        g.setColour(kAccent);
+        g.setColour(theme.accent());
         g.fillEllipse(rf);
         // Middle base disk (reduced by 8px overall => 4px per side)
-        g.setColour(kBase);
+        g.setColour(theme.base());
         g.fillEllipse(rf.reduced(reducedSize));
         // ON state cyan disk (reduced by 12px overall => 6px per side)
         if (getToggleState())
         {
-            g.setColour(kCyan);
+            g.setColour(theme.cyan());
             g.fillEllipse(rf.reduced(reducedSize * 1.5f));
         }
     }
@@ -55,7 +56,5 @@ public:
     }
 
 private:
-    juce::Colour kAccent { juce::Colour::fromRGB(0xFF, 0x4E, 0x5B) };
-    juce::Colour kBase   { juce::Colour::fromRGB(0x26, 0x26, 0x26) };
-    juce::Colour kCyan   { juce::Colour::fromRGB(0x00, 0xD7, 0xFF) };
+    UiThemeColours& theme;
 };

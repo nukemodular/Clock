@@ -16,20 +16,304 @@
 
 namespace
 {
-    // Accent background variant
-    const juce::Colour kBaseLo  = UiThemeColours::base().darker(0.12f);
+    // Simple rectangular button
+    class SimpleRectButton : public juce::Button
+    {
+    public:
+        SimpleRectButton(const juce::String& name, UiThemeColours& t) : juce::Button(name), theme(t) {}
+        void paintButton(juce::Graphics& g, bool shouldDrawButtonAsMouseOver, bool shouldDrawButtonAsDown) override
+        {
+            auto bounds = getLocalBounds().toFloat();
+            auto cyanClicked = theme.cyan();
+            auto cyan = cyanClicked.withAlpha(0.5f);
+
+            if (shouldDrawButtonAsDown)
+            {
+                g.setColour(cyanClicked);
+                g.fillRect(bounds);
+                g.setColour(cyanClicked);   
+                g.drawRect(bounds, 1.0f);
+            }
+            else
+            {
+                g.setColour(cyan);
+                g.fillRect(bounds);
+                g.setColour(cyanClicked);   
+                g.drawRect(bounds, 1.0f);
+            }
+        }
+    private:
+        UiThemeColours& theme;
+    };
+
+    // Custom LNF for the slider text to ensure Arial Bold
+    class MidiRowLNF : public juce::LookAndFeel_V4
+    {
+    public:
+        MidiRowLNF(UiThemeColours& t) : theme(t)
+        {
+            setColour(juce::Slider::textBoxTextColourId, theme.cyan());
+            setColour(juce::Slider::textBoxOutlineColourId, theme.cyan());
+            setColour(juce::Slider::textBoxHighlightColourId, theme.accent().withAlpha(0.5f));
+        }
+        juce::Font getLabelFont(juce::Label&) override
+        {
+            return juce::Font(juce::FontOptions("Arial", 14.0f, juce::Font::bold));
+        }
+        juce::Label* createSliderTextBox(juce::Slider& slider) override
+        {
+            auto* l = new juce::Label();
+            l->setJustificationType(juce::Justification::centred);
+            l->setColour(juce::Label::textColourId, slider.findColour(juce::Slider::textBoxTextColourId));
+            l->setColour(juce::Label::outlineColourId, slider.findColour(juce::Slider::textBoxOutlineColourId));
+            l->setFont(getLabelFont(*l));
+            return l;
+        }
+    private:
+        UiThemeColours& theme;
+    };
+
+    class MidiRemoteRow : public juce::Component
+    {
+    public:
+        enum Type { Note, CC, Channel };
+        enum LayoutMode { Full, Compact };
+
+        MidiRemoteRow(const juce::String& labelText, Type type, std::atomic<int>& valueRef, UiThemeColours& t, LayoutMode mode = Full)
+            : value(valueRef), layoutMode(mode), theme(t), lnf(t), decBtn("-", t), incBtn("+", t)
+        {
+            label.setText(labelText, juce::dontSendNotification);
+            label.setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)));
+            label.setColour(juce::Label::textColourId, theme.cyan());
+            label.setJustificationType(juce::Justification::centredRight);
+            addAndMakeVisible(label);
+
+            // Value Box (using Slider in TextBoxOnly mode for display/entry)
+            valueSlider.setSliderStyle(juce::Slider::LinearBar); 
+            // Fixed size 40x20 requested
+            valueSlider.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 40, 20);
+            valueSlider.setLookAndFeel(&lnf);
+            
+            if (type == Channel)
+            {
+                valueSlider.setRange(0, 16, 1);
+                valueSlider.textFromValueFunction = [](double val) {
+                    if (val == 0) return juce::String("ALL");
+                    return juce::String((int)val);
+                };
+            }
+            else
+            {
+                valueSlider.setRange(-1, 127, 1);
+                if (type == Note)
+                {
+                    valueSlider.textFromValueFunction = [](double val) {
+                        if (val < 0) return juce::String("OFF");
+                        return juce::MidiMessage::getMidiNoteName((int)val, true, true, 3);
+                    };
+                }
+                else
+                {
+                     valueSlider.textFromValueFunction = [](double val) {
+                        if (val < 0) return juce::String("OFF");
+                        return juce::String((int)val);
+                    };
+                }
+            }
+            
+            // Ensure initial text is correct
+            valueSlider.setValue(value.load(), juce::dontSendNotification);
+            
+            valueSlider.setColour(juce::Slider::textBoxTextColourId, theme.cyan());
+            // Cyan outline requested
+            valueSlider.setColour(juce::Slider::textBoxOutlineColourId, theme.cyan());
+            // Greyish accent fill
+            valueSlider.setColour(juce::Slider::textBoxBackgroundColourId, theme.accent().withAlpha(0.5f));
+            valueSlider.setColour(juce::Slider::trackColourId, theme.accent().withAlpha(0.5f));
+            valueSlider.setColour(juce::Slider::backgroundColourId, theme.accent().withAlpha(0.5f));
+            
+            // Force update text
+            valueSlider.updateText();
+
+            valueSlider.onValueChange = [this]() {
+                value.store((int)valueSlider.getValue());
+            };
+            addAndMakeVisible(valueSlider);
+
+            decBtn.onClick = [this] { valueSlider.setValue(valueSlider.getValue() - 1.0); };
+            addAndMakeVisible(decBtn);
+
+            incBtn.onClick = [this] { valueSlider.setValue(valueSlider.getValue() + 1.0); };
+            addAndMakeVisible(incBtn);
+        }
+
+        ~MidiRemoteRow() override
+        {
+            valueSlider.setLookAndFeel(nullptr);
+        }
+
+        void resized() override
+        {
+            auto area = getLocalBounds();
+            
+            // Fixed dimensions
+            const int btnW = 10;
+            const int btnH = 20;
+            const int boxW = 40;
+            const int boxH = 20;
+            
+            // Center vertically
+            int y = (area.getHeight() - boxH) / 2;
+            
+            // Right align the controls with 4px overlap (closer)
+            // Total width calculation:
+            // DecBtn: 0..10
+            // Box:    6..46 (starts at 6, width 40) -> Overlaps DecBtn by 4px
+            // IncBtn: 42..52 (starts at 42, width 10) -> Overlaps Box by 4px
+            // Total width needed = 52
+            
+            auto controlsArea = area.removeFromRight(60);
+            int startX = controlsArea.getX();
+            
+            decBtn.setBounds(startX, y, btnW, btnH);
+            valueSlider.setBounds(startX + 9, y, boxW, boxH);
+            incBtn.setBounds(startX + 49, y, btnW, btnH);
+            
+            // Label takes the rest
+            label.setBounds(area);
+        }
+
+    private:
+        UiThemeColours& theme;
+        MidiRowLNF lnf;
+        juce::Label label;
+        juce::Slider valueSlider;
+        SimpleRectButton decBtn, incBtn;
+        std::atomic<int>& value;
+        LayoutMode layoutMode;
+    };
+
+    class MidiRemoteSetupComponent : public juce::Component
+    {
+    public:
+        MidiRemoteSetupComponent(ClockSyncAudioProcessor& p)
+            : theme(p.theme),
+              startRow("START", MidiRemoteRow::Note, p.midiRemoteStart, p.theme, MidiRemoteRow::Compact),
+              stopRow("STOP", MidiRemoteRow::Note, p.midiRemoteStop, p.theme, MidiRemoteRow::Compact),
+              offsetRow("OFFSET", MidiRemoteRow::CC, p.midiRemoteOffset, p.theme),
+              shuffleRow("SHUFFLE", MidiRemoteRow::CC, p.midiRemoteShuffle, p.theme),
+              clockDivRow("CLK DIV.", MidiRemoteRow::CC, p.midiRemoteClockDiv, p.theme),
+              triggerRow("TRIGGER", MidiRemoteRow::Note, p.midiRemoteTrigger, p.theme, MidiRemoteRow::Compact),
+              resyncRow("RESYNC", MidiRemoteRow::Note, p.midiRemoteResync, p.theme, MidiRemoteRow::Compact),
+              autoFillRow("AUTOFILL", MidiRemoteRow::CC, p.midiRemoteAutoFill, p.theme),
+              channelValue(p.midiRemoteChannel)
+        {
+            titleLabel.setText("MIDI CONTROL       CH:", juce::dontSendNotification);
+            titleLabel.setFont(juce::Font(juce::FontOptions("Arial", 14.0f, juce::Font::bold)));
+            titleLabel.setColour(juce::Label::textColourId, theme.cyan());
+            titleLabel.setJustificationType(juce::Justification::centredRight);
+            addAndMakeVisible(titleLabel);
+
+            // Channel Slider
+            channelSlider.setSliderStyle(juce::Slider::LinearBar);
+            channelSlider.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 20, 20);
+            channelSlider.setRange(1, 16, 1);
+            channelSlider.setColour(juce::Slider::textBoxTextColourId, theme.cyan().darker(0.8f));
+            channelSlider.setColour(juce::Slider::trackColourId, juce::Colours::transparentBlack);
+            channelSlider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+            channelSlider.setValue(channelValue.load());
+            channelSlider.onValueChange = [this]() { channelValue.store((int)channelSlider.getValue()); };
+            addAndMakeVisible(channelSlider);
+
+            addAndMakeVisible(startRow);
+            addAndMakeVisible(stopRow);
+            addAndMakeVisible(offsetRow);
+            addAndMakeVisible(shuffleRow);
+            addAndMakeVisible(clockDivRow);
+            addAndMakeVisible(triggerRow);
+            addAndMakeVisible(resyncRow);
+            addAndMakeVisible(autoFillRow);
+        }
+
+        void paint(juce::Graphics& g) override
+        {
+            // Semi-transparent background with rounded corners
+            g.setColour(theme.base().withAlpha(0.9f));
+            g.fillRoundedRectangle(getLocalBounds().toFloat(), 6.0f);
+            g.setColour(theme.cyan());
+            g.drawRoundedRectangle(getLocalBounds().toFloat(), 6.0f, 2.0f);
+        }
+
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced(8, 8);
+            
+            // Header row (Title + Channel)
+            auto headerRow = area.removeFromTop(24);
+            
+            // Center the label + slider combo
+            juce::Font f(juce::FontOptions("Arial", 14.0f, juce::Font::bold));
+            juce::GlyphArrangement ga;
+            ga.addLineOfText(f, titleLabel.getText(), 0, 0);
+            int labelW = (int)std::ceil(ga.getBoundingBox(0, -1, true).getWidth()) + 5;
+            int sliderW = 30;
+            int totalW = labelW + sliderW;
+            int startX = (headerRow.getWidth() - totalW) / 2;
+            
+            titleLabel.setBounds(headerRow.getX() + startX, headerRow.getY(), labelW, headerRow.getHeight());
+            channelSlider.setBounds(titleLabel.getRight(), headerRow.getY(), sliderW, headerRow.getHeight());
+            
+            // Gap + extra shift requested
+            area.removeFromTop(10 + 20);
+
+            // 2 Columns with bigger gap
+            auto leftCol = area.removeFromLeft(area.getWidth() / 2).reduced(10, 0);
+            auto rightCol = area.reduced(10, 0);
+            
+            int h = 24;
+            int gap = 4;
+            
+            // Left Column: Start, Stop, Trigger, Resync
+            startRow.setBounds(leftCol.removeFromTop(h));
+            leftCol.removeFromTop(gap);
+            stopRow.setBounds(leftCol.removeFromTop(h));
+            leftCol.removeFromTop(gap);
+            triggerRow.setBounds(leftCol.removeFromTop(h));
+            leftCol.removeFromTop(gap);
+            resyncRow.setBounds(leftCol.removeFromTop(h));
+            
+            // Right Column: Offset, Shuffle, Clock Div, Auto Fill
+            offsetRow.setBounds(rightCol.removeFromTop(h));
+            rightCol.removeFromTop(gap);
+            shuffleRow.setBounds(rightCol.removeFromTop(h));
+            rightCol.removeFromTop(gap);
+            clockDivRow.setBounds(rightCol.removeFromTop(h));
+            rightCol.removeFromTop(gap);
+            autoFillRow.setBounds(rightCol.removeFromTop(h));
+        }
+
+    private:
+        UiThemeColours& theme;
+        juce::Label titleLabel;
+        std::atomic<int>& channelValue;
+        juce::Slider channelSlider;
+        MidiRemoteRow startRow, stopRow, offsetRow, shuffleRow, clockDivRow, triggerRow, resyncRow, autoFillRow;
+    };
 }
 
 
 
 ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProcessor& p)
-    : juce::AudioProcessorEditor(&p), processor(p)
+    : juce::AudioProcessorEditor(&p), processor(p), 
+      deviceBox(p.theme), nameBox(p.theme),
+      clickButton(p.theme), idleClockToggle(p.theme), helpToggle(p.theme),
+      colorPaletteToggle(p.theme)
 {
     setResizable(false, false);
     setSize(300, 240);
     startTimerHz(60);
 
-    themeLNF = std::make_unique<ThemeLNF>();
+    themeLNF = std::make_unique<ThemeLNF>(processor.theme);
 
     // Assign theme LNF
     nameBox.setLookAndFeel(themeLNF.get());
@@ -84,7 +368,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
 
 
     // Create playground component (owns popups & ring visuals)
-    playgroundComp = std::make_unique<PlaygroundComponent>();
+    playgroundComp = std::make_unique<PlaygroundComponent>(processor.theme);
     addAndMakeVisible(*playgroundComp);
     playgroundComp->setBounds(0, 0, getWidth(), getHeight());
     playgroundComp->setHeaderHeight(30);
@@ -100,9 +384,33 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     // Help toggle ("?") - restore visibility and behaviour so users can enable/disable tooltips.
     // Wire directly to the playground's hover text API rather than a separate applyTooltips helper.
     addAndMakeVisible(helpToggle);
+    addAndMakeVisible(colorPaletteToggle);
+    colorPaletteToggle.onColorChanged = [this] { 
+        sendLookAndFeelChange(); 
+        updateSetupButtonImages();
+        loadDancerFrames();
+        
+        // Update manual colors
+        if (pulseWidthSlider) {
+            pulseWidthSlider->setColour(juce::Slider::textBoxTextColourId, processor.theme.cyan());
+            pulseWidthSlider->setColour(juce::Slider::thumbColourId, processor.theme.cyan());
+            pulseWidthSlider->setColour(juce::Slider::trackColourId, processor.theme.cyan().darker(0.5f));
+        }
+        if (pulseWidthValueLabel) {
+            pulseWidthValueLabel->setColour(juce::Label::textColourId, processor.theme.cyan());
+        }
+        deviceBox.setColour(FullWidthComboBox::overlayTextColourId, processor.theme.cyan());
+        nameBox.setColour(FullWidthComboBox::overlayTextColourId, processor.theme.cyan());
+
+        if (playgroundComp) playgroundComp->repaint();
+        repaint(); 
+    };
+    // Register callback for state restoration
+    processor.onThemeChanged = colorPaletteToggle.onColorChanged;
+
     helpToggle.setClickingTogglesState(true);
-    helpToggle.setColour(juce::TextButton::textColourOffId, UiThemeColours::cyan().darker(0.45f));
-    helpToggle.setColour(juce::TextButton::textColourOnId, UiThemeColours::cyan());
+    helpToggle.setColour(juce::TextButton::textColourOffId, processor.theme.cyan().darker(0.45f));
+    helpToggle.setColour(juce::TextButton::textColourOnId, processor.theme.cyan());
     helpToggle.setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
     helpToggle.setColour(juce::TextButton::buttonOnColourId, juce::Colours::transparentBlack);
     // Initialize toggle from playground state if available
@@ -125,7 +433,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     // Pattern start fine-tune slider removed
 
     // Status bar (LED + status string) – painted above playground
-    statusBar = std::make_unique<StatusBarComponent>();
+    statusBar = std::make_unique<StatusBarComponent>(processor.theme);
     addAndMakeVisible(*statusBar);
     // Initialize visible content (bounds set centrally in resized()).
     {
@@ -139,13 +447,16 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     addAndMakeVisible(refreshButton);
     addAndMakeVisible(setupButton);
     addAndMakeVisible(idleModeButton);
+    // Create attachment for idleModeButton
+    idleClockAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        processor.getAPVTS(), ClockSyncAudioProcessor::paramClockWhileStopped, idleModeButton);
     addAndMakeVisible(legacyModernButton);
     addAndMakeVisible(sppButton);
     addAndMakeVisible(deviceBox);
     addAndMakeVisible(nameBox);
     addAndMakeVisible(nameMidiSwitch);
     // Header switch toggle (created once)
-    headerSwitchToggle = std::make_unique<HeaderSwitchToggle>();
+    headerSwitchToggle = std::make_unique<HeaderSwitchToggle>(processor.theme);
     addAndMakeVisible(*headerSwitchToggle);
     headerSwitchToggle->setSize(12, 20);
     headerSwitchToggle->setVisible(true);
@@ -166,7 +477,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     {
         pulseWidthValueLabel = std::make_unique<juce::Label>();
         pulseWidthValueLabel->setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)));
-        pulseWidthValueLabel->setColour(juce::Label::textColourId, UiThemeColours::cyan());
+        pulseWidthValueLabel->setColour(juce::Label::textColourId, processor.theme.cyan());
         pulseWidthValueLabel->setJustificationType(juce::Justification::centredLeft);
     }
     addAndMakeVisible(*pulseWidthValueLabel);
@@ -178,9 +489,9 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         pulseWidthSlider->setRange(1, 20, 1);
         pulseWidthSlider->setTextValueSuffix(" ms");
         pulseWidthSlider->setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
-        pulseWidthSlider->setColour(juce::Slider::textBoxTextColourId, UiThemeColours::cyan());
-        pulseWidthSlider->setColour(juce::Slider::thumbColourId, UiThemeColours::cyan());
-        pulseWidthSlider->setColour(juce::Slider::trackColourId, UiThemeColours::accent());
+        pulseWidthSlider->setColour(juce::Slider::textBoxTextColourId, processor.theme.cyan());
+        pulseWidthSlider->setColour(juce::Slider::thumbColourId, processor.theme.cyan());
+        pulseWidthSlider->setColour(juce::Slider::trackColourId, processor.theme.cyan().darker(0.5f));
         pulseWidthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             processor.getAPVTS(), "pulseWidthMs", *pulseWidthSlider);
         addAndMakeVisible(*pulseWidthSlider);
@@ -190,7 +501,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     // Ensure arrowDown is always constructed before use
     if (!arrowDown)
     {
-        arrowDown = std::make_unique<ArrowDownComponent>();
+        arrowDown = std::make_unique<ArrowDownComponent>(processor.theme);
         addAndMakeVisible(*arrowDown);
         arrowDown->setVisible(false);
     }
@@ -391,9 +702,9 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         pulseWidthSlider->setRange(1, 20, 1);
         pulseWidthSlider->setTextValueSuffix(" ms");
         pulseWidthSlider->setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
-        pulseWidthSlider->setColour(juce::Slider::textBoxTextColourId, UiThemeColours::cyan());
-        pulseWidthSlider->setColour(juce::Slider::thumbColourId, UiThemeColours::cyan());
-        pulseWidthSlider->setColour(juce::Slider::trackColourId, UiThemeColours::accent());
+        pulseWidthSlider->setColour(juce::Slider::textBoxTextColourId, processor.theme.cyan());
+        pulseWidthSlider->setColour(juce::Slider::thumbColourId, processor.theme.cyan());
+        pulseWidthSlider->setColour(juce::Slider::trackColourId, processor.theme.cyan().darker(0.5f));
         pulseWidthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             processor.getAPVTS(), "pulseWidthMs", *pulseWidthSlider);
         addAndMakeVisible(*pulseWidthSlider);
@@ -407,7 +718,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     deviceBox.setEditableText(false);
     // Ensure default ComboBox label doesn't draw; use FullWidthComboBox overlay colour instead
     deviceBox.setColour(juce::ComboBox::textColourId, juce::Colours::transparentBlack);
-    deviceBox.setColour(FullWidthComboBox::overlayTextColourId, UiThemeColours::accent());
+    deviceBox.setColour(FullWidthComboBox::overlayTextColourId, processor.theme.cyan());
     deviceBox.setTextWhenNothingSelected("select midi-out...");
 
     // Move refreshButton to the right of deviceBox
@@ -424,13 +735,13 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     nameBox.setColour(juce::ComboBox::arrowColourId, juce::Colours::transparentBlack);
     // Ensure default ComboBox label doesn't draw; use FullWidthComboBox overlay colour instead
     nameBox.setColour(juce::ComboBox::textColourId, juce::Colours::transparentBlack);
-    nameBox.setColour(FullWidthComboBox::overlayTextColourId, UiThemeColours::cyan());
+    nameBox.setColour(FullWidthComboBox::overlayTextColourId, processor.theme.cyan());
     // Defer combo/header/submenu visibility to centralized helpers
     // NAME/MIDI toggle initial appearance
     {
         const bool showName = nameMidiSwitch.getToggleState();
         nameMidiSwitch.setButtonText(showName ? "MIDI" : "NAME");
-        auto txtCol = (showName ? UiThemeColours::accent() : UiThemeColours::cyan());
+        auto txtCol = (showName ? processor.theme.accent() : processor.theme.cyan());
         nameMidiSwitch.setColour(juce::TextButton::textColourOffId, txtCol);
         nameMidiSwitch.setColour(juce::TextButton::textColourOnId,  txtCol);
     }
@@ -459,7 +770,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         // }
         const bool showName = nameMidiSwitch.getToggleState();
         nameMidiSwitch.setButtonText(showName ? "MIDI" : "NAME");
-        auto txtCol = (showName ? UiThemeColours::accent() : UiThemeColours::cyan());
+        auto txtCol = (showName ? processor.theme.accent() : processor.theme.cyan());
         nameMidiSwitch.setColour(juce::TextButton::textColourOffId, txtCol);
         nameMidiSwitch.setColour(juce::TextButton::textColourOnId,  txtCol);
         // Centralized header visibility update
@@ -515,21 +826,36 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         processor.getAPVTS().state.setProperty("ui.setupSubmenuOn", setupSubmenuTargetOn, nullptr);
         // canvas resizing is handled by the setupAnimator animation callback
     };
-    auto configureSetupToggle = [](juce::TextButton& b){
-        b.setColour(juce::TextButton::textColourOffId, UiThemeColours::cyan());
-        b.setColour(juce::TextButton::textColourOnId, UiThemeColours::cyan());
+    auto configureSetupToggle = [this](juce::TextButton& b){
+        b.setColour(juce::TextButton::textColourOffId, processor.theme.cyan());
+        b.setColour(juce::TextButton::textColourOnId, processor.theme.cyan());
     };
     configureSetupToggle(idleModeButton); configureSetupToggle(legacyModernButton); configureSetupToggle(sppButton);
-    // Default the setup to MODERN behaviour so hosts that start immediately will
-    // not receive a pre-Stop message (instant play on DAW start). The button
-    // visual state maps true->MODERN, false->LEGACY. Keep processor legacy flag
-    // as the inverse of the button toggle so existing onClick logic remains.
-    legacyModernButton.setToggleState(true, juce::dontSendNotification);
-    processor.setLegacyMode(!legacyModernButton.getToggleState());
+    // Restore legacy mode from state (default true -> Legacy)
+    {
+        bool legacy = true;
+        if (processor.getAPVTS().state.hasProperty("ui.legacyMode"))
+            legacy = (bool) processor.getAPVTS().state.getProperty("ui.legacyMode");
+        // Button state is inverse of legacy (True=Modern, False=Legacy)
+        legacyModernButton.setToggleState(!legacy, juce::dontSendNotification);
+        processor.setLegacyMode(legacy);
+    }
     legacyModernButton.setButtonText(legacyModernButton.getToggleState() ? "MODERN" : "LEGACY");
+    
+    // Restore SPP mode
+    {
+        bool spp = (bool) processor.getAPVTS().state.getProperty("ui.sppMode", false);
+        sppButton.setToggleState(spp, juce::dontSendNotification);
+        sppButton.setButtonText(spp ? "S.P.P. ON" : "S.P.P. OFF");
+    }
+
     idleModeButton.onClick = [this]{ const bool on = idleModeButton.getToggleState(); idleModeButton.setButtonText(on ? "IDLE ON" : "IDLE OFF"); };
     legacyModernButton.onClick = [this]{ const bool on = legacyModernButton.getToggleState(); legacyModernButton.setButtonText(on ? "MODERN" : "LEGACY"); processor.setLegacyMode(!on); };
-    sppButton.onClick = [this]{ const bool on = sppButton.getToggleState(); sppButton.setButtonText(on ? "S.P.P. ON" : "S.P.P. OFF"); };
+    sppButton.onClick = [this]{ 
+        const bool on = sppButton.getToggleState(); 
+        sppButton.setButtonText(on ? "S.P.P. ON" : "S.P.P. OFF"); 
+        processor.getAPVTS().state.setProperty("ui.sppMode", on, nullptr);
+    };
     nameBox.onChange = [this]{ const int id = nameBox.getSelectedId(); if (id == 1000) showNewNameDialog(); else if (id == 1001){ instrumentNames.clear(); saveInstrumentNamesToState(); populateNameBox(); processor.getAPVTS().state.setProperty("ui.selectedInstrument", 0, nullptr); } else { if (id >= 1) processor.getAPVTS().state.setProperty("ui.selectedInstrument", id, nullptr); } };
 
     refreshDeviceList();
@@ -587,37 +913,12 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
 
         setupCornerDrawable = loadSvgDrawable();
         setupSvgLoaded = (setupCornerDrawable != nullptr);
+        
+        // Use the helper to generate tinted images
+        updateSetupButtonImages();
+
         if (setupCornerDrawable)
         {
-            // Build tinted OFF/ON drawable images (cyan darker for OFF, cyan for ON)
-            auto makeTintedDrawable = [&](juce::Colour tint) -> std::unique_ptr<juce::Drawable> {
-                const int imgSz = 64;
-                juce::Image img(juce::Image::ARGB, imgSz, imgSz, true);
-                {
-                    juce::Graphics gg(img);
-                    juce::Rectangle<float> area(0, 0, (float) imgSz, (float) imgSz);
-                    setupCornerDrawable->drawWithin(gg, area, juce::RectanglePlacement::centred, 1.0f);
-                }
-                // Recolour all non-transparent pixels to the given tint, preserving alpha
-                juce::Image::BitmapData bd(img, juce::Image::BitmapData::readWrite);
-                for (int y = 0; y < imgSz; ++y)
-                    for (int x = 0; x < imgSz; ++x)
-                    {
-                        auto col = bd.getPixelColour(x, y);
-                        if (col.getAlpha() > 0)
-                            bd.setPixelColour(x, y, tint.withAlpha(col.getFloatAlpha()));
-                    }
-                auto di = std::make_unique<juce::DrawableImage>();
-                di->setImage(img);
-                return di;
-            };
-
-            setupCornerOffDrawable = makeTintedDrawable(UiThemeColours::cyan().darker(1.0f));
-            setupCornerOnDrawable  = makeTintedDrawable(UiThemeColours::cyan());
-
-            setupCornerButton->setImages(
-                setupCornerOffDrawable.get(), setupCornerOffDrawable.get(), setupCornerOnDrawable.get(), setupCornerOffDrawable.get(),
-                setupCornerOnDrawable.get(),  setupCornerOnDrawable.get(),  setupCornerOnDrawable.get(),  setupCornerOnDrawable.get());
             setupCornerButton->setColour(juce::DrawableButton::backgroundColourId, juce::Colours::transparentBlack);
             setupCornerButton->setColour(juce::DrawableButton::backgroundOnColourId, juce::Colours::transparentBlack);
             setupCornerButton->setOpaque(false);
@@ -632,46 +933,33 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         setupCornerButton->onClick = [this]() {
             if (! setupCornerButton) return;
             setupOverlayVisible = setupCornerButton->getToggleState();
+            
+            // Hide help toggle when overlay is open
+            if (helpToggle.isVisible() != !setupOverlayVisible)
+                helpToggle.setVisible(!setupOverlayVisible);
+
             // Create/remove a transparent component to consume mouse inside overlay bounds
             if (setupOverlayVisible)
             {
                 if (! setupOverlayComp)
                 {
-                    setupOverlayComp = std::make_unique<juce::Component>();
-                    setupOverlayComp->setInterceptsMouseClicks(true, false);
+                    setupOverlayComp = std::make_unique<MidiRemoteSetupComponent>(processor);
+                    setupOverlayComp->setInterceptsMouseClicks(true, true); // consume clicks
                     addAndMakeVisible(*setupOverlayComp);
                     setupOverlayComp->toFront(true);
-                    // Create close button (X)
-                    setupOverlayClose = std::make_unique<juce::TextButton>("X");
-                    setupOverlayClose->setClickingTogglesState(false);
-                    setupOverlayClose->setColour(juce::TextButton::textColourOffId, UiThemeColours::cyan());
-                    setupOverlayClose->setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
-                    setupOverlayClose->setColour(juce::TextButton::buttonOnColourId, juce::Colours::transparentBlack);
-                    addAndMakeVisible(*setupOverlayClose);
-                    setupOverlayClose->onClick = [this]() {
-                        if (setupCornerButton)
-                            setupCornerButton->setToggleState(false, juce::sendNotification);
-                        setupOverlayVisible = false;
-                        setupOverlayComp.reset();
-                        setupOverlayClose.reset();
-                        repaint();
-                    };
                 }
                 // Position overlay comp to match visual overlay rect
-                const int overlayW = 240;
-                const int overlayH = 180;
+                const int overlayW = 295;
+                const int overlayH = 205;
                 const int headerH = 30;
                 const int canvasH = juce::jmax(0, getHeight() - headerH);
                 const int x = (getWidth() - overlayW) / 2;
                 const int y = headerH + (canvasH - overlayH) / 2;
                 setupOverlayComp->setBounds(x, y, overlayW, overlayH);
-                if (setupOverlayClose)
-                    setupOverlayClose->setBounds(x + overlayW - 22, y + 6, 16, 16);
             }
             else
             {
                 setupOverlayComp.reset();
-                setupOverlayClose.reset();
             }
             repaint();
         };
@@ -686,10 +974,12 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
 
 void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    g.fillAll (UiThemeColours::accent());
+    g.fillAll (processor.theme.accent());
     auto bounds = getLocalBounds().toFloat();
-    juce::ColourGradient bgGrad(UiThemeColours::base(), bounds.getTopLeft(), kBaseLo, bounds.getBottomLeft(), false);
-    g.setGradientFill(bgGrad); g.fillRect(bounds);
+    // juce::ColourGradient bgGrad(processor.theme.base(), bounds.getTopLeft(), processor.theme.base().darker(0.12f), bounds.getBottomLeft(), false);
+    // g.setGradientFill(bgGrad); 
+    g.setColour (processor.theme.accent().darker(0.9f) );
+    g.fillRect(bounds);
     // Decorative backdrop circles
     {
         auto centre = bounds.getCentre();
@@ -697,11 +987,13 @@ void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
         for (size_t i = 0; i < sizes.size(); ++i)
         {
             const float baseSz = (float) sizes[i];
-            const float darkFactor = 0.888f + 0.888f * (float) i;
+            //const float darkFactor = 0.888f + 0.888f * (float) i;
+            const float alphaFactor = 0.1f * (float) i;
             const float progress = backdropPulseProgress[i];
             const float extraScale = backdropPulseScale[i] * progress;
             const float sz = baseSz * (UiLayout::kBackdropMultiplier + extraScale);
-            juce::Colour col = UiThemeColours::accent().darker(darkFactor);
+            //juce::Colour col = processor.theme.accent().darker(darkFactor);
+            juce::Colour col = processor.theme.base().withAlpha(alphaFactor);
             juce::Rectangle<float> rc(centre.x - sz * 0.5f, centre.y - sz * 0.5f + 10.0f, sz, sz);
             g.setColour(col); g.fillEllipse(rc);
         }
@@ -744,17 +1036,33 @@ HitResult ClockSyncAudioProcessorEditor::routeHit(const juce::MouseEvent& e, boo
 
 void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
 {
-    // Build number: render above base/content but below submenu/header
+    // Hover Text: render above base/content but below submenu/header
+    // Hide hover text if setup overlay is visible
+    if (!setupOverlayVisible)
     {
-        g.setColour(UiThemeColours::cyan().withAlpha(0.95f));
+        const int y = 30; // just under the 30px header
+        const int h = 16;
+        
+        juce::String hoverText = editorHoverText;
+        if (hoverText.isEmpty() && playgroundComp && playgroundComp->getHoverTextEnabled())
+            hoverText = playgroundComp->getCurrentHoverText();
+            
+        if (hoverText.isNotEmpty())
+        {
+            g.setColour(processor.theme.cyan());
+            g.setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)));
+            g.drawFittedText(hoverText, juce::Rectangle<int>(0, y, getWidth(), h), juce::Justification::centred, 1);
+        }
+    }
+
+    // Build number moved to bottom left (swapped with color palette)
+    {
+        g.setColour(processor.theme.cyan().withAlpha(0.9f));
         g.setFont(juce::Font(juce::FontOptions("Arial", 10.0f, juce::Font::bold)));
         juce::String buildText = juce::String(PLUGIN_VERSION_WITH_BUILD);
-        const int x = 10;
-        const int y = 30; // just under the 30px header
-        const int w = 220;
-        const int h = 16;
-        g.drawFittedText(buildText, juce::Rectangle<int>(x, y, w, h), juce::Justification::left, 1);
+        g.drawFittedText(buildText, juce::Rectangle<int>(10, 220, 200, 16), juce::Justification::left, 1);
     }
+
     // Submenu should draw first (behind header) so header masks its top portion.
     const bool submenuActive = (setupSubmenuTargetOn || setupSubmenuProgress > 0.0f);
     if (submenuActive)
@@ -771,7 +1079,7 @@ void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
             auto shadowInt = submenuRect.toNearestInt().expanded(-2, 2);
             ds.drawForRectangle(g, shadowInt);
         }
-        g.setColour(UiThemeColours::base());
+        g.setColour(processor.theme.base());
         g.fillRect(submenuRect);
         // Repaint buttons manually AFTER fill so they appear above submenu background (normal child paint occurred earlier & is covered).
         // Only repaint the components; layout is handled in updateSetupSubmenuLayout
@@ -787,7 +1095,7 @@ void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
         juce::Font vf(juce::FontOptions("Arial", 11.0f, juce::Font::bold));
         if (hoveredSetupIndex >= 0)
         {
-            g.setColour(UiThemeColours::accent());
+            g.setColour(processor.theme.accent());
             g.setFont(vf);
             auto drawTip = [&](const juce::String& text, const juce::Component& c){
                 juce::Rectangle<int> r = c.getBounds();
@@ -819,7 +1127,7 @@ void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
         ds.drawForRectangle(g, shadowInt);
     }
     // Base header fill rectangle
-    g.setColour(UiThemeColours::base());
+    g.setColour(processor.theme.base());
     g.fillRect(headerRect);
     // Repaint visible header child components manually so they appear above the header background fill.
     auto repaintHeaderComp = [&g](juce::Component& c)
@@ -868,7 +1176,7 @@ void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
         const float baseX = b.getCentreX();
         const float baseY = b.getCentreY();
         const float baseR = std::min(b.getWidth(), b.getHeight()) * 0.5f;
-        pr->draw(g, baseX, baseY, baseR);
+        pr->draw(g, baseX, baseY, baseR, processor.theme);
     };
 
     // Legacy popup rings fully removed (PlaygroundComponent provides internal popup UI).
@@ -877,26 +1185,8 @@ void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
 
     // Debug offset panel removed per user request to declutter lower area during shuffle hit testing.
     // Draw the independent setup overlay on top of everything (front-most)
-    if (setupOverlayVisible)
-    {
-        const int overlayW = 240;
-        const int overlayH = 180;
-        const int headerH = 30;
-        const int canvasH = juce::jmax(0, getHeight() - headerH);
-        const int x = (getWidth() - overlayW) / 2;
-        const int y = headerH + (canvasH - overlayH) / 2;
-        juce::Rectangle<float> rc((float)x, (float)y, (float)overlayW, (float)overlayH);
-        // Semi-transparent base colour with rounded corners
-        g.setColour(UiThemeColours::base().withAlpha(0.88f));
-        g.fillRoundedRectangle(rc, 6.0f);
-        // Optional subtle outline
-        g.setColour(UiThemeColours::cyan().withAlpha(0.33f));
-        g.drawRoundedRectangle(rc, 6.0f, 1.0f);
-        // Title
-        g.setColour(UiThemeColours::cyan());
-        g.setFont(juce::Font(juce::FontOptions("Arial", 13.0f, juce::Font::bold)));
-        g.drawFittedText("MIDI Remote Setup", rc.toNearestInt().reduced(10, 8).removeFromTop(18), juce::Justification::centredLeft, 1);
-    }
+    // (Overlay drawing is now handled by MidiRemoteSetupComponent)
+
     // Debug stack (left side): show last clicked stored step, logical mapping, host bar and scheduled targets
     // {
     //     const int leftX = 6;
@@ -1022,12 +1312,17 @@ void ClockSyncAudioProcessorEditor::resized()
 
         // Resync step selection handled by ring segments.
 
-        // Help toggle: keep its authored placement relative to canvas (use previous explicit position)
-        const int helpSize = 30;
-        helpToggle.setBounds(0, 210, helpSize, helpSize); // align with setup icon
+        // Help toggle: moved to right, aligned with setupCornerButton (gear icon), y=30
+        const int helpSize = 20;
+        const int setupSize = 30; 
+        helpToggle.setBounds(getWidth() - 25, 30, helpSize, helpSize);
+        
+        // Color palette toggle at top left (swapped with build number)
+        colorPaletteToggle.setBounds(7, 27, 35, 27);
+
         if (setupCornerButton){
-            setupCornerButton->setBounds(getWidth() - helpSize, 210, helpSize, helpSize);
-            setupCornerButton->setEdgeIndent(helpSize / 4);
+            setupCornerButton->setBounds(getWidth() - setupSize, 210, setupSize, setupSize);
+            setupCornerButton->setEdgeIndent(setupSize / 4);
         }
     }
     else
@@ -1038,10 +1333,14 @@ void ClockSyncAudioProcessorEditor::resized()
         // shuffleScaleToggle removed.
         // no legacy triggerRect fallback
         // stepOffsetMenu no longer present.
-        const int helpSize = 30; helpToggle.setBounds(0, 210, helpSize, helpSize); // align with setup icon (fallback)
+        const int helpSize = 20; 
+        const int setupSize = 30; 
+        helpToggle.setBounds(getWidth() - 25, 30, helpSize, helpSize);
+        colorPaletteToggle.setBounds(7, 27, 35, 27);
+        
         if (setupCornerButton){
-            setupCornerButton->setBounds(getWidth() - helpSize, 210, helpSize, helpSize);
-            setupCornerButton->setEdgeIndent(helpSize / 4);
+            setupCornerButton->setBounds(getWidth() - setupSize, 210, setupSize, setupSize);
+            setupCornerButton->setEdgeIndent(setupSize / 4);
         }
     }
 
@@ -1069,10 +1368,15 @@ bool ClockSyncAudioProcessorEditor::keyPressed(const juce::KeyPress& key)
     {
         if (setupCornerButton)
             setupCornerButton->setToggleState(false, juce::sendNotification);
-        setupOverlayVisible = false;
-        setupOverlayComp.reset();
-        setupOverlayClose.reset();
-        repaint();
+        
+        // Force close in case button callback didn't run or button is missing
+        if (setupOverlayVisible)
+        {
+            setupOverlayVisible = false;
+            setupOverlayComp.reset();
+            helpToggle.setVisible(true);
+            repaint();
+        }
         return true;
     }
     return false;
@@ -1182,6 +1486,19 @@ void ClockSyncAudioProcessorEditor::updateSetupSubmenuLayout()
 
 void ClockSyncAudioProcessorEditor::timerCallback()
 {
+    // Check for hover over editor-level components
+    juce::String newHoverText;
+    if (colorPaletteToggle.isMouseOver())
+        newHoverText = "Colorize or Shift-Click for Default";
+    else if (setupCornerButton && setupCornerButton->isMouseOver())
+        newHoverText = "Setup MIDI Remote";
+    
+    if (editorHoverText != newHoverText)
+    {
+        editorHoverText = newHoverText;
+        repaint(0, 30, getWidth(), 16); // Repaint hover text area
+    }
+
     bool needAll = false;
     bool needRing = false;
     bool needTrigger = false;
@@ -1360,6 +1677,65 @@ void ClockSyncAudioProcessorEditor::timerCallback()
                     playgroundComp->setHostTempo(processor.getUiBpm());
             }
             needRing = true;
+        }
+    }
+
+    // Mirror Shuffle and Offset parameters to UI (Playground)
+    if (playgroundComp)
+    {
+        if (auto* p = processor.getAPVTS().getRawParameterValue(ClockSyncAudioProcessor::paramShuffleStep))
+        {
+            int val = (int)p->load();
+            if (val != shuffleValue)
+            {
+                shuffleValue = val;
+                playgroundComp->setSelectedShuffle(shuffleValue);
+                needRing = true;
+            }
+        }
+        if (auto* p = processor.getAPVTS().getRawParameterValue(ClockSyncAudioProcessor::paramResyncOffsetStep))
+        {
+            int val = (int)p->load();
+            if (val != selectedResyncStepCached)
+            {
+                selectedResyncStepCached = val;
+                playgroundComp->setResyncStepSelected(selectedResyncStepCached);
+                needRing = true;
+            }
+        }
+        // Mirror Linear Shuffle Amount
+        if (auto* p = processor.getAPVTS().getRawParameterValue(ClockSyncAudioProcessor::paramShuffleLinear))
+        {
+            float t01 = p->load();
+            // Convert 0..1 param to 0.5..0.75 amount
+            float amount = 0.5f + (t01 * 0.25f);
+            if (std::abs(amount - linearShuffleAmountCached) > 0.001f)
+            {
+                linearShuffleAmountCached = amount;
+                playgroundComp->setLinearShuffleAmount(amount);
+            }
+        }
+        // Mirror Linear Shuffle Mode (from state)
+        {
+             bool mode = (bool) processor.getAPVTS().state.getProperty("ui.linearShuffleMode", false);
+             if (mode != linearShuffleModeCached)
+             {
+                 linearShuffleModeCached = mode;
+                 playgroundComp->setLinearShuffleModeState(mode);
+             }
+        }
+        // Mirror Auto-Fill (Pattern Bars)
+        if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramPatternBars))
+        {
+            float v = p->getValue(); // 0..1
+            int idx = (int)std::round(v * 8.0f);
+            if (idx != autoFillIndexCached)
+            {
+                autoFillIndexCached = idx;
+                // Map param index (0=OFF..8=RND) to popup index (0=RND..8=OFF)
+                int popupIndex = 8 - idx;
+                playgroundComp->setPopup3Index(popupIndex);
+            }
         }
     }
 
@@ -1604,7 +1980,7 @@ void ClockSyncAudioProcessorEditor::timerCallback()
         juce::String st;
         if (hasNext) st = "WAIT";
         else if (isRunning) st = "LOCK";
-        else if (isArmed) st = "ARM'D'";
+        else if (isArmed) st = "ARM'D";
         else st = idleModeButton.getToggleState() ? "IDLE" : "STOP";
         statusBar->setStatusText(st);
         statusBar->setLedLevel(ledLevel);
@@ -1638,6 +2014,40 @@ void ClockSyncAudioProcessorEditor::timerCallback()
     }
 }
 
+void ClockSyncAudioProcessorEditor::updateSetupButtonImages()
+{
+    if (!setupCornerButton || !setupCornerDrawable) return;
+
+    auto makeTintedDrawable = [&](juce::Colour tint) -> std::unique_ptr<juce::Drawable> {
+        const int imgSz = 64;
+        juce::Image img(juce::Image::ARGB, imgSz, imgSz, true);
+        {
+            juce::Graphics gg(img);
+            juce::Rectangle<float> area(0, 0, (float) imgSz, (float) imgSz);
+            setupCornerDrawable->drawWithin(gg, area, juce::RectanglePlacement::centred, 1.0f);
+        }
+        // Recolour all non-transparent pixels to the given tint, preserving alpha
+        juce::Image::BitmapData bd(img, juce::Image::BitmapData::readWrite);
+        for (int y = 0; y < imgSz; ++y)
+            for (int x = 0; x < imgSz; ++x)
+            {
+                auto col = bd.getPixelColour(x, y);
+                if (col.getAlpha() > 0)
+                    bd.setPixelColour(x, y, tint.withAlpha(col.getFloatAlpha() * tint.getFloatAlpha()));
+            }
+        auto di = std::make_unique<juce::DrawableImage>();
+        di->setImage(img);
+        return di;
+    };
+
+    setupCornerOffDrawable = makeTintedDrawable(processor.theme.cyan().withAlpha(0.5f));
+    setupCornerOnDrawable  = makeTintedDrawable(processor.theme.cyan());
+
+    setupCornerButton->setImages(
+        setupCornerOffDrawable.get(), setupCornerOffDrawable.get(), setupCornerOnDrawable.get(), setupCornerOffDrawable.get(),
+        setupCornerOnDrawable.get(),  setupCornerOnDrawable.get(),  setupCornerOnDrawable.get(),  setupCornerOnDrawable.get());
+}
+
 // ---------------- Dancer PNG sequence ----------------
 void ClockSyncAudioProcessorEditor::loadDancerFrames()
 {
@@ -1647,7 +2057,24 @@ void ClockSyncAudioProcessorEditor::loadDancerFrames()
         if (! data || size <= 0) return;
        
         if (auto d = juce::Drawable::createFromImageData(data, size))
+        {
+            // Tint the dancer frames to match the current theme (Cyan)
+            if (auto* di = dynamic_cast<juce::DrawableImage*>(d.get()))
+            {
+                juce::Image img = di->getImage().createCopy();
+                juce::Image::BitmapData bd(img, juce::Image::BitmapData::readWrite);
+                juce::Colour tint = processor.theme.accent();
+                for (int y = 0; y < img.getHeight(); ++y)
+                    for (int x = 0; x < img.getWidth(); ++x)
+                    {
+                        auto col = bd.getPixelColour(x, y);
+                        if (col.getAlpha() > 0)
+                            bd.setPixelColour(x, y, tint.withAlpha(col.getFloatAlpha()));
+                    }
+                di->setImage(img);
+            }
             dancerFrames.push_back(std::move(d));
+        }
     };
     addFrame(BinaryData::dancer_0_png,  BinaryData::dancer_0_pngSize);
     addFrame(BinaryData::dancer_1_png,  BinaryData::dancer_1_pngSize);
@@ -1760,6 +2187,7 @@ void ClockSyncAudioProcessorEditor::drawDancer(juce::Graphics& g)
 
 ClockSyncAudioProcessorEditor::~ClockSyncAudioProcessorEditor()
 {
+    processor.onThemeChanged = nullptr;
     // Ensure vblank updater is destroyed before member animators go away
     vblankUpdater.reset();
     arrowDown.reset();
@@ -2330,7 +2758,7 @@ void ClockSyncAudioProcessorEditor::populateNameBox()
         nameBox.setTextWhenNothingSelected("name...");
     }
     // Ensure the displayed text uses the cyan accent via overlay colour and is centred
-    nameBox.setColour(FullWidthComboBox::overlayTextColourId, UiThemeColours::cyan());
+    nameBox.setColour(FullWidthComboBox::overlayTextColourId, processor.theme.cyan());
     nameBox.setJustificationType(juce::Justification::centred);
     nameBox.toFront(true);
     // Ensure any internal editor uses the accent cyan, but always hide any
@@ -2340,7 +2768,7 @@ void ClockSyncAudioProcessorEditor::populateNameBox()
     {
         if (auto* te = dynamic_cast<juce::TextEditor*>(c))
         {
-            te->setColour(juce::TextEditor::textColourId, UiThemeColours::cyan());
+            te->setColour(juce::TextEditor::textColourId, processor.theme.cyan());
             te->setBounds(nameBox.getLocalBounds().reduced(6, 0));
         }
         else if (auto* lb = dynamic_cast<juce::Label*>(c))
@@ -2386,7 +2814,7 @@ void ClockSyncAudioProcessorEditor::showNewNameDialog()
     nameEntryEditor->setFont(juce::Font(juce::FontOptions("Arial", 14.0f, juce::Font::bold)));
     // Parent the inline editor to the top-level window so it appears above
     // other UI (including host-drawn overlays). Convert nameBox coords.
-    nameEntryEditor->setColour(juce::TextEditor::textColourId, UiThemeColours::cyan());
+    nameEntryEditor->setColour(juce::TextEditor::textColourId, processor.theme.cyan());
     if (auto* top = getTopLevelComponent())
     {
         auto topLeftInTop = top->getLocalPoint(this, nameBox.getBounds().getTopLeft());
@@ -2455,7 +2883,7 @@ void ClockSyncAudioProcessorEditor::toggleNameEditorOrCommit()
     nameEntryEditor->setFont(juce::Font(juce::FontOptions("Arial", 14.0f, juce::Font::bold)));
     // Parent the inline editor to the top-level window so it appears above
     // other UI (including host-drawn overlays). Convert nameBox coords.
-    nameEntryEditor->setColour(juce::TextEditor::textColourId, UiThemeColours::cyan());
+    nameEntryEditor->setColour(juce::TextEditor::textColourId, processor.theme.cyan());
     if (auto* top = getTopLevelComponent())
     {
         auto topLeftInTop = top->getLocalPoint(this, nameBox.getBounds().getTopLeft());

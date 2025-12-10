@@ -13,6 +13,126 @@
 #include "UiComponents.h"
 #include "HitRouting.h" // unified hit-test
 
+class ColorPaletteToggle : public juce::Component
+{
+    UiThemeColours& theme;
+public:
+    std::function<void()> onColorChanged;
+
+    ColorPaletteToggle(UiThemeColours& t) : theme(t)
+    {
+        // No button setup needed
+    }
+    
+    void paint(juce::Graphics& g) override
+    {
+        // Invisible background
+        // Draw 3 squares 10x10 horizontally: Accent, Cyan, Base
+        int sqSize = 10;
+        int gap = 2;
+        int totalW = 3 * sqSize + 2 * gap;
+        int startX = (getWidth() - totalW) / 2;
+        int y = (getHeight() - sqSize) / 2;
+
+        g.setColour(theme.accent());
+        g.fillRect(startX, y, sqSize, sqSize);
+
+        g.setColour(theme.cyan());
+        g.fillRect(startX + sqSize + gap, y, sqSize, sqSize);
+
+        g.setColour(theme.base());
+        g.fillRect(startX + 2 * (sqSize + gap), y, sqSize, sqSize);
+    }
+
+    void mouseDown(const juce::MouseEvent& e) override
+    {
+        int sqSize = 10;
+        int gap = 2;
+        int totalW = 3 * sqSize + 2 * gap;
+        int startX = (getWidth() - totalW) / 2;
+        int y = (getHeight() - sqSize) / 2;
+
+        if (e.y >= y && e.y < y + sqSize)
+        {
+            if (e.x >= startX && e.x < startX + sqSize)
+            {
+                if (e.mods.isShiftDown())
+                {
+                    theme.setAccent(juce::Colour::fromRGB(0xFF, 0x4E, 0x5B));
+                    if (onColorChanged) onColorChanged();
+                    repaint();
+                }
+                else
+                {
+                    showColourPicker(theme.accent(), [this](juce::Colour c){ theme.setAccent(c); });
+                }
+            }
+            else if (e.x >= startX + sqSize + gap && e.x < startX + 2 * sqSize + gap)
+            {
+                if (e.mods.isShiftDown())
+                {
+                    theme.setCyan(juce::Colour::fromRGB(0x00, 0xD7, 0xFF));
+                    if (onColorChanged) onColorChanged();
+                    repaint();
+                }
+                else
+                {
+                    showColourPicker(theme.cyan(), [this](juce::Colour c){ theme.setCyan(c); });
+                }
+            }
+            else if (e.x >= startX + 2 * (sqSize + gap) && e.x < startX + 3 * sqSize + 2 * gap)
+            {
+                if (e.mods.isShiftDown())
+                {
+                    theme.setBase(juce::Colour::fromRGB(0x26, 0x26, 0x26));
+                    if (onColorChanged) onColorChanged();
+                    repaint();
+                }
+                else
+                {
+                    showColourPicker(theme.base(), [this](juce::Colour c){ theme.setBase(c); });
+                }
+            }
+        }
+    }
+
+private:
+    void showColourPicker(juce::Colour currentColour, std::function<void(juce::Colour)> setter)
+    {
+        struct CallbackSelector : public juce::ColourSelector, public juce::ChangeListener
+        {
+            std::function<void(juce::Colour)> onColorChanged;
+            std::function<void()> onRepaint;
+            
+            CallbackSelector(std::function<void(juce::Colour)> cb, std::function<void()> repaintCb) 
+                : juce::ColourSelector(juce::ColourSelector::showColourspace | juce::ColourSelector::showAlphaChannel),
+                  onColorChanged(cb), onRepaint(repaintCb)
+            {
+                addChangeListener(this);
+            }
+            
+            void changeListenerCallback(juce::ChangeBroadcaster*) override
+            {
+                if (onColorChanged) onColorChanged(getCurrentColour());
+                if (onRepaint) onRepaint();
+            }
+        };
+        
+        juce::Component::SafePointer<ColorPaletteToggle> safeThis (this);
+        auto* content = new CallbackSelector(setter, [safeThis](){ 
+            if (safeThis != nullptr)
+            {
+                if(safeThis->onColorChanged) safeThis->onColorChanged(); 
+                safeThis->repaint(); 
+            }
+        });
+        content->setCurrentColour(currentColour);
+        content->setSize(220, 280);
+
+        juce::CallOutBox::launchAsynchronously(std::unique_ptr<juce::Component>(content), getScreenBounds(), nullptr);
+    }
+};
+
 class ClockSyncAudioProcessorEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
@@ -88,6 +208,7 @@ private:
 
     // Minimal help toggle: transparent background, only draws bold '?' text.
     HelpButton helpToggle;
+    ColorPaletteToggle colorPaletteToggle;
     // Bottom-right setup corner button (SVG icon)
     std::unique_ptr<juce::DrawableButton> setupCornerButton;
     std::unique_ptr<juce::Drawable> setupCornerDrawable; // keep SVG drawable alive
@@ -96,13 +217,28 @@ private:
     std::unique_ptr<juce::Drawable> setupCornerOnDrawable;
     bool setupSvgLoaded { false }; // diagnostic: true if assets/setup.svg loaded
 
+    void updateSetupButtonImages();
+
+    // Editor-level hover text (overrides playground text when hovering editor controls)
+    juce::String editorHoverText;
+
     // Canvas overlay toggled by setup.svg (independent of header submenu)
     bool setupOverlayVisible { false };
     std::unique_ptr<juce::Component> setupOverlayComp; // consumes mouse inside overlay bounds
-    std::unique_ptr<juce::TextButton> setupOverlayClose; // "X" close affordance inside overlay
+    // std::unique_ptr<juce::DrawableButton> setupOverlayClose; // Removed as per request
 
     // Handle Escape to close overlay when visible
     bool keyPressed(const juce::KeyPress& key) override;
+
+public:
+    // Midi Remote Settings are now stored in the Processor (std::atomic<int>)
+    // int midiRemoteStartStop { 0 }; // Note number
+    // int midiRemoteOffset { 0 };    // CC
+    // int midiRemoteShuffle { 0 };   // CC
+    // int midiRemoteClockDiv { 0 };  // CC
+    // int midiRemoteTrigger { 0 };   // Note number
+    // int midiRemoteResync { 0 };    // CC
+private:
     
 
     // LED animation
@@ -136,6 +272,9 @@ private:
     bool nextRestartPendingCached { false };
     // Shuffle value
     int shuffleValue { 4 }; // default middle
+    float linearShuffleAmountCached { -1.0f };
+    bool linearShuffleModeCached { false };
+    int autoFillIndexCached { -1 };
 
     // Cached rate parameter pointer
     juce::AudioParameterChoice* rateParam { nullptr };

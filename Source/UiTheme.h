@@ -17,26 +17,36 @@ class ClockSyncAudioProcessorEditor;
 
 struct UiThemeColours
 {
-    static juce::Colour accent() { return juce::Colour::fromRGB(0xFF, 0x4E, 0x5B); }
-    static juce::Colour base()   { return juce::Colour::fromRGB(0x26, 0x26, 0x26); }
-    static juce::Colour cyan()   { return juce::Colour::fromRGB(0x00, 0xD7, 0xFF); }
+    juce::Colour accentColour { juce::Colour::fromRGB(0xFF, 0x4E, 0x5B) };
+    juce::Colour baseColour   { juce::Colour::fromRGB(0x26, 0x26, 0x26) };
+    juce::Colour cyanColour   { juce::Colour::fromRGB(0x00, 0xD7, 0xFF) };
+
+    juce::Colour accent() const { return accentColour; }
+    juce::Colour base()   const { return baseColour; }
+    juce::Colour cyan()   const { return cyanColour; }
+
+    void setAccent(juce::Colour c) { accentColour = c; }
+    void setBase(juce::Colour c)   { baseColour = c; }
+    void setCyan(juce::Colour c)   { cyanColour = c; }
 };
 
 // General look-and-feel class used across the editor
 class ThemeLNF : public juce::LookAndFeel_V4
 {
+    UiThemeColours& theme;
 public:
+    ThemeLNF(UiThemeColours& t) : theme(t) {}
     virtual ~ThemeLNF() override;
     void drawButtonBackground(juce::Graphics& g, juce::Button& b, const juce::Colour&,
                               bool isHighlighted, bool isDown) override
     {
         auto r = b.getLocalBounds().toFloat();
         const float corner = 2.0f;
-        juce::Colour fill = UiThemeColours::accent().darker(0.15f);
-        if (b.getToggleState() || isDown) fill = UiThemeColours::cyan();
-        else if (isHighlighted) fill = UiThemeColours::accent().brighter(0.25f);
+        juce::Colour fill = theme.accent().darker(0.15f);
+        if (b.getToggleState() || isDown) fill = theme.cyan();
+        else if (isHighlighted) fill = theme.accent().brighter(0.25f);
 
-        g.setColour(UiThemeColours::base());
+        g.setColour(theme.base());
         g.fillRoundedRectangle(r.translated(2.0f, 2.0f), corner);
         g.setColour(fill);
         g.fillRoundedRectangle(r, corner);
@@ -44,7 +54,7 @@ public:
 
     void drawButtonText(juce::Graphics& g, juce::TextButton& b, bool, bool) override
     {
-        g.setColour(UiThemeColours::base());
+        g.setColour(theme.base());
         g.setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)));
         g.drawFittedText(b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, 1);
     }
@@ -53,7 +63,7 @@ public:
     {
         juce::ignoreUnused(isMouseOverButton, isButtonDown);
         drawButtonBackground(g, b, juce::Colours::transparentBlack, isMouseOverButton, isButtonDown);
-        g.setColour(UiThemeColours::base());
+        g.setColour(theme.base());
         g.setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)));
         g.drawFittedText(b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, 1);
     }
@@ -65,8 +75,8 @@ public:
 
     void drawPopupMenuBackground(juce::Graphics& g, int w, int h) override
     {
-        g.fillAll(UiThemeColours::base());
-        g.setColour(UiThemeColours::accent());
+        g.fillAll(theme.base());
+        g.setColour(theme.accent());
         g.drawRect(0, 0, w, h, 1);
     }
 
@@ -76,20 +86,20 @@ public:
     {
         if (isSeparator)
         {
-            g.setColour(UiThemeColours::accent().darker(0.2f));
+            g.setColour(theme.accent().darker(0.2f));
             g.fillRect(area.reduced(4).removeFromTop(1));
             return;
         }
 
         juce::Colour textCol;
-        if (! isActive) textCol = UiThemeColours::accent().withAlpha(0.5f);
-        else if (isHighlighted) textCol = UiThemeColours::base();
-        else if (isTicked) textCol = UiThemeColours::cyan();
-        else textCol = UiThemeColours::accent();
+        if (! isActive) textCol = theme.accent().withAlpha(0.5f);
+        else if (isHighlighted) textCol = theme.base();
+        else if (isTicked) textCol = theme.cyan();
+        else textCol = theme.accent();
 
         if (isHighlighted && isActive)
         {
-            g.setColour(UiThemeColours::accent());
+            g.setColour(theme.accent());
             g.fillRoundedRectangle(area.reduced(2).toFloat(), 3.0f);
         }
 

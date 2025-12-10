@@ -22,7 +22,7 @@ public:
     // activeColour used for active steps; baseColour for inactive if hideInactive == false.
     // When hideInactive is true, inactive wedges are not filled (still hittable for editing).
     void draw(juce::Graphics& g, juce::Point<float> centre, float outerRadius, float innerRadius,
-              juce::Colour activeColour, juce::Colour baseColour, int hoverIndex, bool hideInactive=false) const
+              juce::Colour activeColour, juce::Colour baseColour, int hoverIndex, UiThemeColours& theme, bool hideInactive=false) const
     {
         juce::Rectangle<float> outer (centre.x - outerRadius, centre.y - outerRadius, outerRadius*2.0f, outerRadius*2.0f);
         const float stepAngle = juce::MathConstants<float>::twoPi / 16.0f;
@@ -53,8 +53,8 @@ public:
                 drewFill = true;
             }
             // Always draw outline: active = cyan (high alpha), inactive = accent (fainter)
-            juce::Colour outline = on ? UiThemeColours::cyan().withAlpha(0.95f)
-                                      : UiThemeColours::accent().withAlpha(drewFill ? 0.45f : 0.35f);
+            juce::Colour outline = on ? theme.cyan().withAlpha(0.95f)
+                                      : theme.accent().withAlpha(drewFill ? 0.45f : 0.35f);
             g.setColour(outline);
             g.strokePath(seg, juce::PathStrokeType(1.4f));
         }

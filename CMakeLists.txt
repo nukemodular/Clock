@@ -44,7 +44,9 @@ juce_add_binary_data(DancerFrames
     dancer/png/dancer_21.png
     dancer/png/dancer_22.png
     dancer/png/dancer_23.png
+    assets/setup.svg
 )
+
 
 juce_add_plugin(ClockV3
     COMPANY_NAME "toolBoy"
@@ -53,8 +55,8 @@ juce_add_plugin(ClockV3
     # Build as an effect (FX) instead of a synth/instrument
     IS_SYNTH FALSE
     # Typically effects don't need MIDI; enable if you require MIDI control
-    NEEDS_MIDI_INPUT FALSE
-    NEEDS_MIDI_OUTPUT FALSE
+    NEEDS_MIDI_INPUT TRUE
+    NEEDS_MIDI_OUTPUT TRUE
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD TRUE
@@ -91,8 +93,11 @@ target_link_libraries(ClockV3
         juce::juce_gui_extra
         juce::juce_animation
         juce::juce_core
-        DancerFrames
+    DancerFrames
 )
+
+# Include generated headers for embedded DancerFrames BinaryData (includes setup.svg now)
+target_include_directories(ClockV3 PRIVATE ${CMAKE_BINARY_DIR}/juce_binarydata_DancerFrames/JuceLibraryCode)
 
 # Generate and include build info (increments build_number.txt at build time)
 add_custom_target(increment_build ALL
@@ -103,6 +108,17 @@ add_custom_target(increment_build ALL
 # Ensure the plugin target depends on the increment step and can include generated headers
 add_dependencies(ClockV3 increment_build)
 target_include_directories(ClockV3 PRIVATE ${CMAKE_BINARY_DIR}/generated)
+
+# Ensure assets (setup.svg) are available at runtime by copying to the build directory
+add_custom_target(copy_assets ALL
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/assets
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/assets/setup.svg ${CMAKE_BINARY_DIR}/assets/setup.svg
+    BYPRODUCTS ${CMAKE_BINARY_DIR}/assets/setup.svg
+    COMMENT "Copying assets (setup.svg) to build directory"
+)
+
+# Make main targets depend on assets copy so the file is present when running
+add_dependencies(ClockV3 copy_assets)
 
 if (APPLE)
     # Set macOS bundle properties if needed
@@ -119,10 +135,26 @@ if (APPLE)
         BUNDLE DESTINATION "Audio/Plug-Ins/VST3"
         COMPONENT "toolBoy Clock v3_vst3")
 
+    # Ensure setup.svg is installed into the VST3 bundle Resources
+    install(FILES ${CMAKE_SOURCE_DIR}/assets/setup.svg
+        DESTINATION "Audio/Plug-Ins/VST3/toolBoy Clock v3.vst3/Contents/Resources")
+
     # Install the AU component bundle into the standard Components location
     install(TARGETS ClockV3
         BUNDLE DESTINATION "Audio/Plug-Ins/Components"
         COMPONENT "toolBoy Clock v3_au")
+
+    # Ensure setup.svg is installed into the AU component bundle Resources
+    install(FILES ${CMAKE_SOURCE_DIR}/assets/setup.svg
+        DESTINATION "Audio/Plug-Ins/Components/toolBoy Clock v3.component/Contents/Resources")
+
+    # Copy setup.svg into macOS bundle Resources so runtime lookup succeeds
+    add_custom_command(TARGET ClockV3 POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:ClockV3>/../Resources"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/assets/setup.svg"
+            "$<TARGET_FILE_DIR:ClockV3>/../Resources/setup.svg"
+        COMMENT "Copying setup.svg into plugin bundle Resources")
 endif()
 
 

@@ -4,6 +4,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_dsp/juce_dsp.h>
+#include "UiTheme.h"
 
 class ClockSyncAudioProcessor : public juce::AudioProcessor
 {
@@ -11,6 +12,8 @@ public:
     //==============================================================================
     ClockSyncAudioProcessor();
     ~ClockSyncAudioProcessor() override = default;
+
+    UiThemeColours theme;
 
     // Pulse width in ms (1–20, automatable, stored in APVTS)
     void setPulseWidthMs(int ms);
@@ -55,6 +58,9 @@ public:
     void requestTriggerOnce(); // (modified) schedule Start at next BAR + offset step (never mid-bar)
     void setTriggerModeEnabled(bool enabled);
     void notifyResyncOffsetChanged();
+
+    // Callback to notify editor when theme colors are loaded from state
+    std::function<void()> onThemeChanged;
 
     // UI helpers
     unsigned long long getUiClockCounter() const { return uiClockCounter.load(std::memory_order_relaxed); }
@@ -127,7 +133,18 @@ public:
         std::atomic<int> lastPatternBarsMode { 0 }; // track previous interval mode to detect changes
         std::atomic<bool> intervalModeChangedThisBlock { false }; // one-shot suppression flag: changing interval never emits Start
 
-        // Helper: returns true if internally generated (non-host) Start messages are allowed right now.
+        // MIDI Remote Control Settings (0-127, -1 = disabled)
+    std::atomic<int> midiRemoteStart     { -1 }; // Note Number
+    std::atomic<int> midiRemoteStop      { -1 }; // Note Number
+    std::atomic<int> midiRemoteOffset    { -1 }; // CC Number
+    std::atomic<int> midiRemoteShuffle   { -1 }; // CC Number
+    std::atomic<int> midiRemoteClockDiv  { -1 }; // CC Number
+    std::atomic<int> midiRemoteTrigger   { -1 }; // Note Number
+    std::atomic<int> midiRemoteResync    { -1 }; // Note Number
+    std::atomic<int> midiRemoteAutoFill  { -1 }; // CC Number
+    std::atomic<int> midiRemoteChannel   { 0 };  // 0=Omni, 1-16=Specific
+
+    // Helper: returns true if internally generated (non-host) Start messages are allowed right now.
         // Rule: If interval (patternBarsMode>0) is active AND the pattern step mask is empty (no bits), then
         // no internally generated Starts (manual trigger, pattern steps, bar restarts) are allowed. Host transport
         // Start/Continue remains unaffected.
@@ -146,6 +163,13 @@ public:
 private:
     std::atomic<int> pulseWidthMs { 1 }; // mirror for fast access, but value comes from APVTS
     juce::AudioParameterInt* pulseWidthParam = nullptr;
+    
+    // Cached raw parameter pointers for fast access in audio thread
+    std::atomic<float>* runParam = nullptr;
+    std::atomic<float>* clockWhileStoppedParam = nullptr;
+    std::atomic<float>* clickPulseParam = nullptr;
+    std::atomic<float>* clickRateParam = nullptr;
+
     //==============================================================================
     juce::AudioProcessorValueTreeState parameters;
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
@@ -186,7 +210,6 @@ private:
     int diagPairsRemaining { 0 };
     long long diagLastLoggedPair { std::numeric_limits<long long>::min() };
     int diagLastSample { -1 };
-    void debugLog(const juce::String& s);
 
     // Click generator
     float clickEnv { 0.0f };
@@ -194,6 +217,12 @@ private:
     float lastClickLevelDbCached { std::numeric_limits<float>::quiet_NaN() };
     // Carry-over for click pulse tails beyond block end to ensure fixed ms-wide pulses across blocks.
     int clickHoldRemainingSamples { 0 };
+    // Run signal drop counter (for 2ms reset pulse)
+    int runSignalDropSamples { 0 };
+    // Start sample in current block (for Run signal drop trigger)
+    int startSampleForRunSignal { -1 };
+    // Gate audio pulse emission until a Start has been emitted
+    std::atomic<bool> audioPulsesEnabled { false };
 
     // External MIDI output (device only)
     std::unique_ptr<juce::MidiOutput> externalMidiOut;

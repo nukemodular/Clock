@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "UiTheme.h"
 
 // Header-only modular expanding/collapsing circular popup menu.
 // Implementations are inline so this can be included without modifying build system.
@@ -160,7 +161,7 @@ public:
         return hoverIndex;
     }
 
-    void draw (juce::Graphics& g, float baseX, float baseY, float baseR)
+    void draw (juce::Graphics& g, float baseX, float baseY, float baseR, UiThemeColours& theme)
     {
         if (! visible && ! animating) return;
         const float finalDist = baseR + expansionRadius;
@@ -207,13 +208,12 @@ public:
             juce::Rectangle<float> target (px - r * shadowScale, py - r * shadowScale, r * 2.0f * shadowScale, r * 2.0f * shadowScale);
             if (! shadowPng.isNull())
             {
-                const float shadowAlpha = 0.7f * prog; // animate shadow opacity with expand progress (0 -> 0.7)
-                g.setOpacity (shadowAlpha);
-                g.drawImage (shadowPng, target); // assumes PNG already contains blur & transparent padding
-                g.setOpacity (1.0f);
+                const float shadowAlpha = prog; // animate shadow opacity with expand progress
+                g.setColour(theme.base().withAlpha(0.33f * shadowAlpha));
+                g.drawImage (shadowPng, target, juce::RectanglePlacement::stretchToFit, true);
             }
             // Fade fill with progress for smoother appearance (0 -> full)
-            g.setColour (UiThemeColours::accent().withAlpha (prog));
+            g.setColour (theme.accent().withAlpha (prog));
             g.fillEllipse (px - r, py - r, r*2.0f, r*2.0f);
             if (i < labels.size())
             {
@@ -222,7 +222,7 @@ public:
                 const bool isSmall = lab.equalsIgnoreCase("RND") || lab.equalsIgnoreCase("OFF");
                 const float multiplier = isSmall ? 0.9f : 1.3f;
                 const float fs = juce::jlimit (8.0f, 28.0f, r * multiplier);
-                g.setColour (UiThemeColours::base());
+                g.setColour (theme.base());
                 g.setFont (juce::Font (juce::FontOptions ("Arial", fs, juce::Font::bold)));
                 g.drawFittedText (labels[i], (int)(px - r), (int)(py - r), (int)(r*2.0f), (int)(r*2.0f), juce::Justification::centred, 1);
             }
@@ -246,12 +246,11 @@ public:
                 juce::Rectangle<float> target (px - r * shadowScale, py - r * shadowScale, r * 2.0f * shadowScale, r * 2.0f * shadowScale);
                 if (! shadowPng.isNull())
                 {
-                    const float shadowAlpha = 0.7f * prog; // animate shadow opacity on hover as well
-                    g.setOpacity (shadowAlpha);
-                    g.drawImage (shadowPng, target);
-                    g.setOpacity (1.0f);
+                    const float shadowAlpha = prog; // animate shadow opacity on hover as well
+                    g.setColour(theme.base().withAlpha(0.33f * shadowAlpha));
+                    g.drawImage (shadowPng, target, juce::RectanglePlacement::stretchToFit, true);
                 }
-                g.setColour (UiThemeColours::cyan().withAlpha (prog));
+                g.setColour (theme.cyan().withAlpha (prog));
                 g.fillEllipse (px - r, py - r, r*2.0f, r*2.0f);
                 if (i < labels.size())
                 {
@@ -260,7 +259,7 @@ public:
                     const bool isSmall = lab.equalsIgnoreCase("RND") || lab.equalsIgnoreCase("OFF");
                     const float multiplier = isSmall ? 1.0f : 1.5f;
                     const float fs = juce::jlimit (8.0f, 34.0f, r * multiplier);
-                    g.setColour (UiThemeColours::base());
+                    g.setColour (theme.base());
                     g.setFont (juce::Font (juce::FontOptions ("Arial", fs, juce::Font::bold)));
                     g.drawFittedText (labels[i], (int)(px - r), (int)(py - r), (int)(r*2.0f), (int)(r*2.0f), juce::Justification::centred, 1);
                 }

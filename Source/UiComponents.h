@@ -14,17 +14,17 @@
 // ---------------- HeaderSwitchToggle -----------------
 class HeaderSwitchToggle : public juce::Component {
 public:
-    HeaderSwitchToggle() { setSize(10, 20); }
+    HeaderSwitchToggle(UiThemeColours& t) : theme(t) { setSize(10, 20); }
     void paint(juce::Graphics& g) override {
         auto b = getLocalBounds().toFloat();
         // Draw outer rectangle border
-        g.setColour(UiThemeColours::base().darker(1.5f));
+        g.setColour(theme.base().darker(1.5f));
         g.fillRect(b);
         // Draw indicator
         const float indW = 6.0f, indH = 8.0f;
         float indX = (b.getWidth() - indW) * 0.5f;
         float indY = getToggleState() ? (b.getHeight() - indH - 2.0f) : 2.0f ;
-        g.setColour(UiThemeColours::base());
+        g.setColour(theme.base());
         g.fillRect(indX, indY, indW, indH);
     }
     void mouseDown(const juce::MouseEvent&) override {
@@ -37,6 +37,7 @@ public:
     std::function<void(bool)> onToggle;
 private:
     bool toggleState { true };
+    UiThemeColours& theme;
 };
 
 
@@ -44,6 +45,7 @@ private:
 class FullWidthComboBox : public juce::ComboBox
 {
 public:
+    FullWidthComboBox(UiThemeColours& t) : theme(t) {}
     enum ColourIds {
         overlayTextColourId = 0x2000100
     };
@@ -51,9 +53,9 @@ public:
     {
         // Draw combo background (no text) to avoid LookAndFeel text drawing
         auto bounds = getLocalBounds();
-        g.setColour(UiThemeColours::base());
+        g.setColour(theme.base());
         g.fillRoundedRectangle(bounds.toFloat(), 3.0f);
-        g.setColour(UiThemeColours::accent());
+        g.setColour(theme.accent());
         g.drawRoundedRectangle(bounds.toFloat().reduced(0.5f), 3.0f, 1.5f);
         // Ensure any internal editor/label children are positioned to cover
         // this combo's area so in-place name editing appears exactly where
@@ -193,6 +195,7 @@ public:
     }
 private:
     bool childrenChangeGuard { false };
+    UiThemeColours& theme;
 };
 
 // Reentrancy guard member added to FullWidthComboBox above; declare here to avoid
@@ -201,6 +204,7 @@ private:
 // ---------------- SmallDotToggle -----------------
 class SmallDotToggle : public juce::ToggleButton {
 public:
+    SmallDotToggle(UiThemeColours& t) : theme(t) {}
     void setColours(juce::Colour offCol, juce::Colour onCol) { off = offCol; on = onCol; repaint(); }
     void paintButton(juce::Graphics& g, bool, bool) override {
         auto b = getLocalBounds().toFloat();
@@ -214,24 +218,28 @@ public:
 private:
     juce::Colour off { juce::Colours::red };
     juce::Colour on  { juce::Colours::cyan };
+    UiThemeColours& theme;
 };
 
 // ---------------- HelpButton -----------------
 class HelpButton : public juce::TextButton {
 public:
-    HelpButton() : juce::TextButton("?") {}
+    HelpButton(UiThemeColours& t) : juce::TextButton("?"), theme(t) {}
     void paintButton(juce::Graphics& g, bool, bool) override {
-        juce::Colour col = getToggleState() ? UiThemeColours::cyan() : UiThemeColours::cyan().darker(1.0f);
+        juce::Colour col = getToggleState() ? theme.cyan() : theme.cyan().withAlpha(0.5f);
         g.setColour(col);
         g.setFont(juce::Font(juce::FontOptions("Arial", 18.0f, juce::Font::bold)));
         g.drawFittedText(getButtonText(), getLocalBounds(), juce::Justification::centred, 1);
     }
+private:
+    UiThemeColours& theme;
 };
 
 // ---------------- ArrowDownComponent -----------------
 class ArrowDownComponent : public juce::Component
 {
 public:
+    ArrowDownComponent(UiThemeColours& t) : theme(t) {}
     void paint(juce::Graphics& g) override
     {
         auto b = getLocalBounds().toFloat();
@@ -243,7 +251,7 @@ public:
         p.lineTo(w * 0.0f, 0.0f);
         p.lineTo(w * 1.0f, 0.0f);
         p.closeSubPath();
-        g.setColour(UiThemeColours::base());
+        g.setColour(theme.base());
         g.fillPath(p);
         // Draw a smaller accent triangle inside the base triangle
         juce::Path p2;
@@ -252,16 +260,18 @@ public:
         p2.lineTo(w * 0.0f + 6.0f, 2.0f );
         p2.lineTo(w * 1.0f - 6.0f, 2.0f );
         p2.closeSubPath();
-        g.setColour(UiThemeColours::cyan());
+        g.setColour(theme.cyan());
         g.fillPath(p2);
     }
+private:
+    UiThemeColours& theme;
 };
 
 // ---------------- RunButton (copied, unchanged API) -----------------
 class RunButton : public juce::Component
 {
 public:
-    RunButton()
+    RunButton(UiThemeColours& t) : theme(t)
     {
         rectW = 120.0f;
         rectH = 18.0f;
@@ -322,11 +332,11 @@ public:
         p.addRectangle(-w * 0.5f, -h * 0.5f, w, h);
         juce::AffineTransform t = juce::AffineTransform::rotation(rotation).translated(cx, cy);
         p.applyTransform(t);
-        g.setColour(UiThemeColours::accent());
+        g.setColour(theme.accent());
         g.fillPath(p);
     }
 
-    static void drawAt(juce::Graphics& g, float centreX, float centreY, bool running)
+    static void drawAt(juce::Graphics& g, float centreX, float centreY, bool running, UiThemeColours& theme)
     {
         if (running) return;
         const float w = rectW_static;
@@ -336,7 +346,7 @@ public:
         juce::AffineTransform t = juce::AffineTransform::rotation(juce::MathConstants<float>::pi * 0.25f).translated(centreX, centreY);
         p.applyTransform(t);
 
-        g.setColour(UiThemeColours::accent());
+        g.setColour(theme.accent());
         g.fillPath(p);
     }
 
@@ -363,12 +373,14 @@ private:
     float rotation;
     static inline constexpr float rectW_static = 120.0f;
     static inline constexpr float rectH_static = 18.0f;
+    UiThemeColours& theme;
 };
 
 // ---------------- StatusBarComponent (copied, unchanged API) -----------------
 class StatusBarComponent : public juce::Component
 {
 public:
+    StatusBarComponent(UiThemeColours& t) : theme(t) {}
     void setStatusText(const juce::String& s)
     {
         if (statusText != s)
@@ -392,7 +404,7 @@ public:
     {
         auto b = getLocalBounds();
         auto textArea = b.withTrimmedLeft(10);
-        g.setColour(UiThemeColours::cyan());
+        g.setColour(theme.cyan());
         g.setFont(juce::Font(juce::FontOptions("Arial", 10.0f, juce::Font::bold)));
         g.drawFittedText(statusText, textArea, juce::Justification::centredLeft, 1);
 
@@ -401,7 +413,7 @@ public:
         auto cy = (float) b.getCentreY();
         g.setColour(juce::Colours::black.withAlpha(0.5f));
         g.fillEllipse(cx - ledR - 1.5f, cy - ledR + 1.5f, ledR * 2.0f, ledR * 2.0f);
-        auto ledColour = UiThemeColours::cyan().withAlpha(0.33f).interpolatedWith(UiThemeColours::cyan().withAlpha(0.99f), ledLevel);
+        auto ledColour = theme.cyan().withAlpha(0.33f).interpolatedWith(theme.cyan().withAlpha(0.99f), ledLevel);
         g.setColour(ledColour);
         g.fillEllipse(cx - ledR, cy - ledR, ledR * 2.0f, ledR * 2.0f);
         g.setColour(juce::Colours::white.withAlpha(0.1f));
@@ -411,4 +423,5 @@ public:
 private:
     juce::String statusText { "" };
     float ledLevel { 0.0f };
+    UiThemeColours& theme;
 };

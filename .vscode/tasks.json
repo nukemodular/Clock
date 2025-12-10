@@ -45,6 +45,126 @@
 				"$gcc"
 			],
 			"group": "build"
+		},
+		{
+			"label": "Build Release After Crash Fix",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"--preset",
+				"release"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Build Release After Crash Fix",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"--preset",
+				"release"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Build Release After Crash Fix",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"--preset",
+				"release"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Build Release After Crash Fix",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"--preset",
+				"release"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Build Release After Crash Fix",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"--preset",
+				"release"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Build Release After Crash Fix",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"--preset",
+				"release"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Build Release After Crash Fix",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"--preset",
+				"release"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Build Release After Crash Fix",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"--preset",
+				"release"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Build Release After Crash Fix",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"--preset",
+				"release"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Build Release After Crash Fix",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"--preset",
+				"release"
+			],
+			"isBackground": false,
+			"group": "build"
 		}
 	]
 }

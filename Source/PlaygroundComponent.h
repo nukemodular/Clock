@@ -18,7 +18,7 @@
 class OnOffButton : public juce::Component
 {
 public:
-    OnOffButton()
+    OnOffButton(UiThemeColours& t) : theme(t)
     {
         setSize(diameter, diameter);
         setMouseCursor(juce::MouseCursor::PointingHandCursor);
@@ -27,15 +27,15 @@ public:
     {
         auto b = getLocalBounds().toFloat();
         auto c = b.getCentre();
-        g.setColour(UiThemeColours::accent());
+        g.setColour(theme.accent());
         g.fillEllipse(b);
         const float innerR = 8.0f;
-        g.setColour(UiThemeColours::base());
+        g.setColour(theme.base());
         g.fillEllipse(c.x - innerR, c.y - innerR, innerR * 2, innerR * 2);
         if (isOn)
         {
             const float dotR = 5.0f;
-            g.setColour(UiThemeColours::cyan());
+            g.setColour(theme.cyan());
             g.fillEllipse(c.x - dotR, c.y - dotR, dotR * 2, dotR * 2);
         }
     }
@@ -66,9 +66,10 @@ public:
     std::function<void(bool)> onHoverChanged;
 
 private:
-        bool rotaryHandleHover = false;
+    bool rotaryHandleHover = false;
     static constexpr int diameter = 28;
     bool isOn = false;
+    UiThemeColours& theme;
 };
 
 // --------------------------------------------------------------
@@ -77,7 +78,7 @@ private:
 class Ring16Component : public juce::Component, private juce::Timer
 {
 public:
-    Ring16Component()
+    Ring16Component(UiThemeColours& t) : theme(t)
     {
         setSize((int)(outerR * 2), (int)(outerR * 2));
         masterStartMs = juce::Time::getMillisecondCounterHiRes();
@@ -187,16 +188,16 @@ public:
             int playheadRaw = useExternalPlayhead ? externalPlayheadRaw : lastStepIndex;
             static constexpr int kHighlightRotation = 4;
             // Draw outer reference ring faint with adjusted alpha.
-            //   g.setColour(UiThemeColours::accent().withAlpha(0.1f));
+            //   g.setColour(theme.accent().withAlpha(0.1f));
             //   g.drawEllipse(b.getCentreX()-outerR, b.getCentreY()-outerR, outerR*2, outerR*2, 1.0f);
             // Selected offset wedge (radially reduced by 1px)
             if (selected >= 0)
             {
                 int selIdx = (selected + kHighlightRotation) & 15;
                 const juce::Path &segHi = wedgePathsSelected[(size_t)selIdx];
-                g.setColour(UiThemeColours::cyan().withAlpha(0.55f));
+                g.setColour(theme.cyan().withAlpha(0.55f));
                 g.fillPath(segHi);
-                g.setColour(UiThemeColours::cyan().withAlpha(1.0f));
+                g.setColour(theme.cyan().withAlpha(1.0f));
                 g.strokePath(segHi, juce::PathStrokeType(1.0f));
             }
             // Chase/playhead wedge (different) — draw full wedge so chase colour renders at full thickness
@@ -204,7 +205,7 @@ public:
             {
                 int chaseIdx = (playheadRaw + kHighlightRotation) & 15;
                 const juce::Path &seg = wedgePaths[(size_t)chaseIdx];
-                g.setColour(UiThemeColours::cyan().withAlpha(isPlaying ? 0.75f : 0.45f));
+                g.setColour(theme.cyan().withAlpha(isPlaying ? 0.75f : 0.45f));
                 g.fillPath(seg);
             }
             return;
@@ -232,16 +233,16 @@ public:
                 {
                     // Selected wedge uses a slightly reduced thickness and an outline.
                     const juce::Path &segHi = wedgePathsSelected[(size_t)i];
-                    g.setColour(UiThemeColours::cyan().withAlpha(0.55f));
+                    g.setColour(theme.cyan().withAlpha(0.55f));
                     g.fillPath(segHi);
                     // Keep selected wedge outline cyan-only so it doesn't draw accent over the parent donut.
-                    g.setColour(UiThemeColours::cyan().withAlpha(1.0f));
+                    g.setColour(theme.cyan().withAlpha(1.0f));
                     g.strokePath(segHi, juce::PathStrokeType(1.0f));
                 }
                 else if (isPlay)
                 {
                     // Playhead/chase should render at full wedge geometry (no reduced inset)
-                    g.setColour(UiThemeColours::cyan().withAlpha(isPlaying ? 1.0f : 0.45f));
+                    g.setColour(theme.cyan().withAlpha(isPlaying ? 1.0f : 0.45f));
                     g.fillPath(seg);
                     // Do not stroke the playhead wedge here so the underlying chaselight can show through.
                 }
@@ -249,7 +250,7 @@ public:
             }
             if (flash > 0.01f)
             {
-                g.setColour(UiThemeColours::cyan().withAlpha(juce::jlimit(0.0f, 1.0f, flash)));
+                g.setColour(theme.cyan().withAlpha(juce::jlimit(0.0f, 1.0f, flash)));
                 g.fillPath(seg);
                 float whiteA = flash * 0.35f;
                 if (whiteA > 0.02f)
@@ -260,21 +261,21 @@ public:
             }
             else if (!isPlay && !isSel && fade > 0.01f)
             {
-                g.setColour(UiThemeColours::cyan().withAlpha(fade));
+                g.setColour(theme.cyan().withAlpha(fade));
                 g.fillPath(seg);
             }
             else if (!isPlay && !isSel && isHover)
             {
-                g.setColour(UiThemeColours::accent().darker(0.25f).withAlpha(0.25f));
+                g.setColour(theme.accent().darker(0.25f).withAlpha(0.25f));
                 g.fillPath(seg);
             }
         }
         if (fullRingFlash > 0.01f)
         {
-            g.setColour(UiThemeColours::cyan().withAlpha(juce::jlimit(0.0f, 0.85f, fullRingFlash)));
+            g.setColour(theme.cyan().withAlpha(juce::jlimit(0.0f, 0.85f, fullRingFlash)));
             g.fillPath(donutPathCache);
         }
-        g.setColour(UiThemeColours::accent().withAlpha(0.15f));
+        g.setColour(theme.accent().withAlpha(0.15f));
         g.drawEllipse(b.getCentreX() - innerR, b.getCentreY() - innerR, innerR * 2, innerR * 2, 1.0f);
     }
     void resized() override { rebuildPaths(); }
@@ -418,6 +419,7 @@ public:
     }
 
 private:
+    UiThemeColours& theme;
     void rebuildPaths()
     {
         auto b = getLocalBounds().toFloat();
@@ -586,7 +588,7 @@ private:
 class PlaygroundComponent : public juce::Component, private juce::Timer
 {
 public:
-    PlaygroundComponent();
+    PlaygroundComponent(UiThemeColours& t);
     ~PlaygroundComponent() override;
 
     // Accessor API for unified HitRouting (replaces direct private member access)
@@ -672,12 +674,14 @@ public:
     double getPendingSpeedMultiplier() const noexcept;
     void setHoverTextEnabled(bool en);
     bool getHoverTextEnabled() const noexcept;
+    juce::String getCurrentHoverText() const;
     void setClickToPulseHoverFromEditor(bool hover);
     // UI state setters (used by editor to restore visual-only state)
     void setPopup3Index(int popupIndex);
     void setMainCircle6Value(int val);
     void setSelectedShuffle(int v);
     void setLinearShuffleModeState(bool on);
+    void setLinearShuffleAmount(float amount);
 
     // Pattern bitmask accessors for external sync (editor)
     inline uint16_t getPatternBitmask() const noexcept { return (uint16_t) pattern.getBitmask(); }
@@ -698,6 +702,7 @@ public:
     bool keyPressed(const juce::KeyPress &) override;
 
 private:
+    UiThemeColours& theme;
     // Pre-created fonts to avoid CoreText static lifetime issues
     juce::Font fontSmall12{ juce::FontOptions("Arial", 12.0f, juce::Font::bold) };
     juce::Font fontMid15{ juce::FontOptions("Arial", 15.0f, juce::Font::bold) };
@@ -832,7 +837,7 @@ public:
 // ================= Inline implementations =================
 // Include unified hit routing AFTER class definition so inline methods are visible.
 #include "HitRouting.h"
-inline PlaygroundComponent::PlaygroundComponent()
+inline PlaygroundComponent::PlaygroundComponent(UiThemeColours& t) : theme(t)
 {
     setSize(300, 240);
     // Allow this component to receive keyboard focus (for future shortcuts if needed).
@@ -855,7 +860,7 @@ inline PlaygroundComponent::PlaygroundComponent()
         scheduledPulseAtMs.set(i, 0.0);
     }
     hoverTexts = {"Stop/Re-sync next bar + offset", "Re-trigger quantized", "Autofill pattern edit", "Autofill play interval", "Shuffle Amount", "Shuffle type 909 (1-7) or linear", "Set scale 1/32, 1/16, 1/8, 1/4", "Audio Click: off, beat, 8th, 16th, 24ppq", "Re-sync + offset on/off", "Send midi-clocks while idle/stopped", "Legacy send always stop before start", "Send song position pointer (SPP)"};
-    ring.reset(new Ring16Component());
+    ring.reset(new Ring16Component(theme));
     if (circles.size() > 0)
     {
         const auto &c0 = circles.getReference(0);
@@ -1383,6 +1388,51 @@ inline void PlaygroundComponent::setHoverTextEnabled(bool en)
     repaint();
 }
 inline bool PlaygroundComponent::getHoverTextEnabled() const noexcept { return hoverTextEnabled; }
+inline juce::String PlaygroundComponent::getCurrentHoverText() const
+{
+    juce::String label;
+    if (forcedHoverIndex >= 0 && forcedHoverIndex < hoverTexts.size())
+    {
+        if (forcedHoverIndex == 7)
+            label = "Click or Pulse";
+        else
+            label = hoverTexts[forcedHoverIndex];
+    }
+    else if (ringHoverSegment >= 0)
+        label = "Re-sync at step " + juce::String(ringHoverSegment + 1);
+    else if (hoverIndex == 7)
+    {
+        if (hoverTexts.size() > 7)
+            label = hoverTexts[7];
+    }
+    else if (clickToPulseHover)
+    {
+        label = "Click or Pulse";
+    }
+    else if (hoverIndex >= 0 && hoverIndex < hoverTexts.size())
+    {
+       // label = juce::String(hoverIndex + 1) + ": " + hoverTexts[hoverIndex];
+        label = hoverTexts[hoverIndex];
+    }
+    else if (rotaryHandleHover && hoverTexts.size() > 7)
+    {
+        label = hoverTexts[7];
+    }
+    else if (hoverShuffleId != -1)
+    {
+        if (linearShuffleMode && shufflePositions.size() > 1)
+            label = "Shuffle intensity 50% - 75%";
+        else
+            label = "Shuffle intensity 1 (off) - 7";
+    }
+    if (clickToPulseHover && hoverIndex != 7 && forcedHoverIndex != 7)
+    {
+        if (label.isNotEmpty())
+            label += " — ";
+        label += "Click or Pulse";
+    }
+    return label;
+}
 inline void PlaygroundComponent::setClickToPulseHoverFromEditor(bool hover)
 {
     if (clickToPulseHover != hover)
@@ -1409,7 +1459,7 @@ inline void PlaygroundComponent::paint(juce::Graphics &g)
         runRectFloat = r.toFloat();
         // Draw the rotated run indicator here (static draw) so it is painted
         // before the donut and thus visually behind it.
-        RunButton::drawAt(g, (int)std::round(c0.x), (int)std::round(c0.y), runState);
+        RunButton::drawAt(g, (int)std::round(c0.x), (int)std::round(c0.y), runState, theme);
 
         // (Diagnostics removed per user request)
     }
@@ -1426,7 +1476,7 @@ inline void PlaygroundComponent::paint(juce::Graphics &g)
         donut.addEllipse(c0.x - maskOuter, c0.y - maskOuter, maskOuter * 2.0f, maskOuter * 2.0f);
         donut.addEllipse(c0.x - maskInner, c0.y - maskInner, maskInner * 2.0f, maskInner * 2.0f);
         donut.setUsingNonZeroWinding(false);
-        g.setColour(UiThemeColours::accent());
+        g.setColour(theme.accent());
         g.fillPath(donut);
     }
     // Pattern ring (inward) when edit mode active
@@ -1436,7 +1486,7 @@ inline void PlaygroundComponent::paint(juce::Graphics &g)
         float outerR = (ring->getInnerRadius() - PatternGeometry::kPatternInset) + PatternGeometry::kPatternOutwardShift;
         float innerR = outerR * PatternGeometry::kPatternThicknessRatio; // keep proportional thickness
         // Hide inactive wedges (only show active cyan ones) per user request.
-        pattern.draw(g, {c0.x, c0.y}, outerR, innerR, UiThemeColours::cyan(), UiThemeColours::base(), patternHoverIndex, true);
+        pattern.draw(g, {c0.x, c0.y}, outerR, innerR, theme.cyan(), theme.base(), patternHoverIndex, theme, true);
         // Center UI (RND amount number, AUTO toggle above, RND trigger below)
         float centreX = c0.x;
         float centreY = c0.y;
@@ -1460,24 +1510,24 @@ inline void PlaygroundComponent::paint(juce::Graphics &g)
             p.quadraticTo(x + w, y, x + w, y + cornerR); // top-right corner
             p.lineTo(x + w, y + h);
             p.closeSubPath();
-            juce::Colour fillCol = autoRandomizePattern ? UiThemeColours::cyan().withAlpha(0.33f) : UiThemeColours::accent().withAlpha(0.33f);
-            juce::Colour strokeCol = autoRandomizePattern ? UiThemeColours::cyan().withAlpha(0.66f) : UiThemeColours::accent().withAlpha(0.66f);
+            juce::Colour fillCol = autoRandomizePattern ? theme.cyan().withAlpha(0.33f) : theme.accent().withAlpha(0.33f);
+            juce::Colour strokeCol = autoRandomizePattern ? theme.cyan().withAlpha(0.66f) : theme.accent().withAlpha(0.66f);
             g.setColour(fillCol);
             g.fillPath(p);
-            g.setColour(autoRandomizePattern ? UiThemeColours::cyan() : UiThemeColours::accent());
+            g.setColour(autoRandomizePattern ? theme.cyan() : theme.accent());
             g.setFont(fontSmall);
             g.drawFittedText("AUTO", autoRect.toNearestInt(), juce::Justification::centred, 1);
             g.setColour(strokeCol);
             g.strokePath(p, juce::PathStrokeType(1.0f));
         }
         // Amount rectangle (no rounded corners)
-        g.setColour(UiThemeColours::accent().withAlpha(0.33f));
+        g.setColour(theme.accent().withAlpha(0.33f));
         g.fillRect(amountRect);
         // Display random amount as 1..16
-        g.setColour(UiThemeColours::cyan());
+        g.setColour(theme.cyan());
         g.setFont(fontMid);
         g.drawFittedText(juce::String(juce::jlimit(1, 16, rndPatternAmount)), amountRect.toNearestInt(), juce::Justification::centred, 1);
-        g.setColour(UiThemeColours::accent().withAlpha(0.66f));
+        g.setColour(theme.accent().withAlpha(0.66f));
         g.drawRect(amountRect);
         // Draw RND with rounded BOTTOM corners only (flash cyan when triggered)
         {
@@ -1491,11 +1541,11 @@ inline void PlaygroundComponent::paint(juce::Graphics &g)
             p.lineTo(x + w, y);
             p.closeSubPath();
             float flashAmt = juce::jlimit(0.0f, 1.0f, rndTriggerFlash);
-            juce::Colour baseFill = UiThemeColours::accent().withAlpha(0.33f);
-            juce::Colour fillCol = baseFill.interpolatedWith(UiThemeColours::cyan(), flashAmt);
-            juce::Colour strokeCol = UiThemeColours::accent().withAlpha(0.66f).interpolatedWith(UiThemeColours::cyan(), flashAmt);
+            juce::Colour baseFill = theme.accent().withAlpha(0.33f);
+            juce::Colour fillCol = baseFill.interpolatedWith(theme.cyan(), flashAmt);
+            juce::Colour strokeCol = theme.accent().withAlpha(0.66f).interpolatedWith(theme.cyan(), flashAmt);
             // Fade text colour between accent and cyan using flashAmt instead of popping.
-            juce::Colour textCol = UiThemeColours::accent().interpolatedWith(UiThemeColours::cyan(), flashAmt);
+            juce::Colour textCol = theme.accent().interpolatedWith(theme.cyan(), flashAmt);
             g.setColour(fillCol);
             g.fillPath(p);
             g.setColour(textCol);
@@ -1527,7 +1577,7 @@ inline void PlaygroundComponent::paint(juce::Graphics &g)
             const auto &c = circles.getReference(i);
             float rr = c.r;
             float f = juce::jlimit(0.0f, 1.0f, flashes[i]);
-            juce::Colour col = UiThemeColours::accent().interpolatedWith(UiThemeColours::cyan(), f);
+            juce::Colour col = theme.accent().interpolatedWith(theme.cyan(), f);
             // Hover effect: restore colour-based hover (use darker(0.1f) per request)
             bool wantsHover = (hoverIndex == i) && (i >= 1 && i <= 8);
             if (wantsHover)
@@ -1544,7 +1594,7 @@ inline void PlaygroundComponent::paint(juce::Graphics &g)
     {
         const auto &c = circles.getReference(7);
         float insetR = 17.0f;
-        g.setColour(UiThemeColours::base());
+        g.setColour(theme.base());
         g.fillEllipse(c.x - insetR, c.y - insetR, insetR * 2, insetR * 2);
         const float startAng = -juce::MathConstants<float>::pi * 1.2f;
         const float endAng = juce::MathConstants<float>::pi * 0.2f;
@@ -1552,7 +1602,7 @@ inline void PlaygroundComponent::paint(juce::Graphics &g)
         float needleR = insetR + 2.0f;
         float x2 = c.x + std::cos(ang) * needleR;
         float y2 = c.y + std::sin(ang) * needleR;
-        g.setColour(UiThemeColours::accent().interpolatedWith(UiThemeColours::cyan(), offsetRotaryT));
+        g.setColour(theme.accent().interpolatedWith(theme.cyan(), offsetRotaryT));
         g.drawLine(c.x, c.y, x2, y2, 4.0f);
     }
     if (shufflePositions.size() > 0)
@@ -1566,18 +1616,18 @@ inline void PlaygroundComponent::paint(juce::Graphics &g)
             bool hoverOnLinear = (hoverShuffleId != -1);
 
             // Hover effect for linear handle: darken fill slightly instead of scaling
-            juce::Colour linearFill = UiThemeColours::accent();
+            juce::Colour linearFill = theme.accent();
             if (hoverOnLinear)
                 linearFill = linearFill.darker(0.1f);
 
             float innerR = R * 0.6f;
             g.setColour(linearFill);
             g.fillEllipse(posPt.x - R, posPt.y - R, R * 2, R * 2);
-            g.setColour(UiThemeColours::base());
+            g.setColour(theme.base());
             g.fillEllipse(posPt.x - innerR, posPt.y - innerR, innerR * 2, innerR * 2);
 
             int numeric = 50 + (int)std::round(linearShufflePos * 25.0f);
-            g.setColour(UiThemeColours::cyan());
+            g.setColour(theme.cyan());
             g.setFont(fontHover12);
             g.drawFittedText(juce::String(numeric), (int)(posPt.x - innerR), (int)(posPt.y - innerR), (int)(innerR * 2), (int)(innerR * 2), juce::Justification::centred, 1);
         }
@@ -1587,14 +1637,14 @@ inline void PlaygroundComponent::paint(juce::Graphics &g)
             float R = pos.r;
             bool hoverSelected = (hoverShuffleId == selectedShuffle);
 
-            juce::Colour shuffleFill = UiThemeColours::accent();
+            juce::Colour shuffleFill = theme.accent();
             if (hoverSelected)
                 shuffleFill = shuffleFill.darker(0.1f);
 
             float innerR = R * 0.6f;
             g.setColour(shuffleFill);
             g.fillEllipse(pos.x - R, pos.y - R, R * 2, R * 2);
-            g.setColour(UiThemeColours::base());
+            g.setColour(theme.base());
             g.fillEllipse(pos.x - innerR, pos.y - innerR, innerR * 2, innerR * 2);
 
             const juce::Font shuffleFonts[7] = {
@@ -1606,7 +1656,7 @@ inline void PlaygroundComponent::paint(juce::Graphics &g)
                 juce::Font(juce::FontOptions("Arial", 16.0f, juce::Font::bold)),
                 juce::Font(juce::FontOptions("Arial", 17.0f, juce::Font::bold))
             };
-            g.setColour(UiThemeColours::cyan());
+            g.setColour(theme.cyan());
             int fIdx = (pos.id >= 1 && pos.id <= 7) ? (pos.id - 1) : 1;
             g.setFont(shuffleFonts[fIdx]);
 
@@ -1621,69 +1671,18 @@ inline void PlaygroundComponent::paint(juce::Graphics &g)
             g.drawFittedText(juce::String(pos.id), (int)(pos.x - innerR + offX), (int)(pos.y - innerR + offY), (int)(innerR * 2), (int)(innerR * 2), juce::Justification::centred, 1);
         }
     }
-    juce::String label;
-    // Prefer forced/editor-driven hover or ring/small-circle hover over shuffle text
-    // so moving from a shuffle point into the ring or inner-circle will show the
-    // appropriate context help (wedge/resync/inner circle) instead of sticking
-    // on the shuffle label.
-    if (forcedHoverIndex >= 0 && forcedHoverIndex < hoverTexts.size())
-    {
-        // If the editor forced hover points to the small click/pulse control (idx 7),
-        // show the concise help text only.
-        if (forcedHoverIndex == 7)
-            label = "Click or Pulse";
-        else
-            label = hoverTexts[forcedHoverIndex];
-    }
-    else if (ringHoverSegment >= 0)
-        label = "Re-sync at step " + juce::String(ringHoverSegment + 1);
-    else if (hoverIndex == 7)
-    {
-        // Hovering the rotary: show rotary hoverText only
-        if (hoverTexts.size() > 7)
-            label = hoverTexts[7];
-    }
-    else if (clickToPulseHover)
-    {
-        // Hovering the small button inside rotary: show only 'Click or Pulse'
-        label = "Click or Pulse";
-    }
-    else if (hoverIndex >= 0 && hoverIndex < hoverTexts.size())
-    {
-        label = juce::String(hoverIndex + 1) + ": " + hoverTexts[hoverIndex];
-    }
-    else if (rotaryHandleHover && hoverTexts.size() > 7)
-    {
-        // Fallback: show rotary hoverText if rotaryHandleHover is true
-        label = hoverTexts[7];
-    }
-    else if (hoverShuffleId != -1)
-    {
-        // If the linear shuffle mode (toggled by circle idx 5) is active,
-        // show the linear percentage range. Otherwise show the discrete 1..7
-        // intensity help text.
-        if (linearShuffleMode && shufflePositions.size() > 1)
-            label = "Shuffle intensity 50% - 75%";
-        else
-            label = "Shuffle intensity 1 (off) - 7";
-    }
-    // Do not append the generic "Click - Pulse" suffix when the small click/pulse
-    // control (idx 7) is the source of the hover label — it already displays the
-    // intended concise help text above.
-    if (clickToPulseHover && hoverIndex != 7 && forcedHoverIndex != 7)
-    {
-        if (label.isNotEmpty())
-            label += " — ";
-        label += "Click or Pulse";
-    }
+    juce::String label = getCurrentHoverText();
+    // Hover text drawing moved to PluginEditor::paintOverChildren to share space with build number
+    /*
     if (hoverTextEnabled && label.isNotEmpty())
     {
         // move hover text up 1px for tighter layout
         auto area = juce::Rectangle<int>(8, getHeight() - 17, getWidth() - 16, 18);
-        g.setColour(UiThemeColours::cyan());
+        g.setColour(theme.cyan());
         g.setFont(fontHover12);
         g.drawFittedText(label, area, juce::Justification::centred, 1);
     }
+    */
 }
 inline void PlaygroundComponent::paintOverChildren(juce::Graphics &g)
 {
@@ -1697,18 +1696,18 @@ inline void PlaygroundComponent::paintOverChildren(juce::Graphics &g)
     float outerScale = 1.0f + 0.2f * fOuter;
     float outerRScaled = outerR * outerScale;
 
-    juce::Colour col = UiThemeColours::accent().interpolatedWith(UiThemeColours::cyan(), fOuter);
+    juce::Colour col = theme.accent().interpolatedWith(theme.cyan(), fOuter);
     g.setColour(col);
     g.fillEllipse(c1.x - outerRScaled, c1.y - outerRScaled, outerRScaled * 2, outerRScaled * 2);
 
     float insetR = 24.0f;
     float insetRScaled = insetR * (1.0f + 0.2f * fOuter);
-    g.setColour(UiThemeColours::base());
+    g.setColour(theme.base());
     g.fillEllipse(c1.x - insetRScaled, c1.y - insetRScaled, insetRScaled * 2, insetRScaled * 2);
 
     int stepNum = externalStepForDisplay > 0 ? externalStepForDisplay : (ring ? ring->getCurrentStepLogical() : -1);
     juce::String stepText = stepNum > 0 ? juce::String(stepNum) : "-";
-    g.setColour(UiThemeColours::cyan());
+    g.setColour(theme.cyan());
     g.setFont(fontStep30);
     g.drawFittedText(stepText, (int)(c1.x - insetRScaled), (int)(c1.y - insetRScaled), (int)(insetRScaled * 2), (int)(insetRScaled * 2), juce::Justification::centred, 1);
 
@@ -1716,12 +1715,12 @@ inline void PlaygroundComponent::paintOverChildren(juce::Graphics &g)
     {
         const auto &c7 = circles.getReference(7);
         float smallR = 8.0f;
-        juce::Colour bcol = clickToPulseOn ? UiThemeColours::cyan() : UiThemeColours::accent();
+        juce::Colour bcol = clickToPulseOn ? theme.cyan() : theme.accent();
         g.setColour(bcol);
         g.fillEllipse(c7.x - smallR, c7.y - smallR, smallR * 2, smallR * 2);
         if (clickToPulseHover)
         {
-            g.setColour(UiThemeColours::cyan().withAlpha(0.25f));
+            g.setColour(theme.cyan().withAlpha(0.25f));
             g.drawEllipse(c7.x - smallR - 2.0f, c7.y - smallR - 2.0f, (smallR + 2.0f) * 2, (smallR + 2.0f) * 2, 2.0f);
         }
     }
@@ -1730,22 +1729,22 @@ inline void PlaygroundComponent::paintOverChildren(juce::Graphics &g)
     {
         const auto &c6 = circles.getReference(6);
         float insetR6 = 17.0f;
-        g.setColour(UiThemeColours::base());
+        g.setColour(theme.base());
         g.fillEllipse(c6.x - insetR6, c6.y - insetR6, insetR6 * 2, insetR6 * 2);
-        g.setColour(UiThemeColours::cyan());
+        g.setColour(theme.cyan());
         g.setFont(fontMain6_22);
         g.drawFittedText(juce::String(mainCircle6Value), (int)(c6.x - insetR6), (int)(c6.y - insetR6), (int)(insetR6 * 2), (int)(insetR6 * 2), juce::Justification::centred, 1);
         if (popup6.isVisible() || popup6.isAnimating())
-            popup6.draw(g, c6.x, c6.y, c6.r);
+            popup6.draw(g, c6.x, c6.y, c6.r, theme);
     }
 
         if (circles.size() > 3)
         {
             const auto &c3 = circles.getReference(3);
             float insetR3 = 17.0f;
-            g.setColour(UiThemeColours::base());
+            g.setColour(theme.base());
             g.fillEllipse(c3.x - insetR3, c3.y - insetR3, insetR3 * 2, insetR3 * 2);
-            g.setColour(UiThemeColours::cyan());
+            g.setColour(theme.cyan());
             // If label is a numeric interval (e.g. "4","8","16",...), draw it larger
             juce::String lbl3 = mainCircle3Label.trim();
             bool smallText = lbl3.equalsIgnoreCase("RND") || lbl3.equalsIgnoreCase("OFF");
@@ -1767,7 +1766,7 @@ inline void PlaygroundComponent::paintOverChildren(juce::Graphics &g)
                 g.setFont(fontRndSmall14);
             g.drawFittedText(lbl3, (int)(c3.x - insetR3), (int)(c3.y - insetR3), (int)(insetR3 * 2), (int)(insetR3 * 2), juce::Justification::centred, 1);
             if (popup3.isVisible() || popup3.isAnimating())
-                popup3.draw(g, c3.x, c3.y, c3.r);
+                popup3.draw(g, c3.x, c3.y, c3.r, theme);
         }
 
     // Draw countdown that starts as a full circle and decreases counterclockwise.
@@ -1811,7 +1810,7 @@ inline void PlaygroundComponent::paintOverChildren(juce::Graphics &g)
                 juce::Path arcPath;
                 // Start a new subpath to avoid any line joining from previous path endpoints.
                 arcPath.addArc(c3.x - r, c3.y - r, r * 2.0f, r * 2.0f, startAng, endAng, true);
-                g.setColour(UiThemeColours::cyan());
+                g.setColour(theme.cyan());
                 g.strokePath(arcPath, juce::PathStrokeType(strokeW, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
             }
         }
@@ -1828,15 +1827,15 @@ inline void PlaygroundComponent::paintOverChildren(juce::Graphics &g)
     {
     // Increase Idle alpha so the LED remains visible against dark backgrounds.
     case StatusState::Idle:
-        ledColour = UiThemeColours::accent().withAlpha(0.85f);
+        ledColour = theme.accent().withAlpha(0.85f);
         statusLabel = "IDLE";
         break;
     case StatusState::Armed:
-        ledColour = UiThemeColours::cyan().withAlpha(0.95f);
+        ledColour = theme.cyan().withAlpha(0.95f);
         statusLabel = "ARM";
         break;
     case StatusState::Pending:
-        ledColour = UiThemeColours::accent().interpolatedWith(UiThemeColours::cyan(), 0.6f).withAlpha(0.95f);
+        ledColour = theme.accent().interpolatedWith(theme.cyan(), 0.6f).withAlpha(0.95f);
         statusLabel = "PENDING";
         break;
     }
@@ -1847,18 +1846,18 @@ inline void PlaygroundComponent::paintOverChildren(juce::Graphics &g)
         ledColour = ledColour.withAlpha(juce::jlimit(0.0f, 1.0f, pulseA));
     }
     // Draw subtle outer glow for contrast (LED and status text moved +5px in X)
-    g.setColour(UiThemeColours::cyan().withAlpha(0.12f));
+    g.setColour(theme.cyan().withAlpha(0.12f));
     g.fillEllipse(cx - (ledR + 1.5f), cy - (ledR + 1.5f), (ledR + 1.5f) * 2, (ledR + 1.5f) * 2);
     g.setColour(ledColour);
     g.fillEllipse(cx - ledR, cy - ledR, ledR * 2, ledR * 2);
     // Thin outer stroke for crisp edge visibility
-    g.setColour(UiThemeColours::base().withAlpha(0.9f));
+    g.setColour(theme.base().withAlpha(0.9f));
     g.drawEllipse(cx - ledR, cy - ledR, ledR * 2, ledR * 2, 1.2f);
     // Text to left of LED (moved right along with LED)
     g.setFont(fontStatus10);
     float textRight = cx - ledR + 2.0f;
     juce::Rectangle<float> txtArea(11.0f + 5.0f, cy - 8.0f, textRight - (11.0f + 5.0f), 16.0f);
-    g.setColour(UiThemeColours::cyan());
+    g.setColour(theme.cyan());
     g.drawFittedText(statusLabel, txtArea.toNearestInt(), juce::Justification::centredLeft, 1);
 }
 inline void PlaygroundComponent::mouseDown(const juce::MouseEvent &e)
@@ -2511,7 +2510,7 @@ inline void PlaygroundComponent::makeButton(int idx)
     if (idx < 0 || idx >= circles.size())
         return;
     const auto &c = circles.getReference(idx);
-    auto *b = onOffButtons.add(new OnOffButton());
+    auto *b = onOffButtons.add(new OnOffButton(theme));
     b->setBounds((int)(c.x - 14.0f), (int)(c.y - 14.0f), 28, 28);
     onOffButtonIdxs.add(idx);
     b->onHoverChanged = [this, idx](bool over)
@@ -2771,5 +2770,12 @@ inline void PlaygroundComponent::setSelectedShuffle(int v)
 inline void PlaygroundComponent::setLinearShuffleModeState(bool on)
 {
     linearShuffleMode = on;
+    repaint();
+}
+
+inline void PlaygroundComponent::setLinearShuffleAmount(float amount)
+{
+    linearShuffleAmount = juce::jlimit(0.5f, 0.75f, amount);
+    linearShufflePos = juce::jlimit(0.0f, 1.0f, (linearShuffleAmount - 0.5f) / 0.25f);
     repaint();
 }

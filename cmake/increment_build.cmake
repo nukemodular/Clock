@@ -43,7 +43,7 @@ else()
 endif()
 
 # Compose version with build string
-string(CONCAT PLUGIN_VERSION_WITH_BUILD "${PLUGIN_VERSION_STRING} - build " "${NEW_BUILD_NUM}")
+string(CONCAT PLUGIN_VERSION_WITH_BUILD "build " "${NEW_BUILD_NUM}")
 
 # Write generated header
 file(WRITE "${OUT_HEADER}" "#pragma once\n")

@@ -14,8 +14,7 @@ public:
         setInterceptsMouseClicks(true, true);
         startTimerHz(60);
     }
-    void setColours(juce::Colour accent, juce::Colour base, juce::Colour cyan)
-    { kAccent = accent; kBase = base; kCyan = cyan; repaint(); }
+    void setColours(juce::Colour, juce::Colour, juce::Colour) {} // Deprecated: uses UiThemeColours
     void setIndex(int idx) { idx = juce::jlimit(0, 3, idx); if (currentIndex != idx) { currentIndex = idx; repaint(); } }
     int getIndex() const { return currentIndex; }
     std::function<void(int)> onGridChanged;
@@ -29,7 +28,7 @@ private:
     bool menuOpen { false }, opening { false }, closing { false };
     float openAmount { 0.0f };
     int currentIndex { 1 }, hoverIndex { -1 };
-    juce::Colour kAccent { juce::Colour::fromRGB(0xFF,0x4E,0x5B) }, kBase { juce::Colour::fromRGB(0x26,0x26,0x26) }, kCyan { juce::Colour::fromRGB(0x00,0xD7,0xFF) };
+    // juce::Colour kAccent, kBase, kCyan removed; use UiThemeColours directly
     static constexpr float kStartDeg = 110.0f, kEndDeg = 250.0f;
     void timerCallback() override;
     void drawOptions(juce::Graphics& g, juce::Point<float> center, float baseD);
@@ -42,7 +41,7 @@ class AnimatedStepOffsetMenu : public juce::Component, private juce::Timer
 {
 public:
     AnimatedStepOffsetMenu() { setInterceptsMouseClicks(true, true); startTimerHz(60); }
-    void setColours(juce::Colour accent, juce::Colour base, juce::Colour cyan) { kAccent = accent; kBase = base; kCyan = cyan; repaint(); }
+    void setColours(juce::Colour, juce::Colour, juce::Colour) {} // Deprecated
     void setStep(int newStep) { newStep = juce::jlimit(1, 16, newStep); if (selectedStep != newStep) { selectedStep = newStep; repaint(); } }
     int getStep() const { return selectedStep; }
     std::function<void(int)> onStepChanged;
@@ -58,7 +57,7 @@ private:
     float openAmount { 0.0f };
     int selectedStep { 1 }, hoverIndex { -1 };
     juce::Rectangle<int> clickThroughRect {}; bool hasClickThrough { false };
-    juce::Colour kAccent { juce::Colour::fromRGB(0xFF,0x4E,0x5B) }, kBase { juce::Colour::fromRGB(0x26,0x26,0x26) }, kCyan { juce::Colour::fromRGB(0x00,0xD7,0xFF) };
+    // Colors removed
     static constexpr float kBaseInward = UiLayout::kBaseInward;
     static constexpr float kInwardSmallShift = UiLayout::kInwardSmallShift;
     static constexpr float kInwardHoverExtra = UiLayout::kInwardHoverExtra;
@@ -87,7 +86,7 @@ public:
     int getValue() const noexcept { return currentIndex + 1; }
     void setManualBounds(const std::array<juce::Rectangle<int>, 7>& rects){ manualMode = true; const auto origin = getPosition(); for (size_t i = 0; i < rects.size(); ++i) buttonBounds[i] = rects[i].translated(-origin.x, -origin.y); repaint(); }
     bool isManualMode() const noexcept { return manualMode; }
-    void setColours(juce::Colour accent, juce::Colour base, juce::Colour cyan){ kAccent = accent; kBase = base; kCyan = cyan; repaint(); }
+    void setColours(juce::Colour, juce::Colour, juce::Colour){ repaint(); }
     void paint(juce::Graphics& g) override;
     void resized() override;
     void mouseDown(const juce::MouseEvent& e) override;
@@ -95,9 +94,7 @@ public:
     void mouseUp(const juce::MouseEvent& e) override;
     bool hitTest(int x, int y) override;
 private:
-    juce::Colour kAccent { juce::Colour::fromRGB(0xFF,0x4E,0x5B) };
-    juce::Colour kBase   { juce::Colour::fromRGB(0x26,0x26,0x26) };
-    juce::Colour kCyan   { juce::Colour::fromRGB(0x00,0xD7,0xFF) };
+    // Colors removed
     std::array<juce::Rectangle<int>, 7> buttonBounds {};
     bool manualMode { false };
     int currentIndex { 3 };
