@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.21)
 
+if (APPLE)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum OS X deployment version")
+endif()
+
 project(ClockV3 VERSION 0.1.0 LANGUAGES C CXX)
 
 # Plugin version available to other CMake logic and the increment script
