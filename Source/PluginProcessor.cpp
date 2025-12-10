@@ -1147,6 +1147,13 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                     // or if a near-simultaneous Start was already emitted this block.
                     if (! isDuplicateStart(barForStart, stepForStart, nextGridOffset))
                     {
+                        // Legacy mode: send Stop before Start for manual triggers too
+                        if (legacyModeEnabled.load(std::memory_order_relaxed))
+                        {
+                            const auto stopMsg = juce::MidiMessage::midiStop();
+                            addBoth(midi, extClock, stopMsg, nextGridOffset);
+                        }
+
                         addBoth(midi, extClock, startMsg, nextGridOffset);
                         startSampleForRunSignal = nextGridOffset;
                         lastStartBar.store(barForStart, std::memory_order_relaxed);
@@ -1473,6 +1480,12 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                 else
                 {
                     mappedOffset = fastRoundPositive(exactSample);
+                }
+                // Fix for duplicate clocks on rate change: if accumulator reset causes
+                // mappedOffset to fall before the boundary sample (already covered by Phase 1), skip it.
+                if (boundaryInBlock && mappedOffset < startSampleAtBoundary)
+                {
+                    continue;
                 }
                 if (mappedOffset > numSamples - 1)
                 {
@@ -2294,33 +2307,6 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
             }
         }
         int stopOffset = -1;
-        if (shouldEmitStart && legacy)
-        {
-            const int gapSamples = juce::jmax(1, fastRoundPositive(prevSixteenthLenQ * samplesPerQuarter) - 1);
-            stopOffset = juce::jmax(0, sampleOffset - gapSamples);
-            if (stopOffset >= sampleOffset)
-                stopOffset = juce::jmax(0, sampleOffset - 1);
-            if (stopOffset < sampleOffset)
-            {
-                const auto stopMsg = juce::MidiMessage::midiStop();
-                if (sendMidi)
-                {
-                    midi.addEvent(stopMsg, stopOffset);
-                    extBuffer.addEvent(stopMsg, stopOffset);
-                    
-                    // Send SPP if enabled
-                    if ((bool)parameters.state.getProperty("ui.sppMode", false))
-                    {
-                        // Calculate SPP at the stop offset
-                        double stopPPQ = ppqStart + (double)stopOffset / samplesPerQuarter;
-                        int spp = (int)(stopPPQ * 4.0);
-                        auto sppMsg = juce::MidiMessage::songPositionPointer(spp);
-                        midi.addEvent(sppMsg, stopOffset);
-                        extBuffer.addEvent(sppMsg, stopOffset);
-                    }
-                }
-            }
-        }
 
         // Only allow resyncMatches to bypass generated-start gating when the engine is running OR if we are explicitly starting now.
         const bool allowResyncBypass = resyncMatches && (runActive || haveStart);
@@ -2347,6 +2333,32 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
                 bool duplicate = isDuplicateStart(barForStart, stepForStart, sampleOffset);
                 if (!duplicate && sendMidi)
                 {
+                    // Legacy Mode: Emit Stop before Start
+                    if (legacy)
+                    {
+                        const int gapSamples = juce::jmax(1, fastRoundPositive(prevSixteenthLenQ * samplesPerQuarter) - 1);
+                        stopOffset = juce::jmax(0, sampleOffset - gapSamples);
+                        if (stopOffset >= sampleOffset)
+                            stopOffset = juce::jmax(0, sampleOffset - 1);
+                        
+                        if (stopOffset < sampleOffset)
+                        {
+                            const auto stopMsg = juce::MidiMessage::midiStop();
+                            midi.addEvent(stopMsg, stopOffset);
+                            extBuffer.addEvent(stopMsg, stopOffset);
+                            
+                            // Send SPP if enabled
+                            if ((bool)parameters.state.getProperty("ui.sppMode", false))
+                            {
+                                double stopPPQ = ppqStart + (double)stopOffset / samplesPerQuarter;
+                                int spp = (int)(stopPPQ * 4.0);
+                                auto sppMsg = juce::MidiMessage::songPositionPointer(spp);
+                                midi.addEvent(sppMsg, stopOffset);
+                                extBuffer.addEvent(sppMsg, stopOffset);
+                            }
+                        }
+                    }
+
                     midi.addEvent(startMsg, sampleOffset);
                     extBuffer.addEvent(startMsg, sampleOffset);
                     startSampleForRunSignal = sampleOffset;
