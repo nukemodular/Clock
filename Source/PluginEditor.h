@@ -12,16 +12,25 @@
 #include "PlaygroundComponent.h"
 #include "UiComponents.h"
 #include "HitRouting.h" // unified hit-test
+#include "SvgDancerComponent.h"
 
 class ColorPaletteToggle : public juce::Component
 {
     UiThemeColours& theme;
+    juce::Component::SafePointer<juce::CallOutBox> colorPickerBox;
+
 public:
     std::function<void()> onColorChanged;
 
     ColorPaletteToggle(UiThemeColours& t) : theme(t)
     {
         // No button setup needed
+    }
+
+    ~ColorPaletteToggle() override
+    {
+        if (colorPickerBox)
+            colorPickerBox->dismiss();
     }
     
     void paint(juce::Graphics& g) override
@@ -54,6 +63,8 @@ public:
 
         if (e.y >= y && e.y < y + sqSize)
         {
+            juce::Component::SafePointer<ColorPaletteToggle> safeThis (this);
+
             if (e.x >= startX && e.x < startX + sqSize)
             {
                 if (e.mods.isShiftDown())
@@ -64,7 +75,7 @@ public:
                 }
                 else
                 {
-                    showColourPicker(theme.accent(), [this](juce::Colour c){ theme.setAccent(c); });
+                    showColourPicker(theme.accent(), [safeThis](juce::Colour c){ if (safeThis) safeThis->theme.setAccent(c); });
                 }
             }
             else if (e.x >= startX + sqSize + gap && e.x < startX + 2 * sqSize + gap)
@@ -77,7 +88,7 @@ public:
                 }
                 else
                 {
-                    showColourPicker(theme.cyan(), [this](juce::Colour c){ theme.setCyan(c); });
+                    showColourPicker(theme.cyan(), [safeThis](juce::Colour c){ if (safeThis) safeThis->theme.setCyan(c); });
                 }
             }
             else if (e.x >= startX + 2 * (sqSize + gap) && e.x < startX + 3 * sqSize + 2 * gap)
@@ -90,7 +101,7 @@ public:
                 }
                 else
                 {
-                    showColourPicker(theme.base(), [this](juce::Colour c){ theme.setBase(c); });
+                    showColourPicker(theme.base(), [safeThis](juce::Colour c){ if (safeThis) safeThis->theme.setBase(c); });
                 }
             }
         }
@@ -127,9 +138,13 @@ private:
             }
         });
         content->setCurrentColour(currentColour);
-        content->setSize(220, 280);
+        content->setSize(180, 160);
 
-        juce::CallOutBox::launchAsynchronously(std::unique_ptr<juce::Component>(content), getScreenBounds(), nullptr);
+        // Point to right edge to encourage placement to the right.
+        // Use nullptr parent so it's a desktop window (avoids clipping).
+        auto area = getScreenBounds();
+        auto target = area.removeFromRight(15);
+        colorPickerBox = &juce::CallOutBox::launchAsynchronously(std::unique_ptr<juce::Component>(content), target, nullptr);
     }
 };
 
@@ -172,6 +187,8 @@ private:
     // New: instrument name combo + NAME/MIDI toggle
     FullWidthComboBox nameBox;
     juce::TextButton nameMidiSwitch { "NAME" };
+    // Sync Latch toggle
+    juce::TextButton syncLatchButton { "SYNC" };
     // Name editor helper
     void toggleNameEditorOrCommit();
     // Small center-dot click toggle
@@ -193,6 +210,7 @@ private:
     // Attachments
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> clickEnableAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> idleClockAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> syncLatchAttachment;
 
     // Helpers
     void refreshDeviceList();
@@ -342,12 +360,8 @@ private:
     // display refresh rate while leaving the 60Hz timer for non-animation tasks.
     std::unique_ptr<juce::VBlankAnimatorUpdater> vblankUpdater;
 
-    // --- Dancer PNG sequence (reintroduced) ---
-    // Frames loaded from BinaryData dancer_0_png .. dancer_20_png (reference canvas 355x500).
-    void loadDancerFrames();
-    void drawDancer(juce::Graphics& g);
-    std::vector<std::unique_ptr<juce::Drawable>> dancerFrames; // ordered frame drawables
-    int dancerFrameCount { 0 };              // number of loaded frames
+    // --- Dancer SVG Component ---
+    std::unique_ptr<SvgDancerComponent> svgDancer;
     int dancerLastFrame { 0 };               // last computed frame index
     unsigned long long dancerLastDrawnClockCounter { 0 }; // last clock counter used for frame selection
     int dancerFrameOffset { 0 };              // frame offset in frames; increments by 3 on triggers

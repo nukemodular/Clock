@@ -205,6 +205,7 @@ namespace
               clockDivRow("CLK DIV.", MidiRemoteRow::CC, p.midiRemoteClockDiv, p.theme),
               triggerRow("TRIGGER", MidiRemoteRow::Note, p.midiRemoteTrigger, p.theme, MidiRemoteRow::Compact),
               resyncRow("RESYNC", MidiRemoteRow::Note, p.midiRemoteResync, p.theme, MidiRemoteRow::Compact),
+              gatedSyncRow("LATCH", MidiRemoteRow::Note, p.midiRemoteGatedSync, p.theme, MidiRemoteRow::Compact),
               autoFillRow("AUTOFILL", MidiRemoteRow::CC, p.midiRemoteAutoFill, p.theme),
               channelValue(p.midiRemoteChannel)
         {
@@ -232,6 +233,7 @@ namespace
             addAndMakeVisible(clockDivRow);
             addAndMakeVisible(triggerRow);
             addAndMakeVisible(resyncRow);
+            addAndMakeVisible(gatedSyncRow);
             addAndMakeVisible(autoFillRow);
         }
 
@@ -264,7 +266,7 @@ namespace
             channelSlider.setBounds(titleLabel.getRight(), headerRow.getY(), sliderW, headerRow.getHeight());
             
             // Gap + extra shift requested
-            area.removeFromTop(10 + 20);
+            area.removeFromTop(10);
 
             // 2 Columns with bigger gap
             auto leftCol = area.removeFromLeft(area.getWidth() / 2).reduced(10, 0);
@@ -273,7 +275,7 @@ namespace
             int h = 24;
             int gap = 4;
             
-            // Left Column: Start, Stop, Trigger, Resync
+            // Left Column: Start, Stop, Trigger, Resync, Gated Sync
             startRow.setBounds(leftCol.removeFromTop(h));
             leftCol.removeFromTop(gap);
             stopRow.setBounds(leftCol.removeFromTop(h));
@@ -281,6 +283,8 @@ namespace
             triggerRow.setBounds(leftCol.removeFromTop(h));
             leftCol.removeFromTop(gap);
             resyncRow.setBounds(leftCol.removeFromTop(h));
+            leftCol.removeFromTop(gap);
+            gatedSyncRow.setBounds(leftCol.removeFromTop(h));
             
             // Right Column: Offset, Shuffle, Clock Div, Auto Fill
             offsetRow.setBounds(rightCol.removeFromTop(h));
@@ -297,7 +301,7 @@ namespace
         juce::Label titleLabel;
         std::atomic<int>& channelValue;
         juce::Slider channelSlider;
-        MidiRemoteRow startRow, stopRow, offsetRow, shuffleRow, clockDivRow, triggerRow, resyncRow, autoFillRow;
+        MidiRemoteRow startRow, stopRow, offsetRow, shuffleRow, clockDivRow, triggerRow, resyncRow, gatedSyncRow, autoFillRow;
     };
 }
 
@@ -388,7 +392,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     colorPaletteToggle.onColorChanged = [this] { 
         sendLookAndFeelChange(); 
         updateSetupButtonImages();
-        loadDancerFrames();
+        if (svgDancer) svgDancer->setTint(processor.theme.accent().withAlpha(1.0f));
         
         // Update manual colors
         if (pulseWidthSlider) {
@@ -432,6 +436,13 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
 
     // Pattern start fine-tune slider removed
 
+    // Initialize SVG Dancer
+    svgDancer = std::make_unique<SvgDancerComponent>();
+    svgDancer->setInterceptsMouseClicks(false, false);
+    addAndMakeVisible(svgDancer.get());
+    svgDancer->setTint(processor.theme.accent().withAlpha(1.0f));
+    svgDancer->toBack(); // Ensure it's behind other controls
+
     // Status bar (LED + status string) – painted above playground
     statusBar = std::make_unique<StatusBarComponent>(processor.theme);
     addAndMakeVisible(*statusBar);
@@ -455,6 +466,36 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     addAndMakeVisible(deviceBox);
     addAndMakeVisible(nameBox);
     addAndMakeVisible(nameMidiSwitch);
+    
+    // Sync Latch Button
+    addAndMakeVisible(syncLatchButton);
+    syncLatchButton.setClickingTogglesState(true);
+    syncLatchButton.setButtonText("SYNC");
+    syncLatchButton.setLookAndFeel(themeLNF.get());
+    
+    // Initial colors (OFF = SYNC = Accent background, Base text)
+    syncLatchButton.setColour(juce::TextButton::buttonColourId, processor.theme.accent());
+    syncLatchButton.setColour(juce::TextButton::textColourOffId, processor.theme.base());
+    
+    // ON colors (ON = GATE = Cyan background, Base text)
+    syncLatchButton.setColour(juce::TextButton::buttonOnColourId, processor.theme.cyan());
+    syncLatchButton.setColour(juce::TextButton::textColourOnId, processor.theme.base());
+
+    syncLatchButton.onClick = [this] {
+        bool on = syncLatchButton.getToggleState();
+        syncLatchButton.setButtonText(on ? "GATE" : "SYNC");
+    };
+    // Initial state update
+    {
+        bool on = false;
+        if (auto* p = processor.getAPVTS().getRawParameterValue(ClockSyncAudioProcessor::paramSyncLatchEnabled))
+            on = p->load() > 0.5f;
+        syncLatchButton.setToggleState(on, juce::dontSendNotification);
+        syncLatchButton.onClick(); // update text/color
+    }
+    syncLatchAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        processor.getAPVTS(), ClockSyncAudioProcessor::paramSyncLatchEnabled, syncLatchButton);
+
     // Header switch toggle (created once)
     headerSwitchToggle = std::make_unique<HeaderSwitchToggle>(processor.theme);
     addAndMakeVisible(*headerSwitchToggle);
@@ -559,7 +600,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
                 ? (selectedResyncStepCached - manualTriggerRelativeStepAtTrigger + 16) % 16 : 0;
             if (playgroundComp) playgroundComp->flashSegmentLogical(manualTriggerRelativeStepAtTrigger);
             // Shift dancer phase by one 16th (3 frames) on manual trigger
-            if (dancerFrameCount > 0) dancerFrameOffset = (dancerFrameOffset + 3) % dancerFrameCount;
+            dancerFrameOffset = (dancerFrameOffset + 3) % 24;
             repaint(ringArea);
         };
         // Automatic pattern playback should NOT call into `processor.requestTriggerOnce()`
@@ -887,7 +928,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         vblankUpdater->addAnimator(*backdropAnimators[i]);
     }
 
-    loadDancerFrames();
+    // loadDancerFrames(); // Removed
 
     // Ensure submenu controls are laid out and visibility is correct after construction
     updateSetupSubmenuLayout();
@@ -998,8 +1039,8 @@ void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
             g.setColour(col); g.fillEllipse(rc);
         }
         // Hide dancer while pattern edit mode is active to reduce visual clutter.
-        if (!patternEditMode)
-            drawDancer(g);
+        // if (!patternEditMode)
+        //    drawDancer(g);
         // Run-state indicator is now drawn by the PlaygroundComponent so it can
         // sit between the dancer and the ring wedges with correct z-order. The
         // editor no longer draws it here to avoid duplicate/ misplaced renders.
@@ -1055,12 +1096,12 @@ void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
         }
     }
 
-    // Build number moved to bottom left (swapped with color palette)
+    // Build number moved to bottom centered
     {
         g.setColour(processor.theme.cyan().withAlpha(0.9f));
         g.setFont(juce::Font(juce::FontOptions("Arial", 10.0f, juce::Font::bold)));
         juce::String buildText = juce::String(PLUGIN_VERSION_WITH_BUILD);
-        g.drawFittedText(buildText, juce::Rectangle<int>(10, 220, 200, 16), juce::Justification::left, 1);
+        g.drawFittedText(buildText, juce::Rectangle<int>(0, 220, getWidth(), 16), juce::Justification::centred, 1);
     }
 
     // Submenu should draw first (behind header) so header masks its top portion.
@@ -1296,6 +1337,7 @@ void ClockSyncAudioProcessorEditor::resized()
                 ringArea = juce::Rectangle<int>((int)std::round(x0 - r0), (int)std::round(y0 - r0), d, d);
             }
         }
+        if (svgDancer) svgDancer->setBounds(ringArea);
 
         // circle 1 handled by playground visuals.
 
@@ -1328,6 +1370,7 @@ void ClockSyncAudioProcessorEditor::resized()
     else
     {
         // Fallback positions if playground absent; keep clickButton hidden.
+        if (svgDancer) svgDancer->setBounds(ringArea);
         ringArea = juce::Rectangle<int>(150 - 70, 130 - 70, 140, 140);
         //idleClockToggle.setBounds(234 - 14, 132 - 14, 28, 28);
         // shuffleScaleToggle removed.
@@ -1352,6 +1395,9 @@ void ClockSyncAudioProcessorEditor::resized()
         const int w = 50; // width for text + LED
         statusBar->setBounds(getWidth() - w - 6, 0, w, headerH);
     }
+
+    // Sync Latch Button (bottom left)
+    syncLatchButton.setBounds(8, 216, 36, 16); 
 
     // Force absolute placement to keep toggle at exact design coordinates.
     if (headerSwitchToggle) {
@@ -1998,11 +2044,66 @@ void ClockSyncAudioProcessorEditor::timerCallback()
                 playgroundComp->flashSegmentLogical(blinkStep);
             }
             // Shift dancer by one step (3 frames) on pattern Start
-            if (dancerFrameCount > 0)
-                dancerFrameOffset = (dancerFrameOffset + 3) % dancerFrameCount;
+            dancerFrameOffset = (dancerFrameOffset + 3) % 24;
             needRing = true;
         }
     }
+    
+    // Update SVG Dancer Frame
+    if (svgDancer)
+    {
+        svgDancer->setTint(processor.theme.accent().withAlpha(1.0f));
+        svgDancer->setVisible(!patternEditMode);
+
+        if (!patternEditMode)
+        {
+            int frameIdx = 0;
+            const int totalFrames = 24;
+            const unsigned long long pulses = processor.getUiClockCounter();
+            const bool isRunning = processor.getUiIsRunning();
+            
+            if (isRunning)
+            {
+                int pulsesInQuarter = 24; 
+                switch (rateIndexCached)
+                {
+                    case 0: pulsesInQuarter = 24; break; 
+                    case 1: pulsesInQuarter = 12; break; 
+                    case 2: pulsesInQuarter = 6;  break; 
+                    case 3: pulsesInQuarter = 6;  break; 
+                    default: pulsesInQuarter = 24; break;
+                }
+                const int scaledCycle = pulsesInQuarter * 4; 
+                const int pInCycle = (int) (pulses % (unsigned long long) scaledCycle);
+                frameIdx = (pInCycle * totalFrames) / scaledCycle;
+                frameIdx = juce::jlimit(0, totalFrames - 1, frameIdx);
+                
+                int off = dancerFrameOffset % totalFrames;
+                if (off < 0) off += totalFrames;
+                frameIdx = (frameIdx + off) % totalFrames;
+            }
+            else
+            {
+                const double bpm = juce::jmax(1.0, processor.getUiBpm());
+                const double quarterMs = (60.0 / bpm) * 1000.0;
+                const double nowMs = juce::Time::getMillisecondCounterHiRes();
+                const double tInQuarter = std::fmod(nowMs, quarterMs);
+                const int frames3 = 3;
+                double x = (tInQuarter / quarterMs) * 2.0; 
+                if (x > 2.0) x -= std::floor(x);
+                double tri = 1.0 - std::fabs(x - 1.0); 
+                int localIdx = (int) std::floor(tri * (double) (frames3 - 1) + 0.5);
+                localIdx = juce::jlimit(0, frames3 - 1, localIdx);
+                
+                int off = dancerFrameOffset % totalFrames;
+                if (off < 0) off += totalFrames;
+                int blockStart = (off / 3) * 3; 
+                frameIdx = (blockStart + localIdx) % totalFrames;
+            }
+            svgDancer->setFrame(frameIdx);
+        }
+    }
+
     if (needAll) { repaint(); return; }
     if (needRing) repaint(ringArea);
     // Trigger updates can affect the ring drawing (visual slice near trigger). Ensure
@@ -2049,139 +2150,15 @@ void ClockSyncAudioProcessorEditor::updateSetupButtonImages()
 }
 
 // ---------------- Dancer PNG sequence ----------------
-void ClockSyncAudioProcessorEditor::loadDancerFrames()
-{
-    dancerFrames.clear();
-    dancerFrames.reserve(24);
-    auto addFrame = [this](const void* data, int size){
-        if (! data || size <= 0) return;
-       
-        if (auto d = juce::Drawable::createFromImageData(data, size))
-        {
-            // Tint the dancer frames to match the current theme (Cyan)
-            if (auto* di = dynamic_cast<juce::DrawableImage*>(d.get()))
-            {
-                juce::Image img = di->getImage().createCopy();
-                juce::Image::BitmapData bd(img, juce::Image::BitmapData::readWrite);
-                juce::Colour tint = processor.theme.accent();
-                for (int y = 0; y < img.getHeight(); ++y)
-                    for (int x = 0; x < img.getWidth(); ++x)
-                    {
-                        auto col = bd.getPixelColour(x, y);
-                        if (col.getAlpha() > 0)
-                            bd.setPixelColour(x, y, tint.withAlpha(col.getFloatAlpha()));
-                    }
-                di->setImage(img);
-            }
-            dancerFrames.push_back(std::move(d));
-        }
-    };
-    addFrame(BinaryData::dancer_0_png,  BinaryData::dancer_0_pngSize);
-    addFrame(BinaryData::dancer_1_png,  BinaryData::dancer_1_pngSize);
-    addFrame(BinaryData::dancer_2_png,  BinaryData::dancer_2_pngSize);
-    addFrame(BinaryData::dancer_3_png,  BinaryData::dancer_3_pngSize);
-    addFrame(BinaryData::dancer_4_png,  BinaryData::dancer_4_pngSize);
-    addFrame(BinaryData::dancer_5_png,  BinaryData::dancer_5_pngSize);
-    addFrame(BinaryData::dancer_6_png,  BinaryData::dancer_6_pngSize);
-    addFrame(BinaryData::dancer_7_png,  BinaryData::dancer_7_pngSize);
-    addFrame(BinaryData::dancer_8_png,  BinaryData::dancer_8_pngSize);
-    addFrame(BinaryData::dancer_9_png,  BinaryData::dancer_9_pngSize);
-    addFrame(BinaryData::dancer_10_png, BinaryData::dancer_10_pngSize);
-    addFrame(BinaryData::dancer_11_png, BinaryData::dancer_11_pngSize);
-    addFrame(BinaryData::dancer_12_png, BinaryData::dancer_12_pngSize);
-    addFrame(BinaryData::dancer_13_png, BinaryData::dancer_13_pngSize);
-    addFrame(BinaryData::dancer_14_png, BinaryData::dancer_14_pngSize);
-    addFrame(BinaryData::dancer_15_png, BinaryData::dancer_15_pngSize);
-    addFrame(BinaryData::dancer_16_png, BinaryData::dancer_16_pngSize);
-    addFrame(BinaryData::dancer_17_png, BinaryData::dancer_17_pngSize);
-    addFrame(BinaryData::dancer_18_png, BinaryData::dancer_18_pngSize);
-    addFrame(BinaryData::dancer_19_png, BinaryData::dancer_19_pngSize);
-    addFrame(BinaryData::dancer_20_png, BinaryData::dancer_20_pngSize);
-    dancerFrameCount = (int) dancerFrames.size();
-    dancerLastFrame = 0;
-    dancerLastDrawnClockCounter = 0;
-}
+// void ClockSyncAudioProcessorEditor::loadDancerFrames()
+// {
+//     // Removed in favor of SvgDancerComponent
+// }
 
-void ClockSyncAudioProcessorEditor::drawDancer(juce::Graphics& g)
-{
-    if (dancerFrameCount <= 0 || dancerFrames.empty() || ringArea.isEmpty()) return;
-    const unsigned long long pulses = processor.getUiClockCounter();
-    if (dancerFrameCount > 1)
-    {
-        const bool isRunning = processor.getUiIsRunning();
-        const bool clocksAdvancing = isRunning && (pulses != dancerLastDrawnClockCounter);
-        if (isRunning)
-        {
-            if (clocksAdvancing)
-            {
-                // Normal mode: advance strictly on MIDI clocks using PPQ mapping.
-                int pulsesInQuarter = 24; // default for 32
-                switch (rateIndexCached)
-                {
-                    case 0: pulsesInQuarter = 24; break; // division 32
-                    case 1: pulsesInQuarter = 12; break; // division 16
-                    case 2: pulsesInQuarter = 6;  break; // division 8
-                    case 3: pulsesInQuarter = 6;  break; // division 4
-                    default: pulsesInQuarter = 24; break;
-                }
-                const int scaledCycle = pulsesInQuarter * 4; // global 0.25x speed
-                const int pInCycle = (int) (pulses % (unsigned long long) scaledCycle);
-                int frameIdx = (pInCycle * dancerFrameCount) / scaledCycle;
-                frameIdx = juce::jlimit(0, dancerFrameCount - 1, frameIdx);
-                // Apply frame offset (shift by multiples of 3 on triggers)
-                if (dancerFrameCount > 0)
-                {
-                    int off = dancerFrameOffset % dancerFrameCount;
-                    if (off < 0) off += dancerFrameCount;
-                    frameIdx = (frameIdx + off) % dancerFrameCount;
-                }
-                dancerLastFrame = frameIdx;
-                dancerLastDrawnClockCounter = pulses;
-            }
-            // else: running but no new clock -> hold last frame (no fallback animation)
-        }
-        else
-        {
-            // Not running: show presync/idle 3-frame ping-pong only when transport is stopped.
-            const bool presync = processor.getUiPendingStart() || processor.getUiNextRestartPending();
-            const double bpm = juce::jmax(1.0, processor.getUiBpm());
-            const double quarterMs = (60.0 / bpm) * 1000.0;
-            const double nowMs = juce::Time::getMillisecondCounterHiRes();
-            const double tInQuarter = std::fmod(nowMs, quarterMs);
-            const int frames3 = juce::jmin(3, dancerFrameCount);
-            double x = (tInQuarter / quarterMs) * 2.0; // 0..2 over one quarter
-            if (x > 2.0) x -= std::floor(x);
-            double tri = 1.0 - std::fabs(x - 1.0); // 0..1..0 triangle
-            int localIdx = (int) std::floor(tri * (double) (frames3 - 1) + 0.5);
-            localIdx = juce::jlimit(0, frames3 - 1, localIdx);
-            int off = dancerFrameCount > 0 ? (dancerFrameOffset % dancerFrameCount) : 0;
-            if (off < 0) off += dancerFrameCount;
-            int blockStart = (off / 3) * 3; // nearest lower multiple of 3
-            int frameIdx = (blockStart + localIdx) % dancerFrameCount;
-            dancerLastFrame = frameIdx;
-            // Note: presync and fully idle use the same visual; differing only by transport state.
-            juce::ignoreUnused(presync);
-        }
-    }
-    juce::Drawable* drawable = dancerFrames[(size_t) dancerLastFrame].get();
-    if (! drawable) return;
-    juce::Rectangle<float> inner((float)(ringArea.getCentreX() - kRingInnerD / 2),
-                                 (float)(ringArea.getCentreY() - kRingInnerD / 2),
-                                 (float) kRingInnerD, (float) kRingInnerD);
-    auto dest = inner.reduced(6.0f);
-    const float refW = (float) kDancerRefW;
-    const float refH = (float) kDancerRefH;
-    const float sx = dest.getWidth() / refW;
-    const float sy = dest.getHeight() / refH;
-    const float scale = std::min(sx, sy) * 0.92f; // padding
-    const float scaledW = refW * scale;
-    const float scaledH = refH * scale;
-    const float tx = dest.getCentreX() - scaledW * 0.5f;
-    const float ty = dest.getCentreY() - scaledH * 0.5f;
-    juce::Path clip; clip.addEllipse(dest);
-    g.reduceClipRegion(clip);
-    drawable->draw(g, 1.0f, juce::AffineTransform::scale(scale).translated(tx, ty));
-}
+// void ClockSyncAudioProcessorEditor::drawDancer(juce::Graphics& g)
+// {
+//     // Removed in favor of SvgDancerComponent
+// }
 
 // OverlayTooltip handlers unused.
 
@@ -2745,10 +2722,19 @@ void ClockSyncAudioProcessorEditor::populateNameBox()
     nameBox.addSeparator();
     nameBox.addItem("name...", 1000);
     nameBox.addItem("clear all", 1001);
+    
+    // Retrieve stored selection
+    int storedSel = (int) processor.getAPVTS().state.getProperty("ui.selectedInstrument", 0);
+
     // preserve selection if possible; when there are no names show placeholder text
     if (instrumentNames.size() > 0)
     {
-        nameBox.setSelectedId(1, juce::dontSendNotification);
+        // Prefer stored selection if valid
+        if (storedSel >= 1 && storedSel <= instrumentNames.size())
+            nameBox.setSelectedId(storedSel, juce::dontSendNotification);
+        else
+            nameBox.setSelectedId(1, juce::dontSendNotification);
+
         nameBox.setTextWhenNothingSelected(juce::String());
     }
     else

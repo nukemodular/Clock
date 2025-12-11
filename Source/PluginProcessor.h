@@ -6,12 +6,12 @@
 #include <juce_dsp/juce_dsp.h>
 #include "UiTheme.h"
 
-class ClockSyncAudioProcessor : public juce::AudioProcessor
+class ClockSyncAudioProcessor : public juce::AudioProcessor, public juce::ValueTree::Listener
 {
 public:
     //==============================================================================
     ClockSyncAudioProcessor();
-    ~ClockSyncAudioProcessor() override = default;
+    ~ClockSyncAudioProcessor() override;
 
     UiThemeColours theme;
 
@@ -128,6 +128,7 @@ public:
     static inline const juce::String paramDiagnostics { "diagnostics" }; // enable brief timing logs
     static inline const juce::String paramPatternBars { "patternBars" }; // OFF,1,2,4,8,16,32,64,RND
     static inline const juce::String paramPatternSteps { "patternSteps" }; // 16-bit bitmask persisted (default non-zero for first logical step)
+    static inline const juce::String paramSyncLatchEnabled { "syncLatchEnabled" }; // Gated Sync Mode Toggle
     // Pattern start fine-tune parameter removed
 
         std::atomic<int> lastPatternBarsMode { 0 }; // track previous interval mode to detect changes
@@ -141,8 +142,11 @@ public:
     std::atomic<int> midiRemoteClockDiv  { -1 }; // CC Number
     std::atomic<int> midiRemoteTrigger   { -1 }; // Note Number
     std::atomic<int> midiRemoteResync    { -1 }; // Note Number
+    std::atomic<int> midiRemoteGatedSync { -1 }; // Note Number (Gated Sync Mode)
     std::atomic<int> midiRemoteAutoFill  { -1 }; // CC Number
     std::atomic<int> midiRemoteChannel   { 0 };  // 0=Omni, 1-16=Specific
+    std::atomic<bool> syncLatchEnabled   { false }; // Gated Sync Mode Toggle
+    std::atomic<bool> isGateOpen         { false }; // Runtime state for Gated Sync (Note Held)
 
     // Helper: returns true if internally generated (non-host) Start messages are allowed right now.
         // Rule: If interval (patternBarsMode>0) is active AND the pattern step mask is empty (no bits), then
@@ -362,6 +366,19 @@ private:
     // Even-offset pretrigger: when true, schedule at step-1 but emit Start at OFFSET step.
     std::atomic<bool> evenOffsetPretrigger { false };
     int pretriggerTargetStep { -1 }; // 1..16 target step to fire after pretrigger at step-1
+
+    // Cached UI flags (updated via ValueTree::Listener)
+    std::atomic<bool> sppMode { false };
+    std::atomic<bool> linearShuffleMode { false };
+
+    // ValueTree listener callback
+    void valueTreePropertyChanged(juce::ValueTree& treeWhosePropertyHasChanged, const juce::Identifier& property) override
+    {
+        if (property == juce::Identifier("ui.sppMode"))
+            sppMode.store((bool)treeWhosePropertyHasChanged.getProperty(property), std::memory_order_relaxed);
+        else if (property == juce::Identifier("ui.linearShuffleMode"))
+            linearShuffleMode.store((bool)treeWhosePropertyHasChanged.getProperty(property), std::memory_order_relaxed);
+    }
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ClockSyncAudioProcessor)
 };

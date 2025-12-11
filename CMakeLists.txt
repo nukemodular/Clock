@@ -24,30 +24,7 @@ add_subdirectory(JUCE)
 juce_add_binary_data(DancerFrames
   NAMESPACE BinaryData
   SOURCES
-    dancer/png/dancer_0.png
-    dancer/png/dancer_1.png
-    dancer/png/dancer_2.png
-    dancer/png/dancer_3.png
-    dancer/png/dancer_4.png
-    dancer/png/dancer_5.png
-    dancer/png/dancer_6.png
-    dancer/png/dancer_7.png
-    dancer/png/dancer_8.png
-    dancer/png/dancer_9.png
-    dancer/png/dancer_10.png
-    dancer/png/dancer_11.png
-    dancer/png/dancer_12.png
-    dancer/png/dancer_13.png
-    dancer/png/dancer_14.png
-    dancer/png/dancer_15.png
-    dancer/png/dancer_16.png
-    dancer/png/dancer_17.png
-    dancer/png/dancer_18.png
-    dancer/png/dancer_19.png
-    dancer/png/dancer_20.png
-    dancer/png/dancer_21.png
-    dancer/png/dancer_22.png
-    dancer/png/dancer_23.png
+    assets/dancer_fix.svg
     assets/setup.svg
 )
 
@@ -68,7 +45,7 @@ juce_add_plugin(ClockV3
     PLUGIN_CODE CLKS
     FORMATS VST3 AU
     # Plugin categories: use Fx for effect plugins
-    VST3_CATEGORIES "Toolbox;Fx"
+    VST3_CATEGORIES "Toolbox;Fx;Utilities;Clock"
 )
 
 
@@ -80,6 +57,8 @@ target_sources(ClockV3
         Source/PluginEditor.h
         Source/UiTheme.cpp
         Source/UiTheme.h
+        Source/SvgDancerComponent.cpp
+        Source/SvgDancerComponent.h
 )
 
 target_compile_definitions(ClockV3
@@ -139,26 +118,10 @@ if (APPLE)
         BUNDLE DESTINATION "Audio/Plug-Ins/VST3"
         COMPONENT "toolBoy Clock v3_vst3")
 
-    # Ensure setup.svg is installed into the VST3 bundle Resources
-    install(FILES ${CMAKE_SOURCE_DIR}/assets/setup.svg
-        DESTINATION "Audio/Plug-Ins/VST3/toolBoy Clock v3.vst3/Contents/Resources")
-
     # Install the AU component bundle into the standard Components location
     install(TARGETS ClockV3
         BUNDLE DESTINATION "Audio/Plug-Ins/Components"
         COMPONENT "toolBoy Clock v3_au")
-
-    # Ensure setup.svg is installed into the AU component bundle Resources
-    install(FILES ${CMAKE_SOURCE_DIR}/assets/setup.svg
-        DESTINATION "Audio/Plug-Ins/Components/toolBoy Clock v3.component/Contents/Resources")
-
-    # Copy setup.svg into macOS bundle Resources so runtime lookup succeeds
-    add_custom_command(TARGET ClockV3 POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:ClockV3>/../Resources"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/assets/setup.svg"
-            "$<TARGET_FILE_DIR:ClockV3>/../Resources/setup.svg"
-        COMMENT "Copying setup.svg into plugin bundle Resources")
 endif()
 
 
