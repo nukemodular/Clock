@@ -73,6 +73,38 @@ namespace
         UiThemeColours& theme;
     };
 
+    class SyncLatchLNF : public ThemeLNF
+    {
+    public:
+        SyncLatchLNF(UiThemeColours& t) : ThemeLNF(t), theme(t) {}
+        
+        void drawButtonBackground(juce::Graphics& g, juce::Button& b, const juce::Colour&,
+                                  bool isHighlighted, bool isDown) override
+        {
+            auto r = b.getLocalBounds().toFloat();
+            const float corner = 2.0f;
+            
+            juce::Colour fill;
+            if (b.getToggleState() || isDown)
+                fill = theme.cyan();
+            else
+                fill = theme.cyan().withAlpha(0.4f);
+
+            g.setColour(fill);
+            g.fillRoundedRectangle(r, corner);
+        }
+
+        void drawButtonText(juce::Graphics& g, juce::TextButton& b, bool, bool) override
+        {
+            g.setColour(theme.accent().darker(1.0f));
+            g.setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)));
+            g.drawFittedText(b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, 1);
+        }
+        
+    private:
+        UiThemeColours& theme;
+    };
+
     class MidiRemoteRow : public juce::Component
     {
     public:
@@ -205,7 +237,7 @@ namespace
               clockDivRow("CLK DIV.", MidiRemoteRow::CC, p.midiRemoteClockDiv, p.theme),
               triggerRow("TRIGGER", MidiRemoteRow::Note, p.midiRemoteTrigger, p.theme, MidiRemoteRow::Compact),
               resyncRow("RESYNC", MidiRemoteRow::Note, p.midiRemoteResync, p.theme, MidiRemoteRow::Compact),
-              gatedSyncRow("LATCH", MidiRemoteRow::Note, p.midiRemoteGatedSync, p.theme, MidiRemoteRow::Compact),
+              gatedSyncRow("GATE", MidiRemoteRow::Note, p.midiRemoteGatedSync, p.theme, MidiRemoteRow::Compact),
               autoFillRow("AUTOFILL", MidiRemoteRow::CC, p.midiRemoteAutoFill, p.theme),
               channelValue(p.midiRemoteChannel)
         {
@@ -314,10 +346,12 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
       colorPaletteToggle(p.theme)
 {
     setResizable(false, false);
+    setResizeLimits(300, 240, 300, 240);
     setSize(300, 240);
     startTimerHz(60);
 
     themeLNF = std::make_unique<ThemeLNF>(processor.theme);
+    syncLatchLNF = std::make_unique<SyncLatchLNF>(processor.theme);
 
     // Assign theme LNF
     nameBox.setLookAndFeel(themeLNF.get());
@@ -470,20 +504,20 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     // Sync Latch Button
     addAndMakeVisible(syncLatchButton);
     syncLatchButton.setClickingTogglesState(true);
-    syncLatchButton.setButtonText("SYNC");
-    syncLatchButton.setLookAndFeel(themeLNF.get());
+    syncLatchButton.setButtonText("GATE");
+    syncLatchButton.setLookAndFeel(syncLatchLNF.get());
     
     // Initial colors (OFF = SYNC = Accent background, Base text)
-    syncLatchButton.setColour(juce::TextButton::buttonColourId, processor.theme.accent());
-    syncLatchButton.setColour(juce::TextButton::textColourOffId, processor.theme.base());
+    syncLatchButton.setColour(juce::TextButton::buttonColourId, processor.theme.cyan().withAlpha(0.7f));
+    syncLatchButton.setColour(juce::TextButton::textColourOffId, processor.theme.accent().darker(0.3f));
     
     // ON colors (ON = GATE = Cyan background, Base text)
     syncLatchButton.setColour(juce::TextButton::buttonOnColourId, processor.theme.cyan());
-    syncLatchButton.setColour(juce::TextButton::textColourOnId, processor.theme.base());
+    syncLatchButton.setColour(juce::TextButton::textColourOnId, processor.theme.accent().darker(0.3f));
 
     syncLatchButton.onClick = [this] {
         bool on = syncLatchButton.getToggleState();
-        syncLatchButton.setButtonText(on ? "GATE" : "SYNC");
+        syncLatchButton.setButtonText(on ? "GATE" : "GATE");
     };
     // Initial state update
     {
@@ -1011,6 +1045,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     // Centralize initial visibility and layout.
     updateHeaderVisibility();
     resized();
+    setVisible(true);
 }
 
 void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
@@ -1101,7 +1136,7 @@ void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
         g.setColour(processor.theme.cyan().withAlpha(0.9f));
         g.setFont(juce::Font(juce::FontOptions("Arial", 10.0f, juce::Font::bold)));
         juce::String buildText = juce::String(PLUGIN_VERSION_WITH_BUILD);
-        g.drawFittedText(buildText, juce::Rectangle<int>(0, 220, getWidth(), 16), juce::Justification::centred, 1);
+        g.drawFittedText(buildText, juce::Rectangle<int>(55, 218, getWidth(), 16), juce::Justification::centredLeft, 1);
     }
 
     // Submenu should draw first (behind header) so header masks its top portion.
@@ -2024,7 +2059,13 @@ void ClockSyncAudioProcessorEditor::timerCallback()
         const bool isArmed = processor.getUiPendingStart();
         const bool hasNext = processor.getUiNextRestartPending();
         juce::String st;
-        if (hasNext) st = "WAIT";
+        if (hasNext)
+        {
+            if (processor.syncLatchEnabled.load(std::memory_order_relaxed))
+                st = "GATE";
+            else
+                st = "WAIT";
+        }
         else if (isRunning) st = "LOCK";
         else if (isArmed) st = "ARM'D";
         else st = idleModeButton.getToggleState() ? "IDLE" : "STOP";

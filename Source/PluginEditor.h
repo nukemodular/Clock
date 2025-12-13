@@ -271,6 +271,7 @@ private:
 
     // Theme look-and-feel (ClickRotaryLNF unused; helpButtonLNF removed) – keep only ThemeLNF.
     std::unique_ptr<ThemeLNF> themeLNF;
+    std::unique_ptr<juce::LookAndFeel> syncLatchLNF;
     // Status bar (LED + status string abstraction)
     std::unique_ptr<StatusBarComponent> statusBar;
 

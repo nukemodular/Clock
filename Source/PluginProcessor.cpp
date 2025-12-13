@@ -111,6 +111,9 @@ ClockSyncAudioProcessor::ClockSyncAudioProcessor()
     sppMode.store((bool)parameters.state.getProperty("ui.sppMode", false));
     linearShuffleMode.store((bool)parameters.state.getProperty("ui.linearShuffleMode", false));
 
+    // Seed internal random generator
+    random.setSeedRandomly();
+
     // Register listener for UI updates
     parameters.state.addListener(this);
 }
@@ -339,6 +342,9 @@ void ClockSyncAudioProcessor::prepareToPlay(double sr, int /*samplesPerBlock*/)
     updateExternalOut();
     // Reset persistent accumulators on prepare (sample-rate change / reinitialise)
     resetAccumulators();
+
+    // Pre-allocate pattern vector to avoid allocation in audio thread
+    pendingPatternPPQ.reserve(64);
 }
 
 void ClockSyncAudioProcessor::releaseResources() {}
@@ -448,19 +454,21 @@ bool ClockSyncAudioProcessor::isDuplicateStart(long long barForStart, int stepFo
 
 void ClockSyncAudioProcessor::updateExternalOut()
 {
-    // Tear down existing
-    if (externalMidiOut)
-    {
-        externalMidiOut->stopBackgroundThread();
-        externalMidiOut.reset();
-    }
-
-    // Always use selected device if set
+    // Create new instance first (if any)
+    std::shared_ptr<juce::MidiOutput> newOut;
     if (externalDeviceId.isNotEmpty())
     {
-        externalMidiOut = juce::MidiOutput::openDevice(externalDeviceId);
-        if (externalMidiOut)
-            externalMidiOut->startBackgroundThread();
+        auto uniqueOut = juce::MidiOutput::openDevice(externalDeviceId);
+        if (uniqueOut)
+        {
+            newOut = std::shared_ptr<juce::MidiOutput>(uniqueOut.release());
+            newOut->startBackgroundThread();
+        }
+    }
+
+    {
+        juce::ScopedLock sl(midiOutLock);
+        externalMidiOut = newOut;
     }
 }
 
@@ -732,6 +740,13 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
     // cached raw std::atomic<float>* pointers (runParam, clickRateParam, etc.) initialized
     // in prepareToPlay(). Critical flags like audioPulsesEnabled use acquire/release
     // semantics where necessary to synchronise with state changes.
+
+    // Acquire local reference to external MIDI output safely
+    std::shared_ptr<juce::MidiOutput> localOut;
+    {
+        juce::ScopedLock sl(midiOutLock);
+        localOut = externalMidiOut;
+    }
 
     const int numSamples = buffer.getNumSamples();
     startSampleForRunSignal = -1;
@@ -1408,7 +1423,7 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                     {
                         midi.addEvent(clockMsg, sampleOffset);
                         uiClockCounter.fetch_add(1, std::memory_order_relaxed);
-                        if (externalMidiOut)
+                        if (localOut)
                             extClock.addEvent(clockMsg, sampleOffset);
                         // pre-phase diag logging removed per user request
                     }
@@ -1577,7 +1592,7 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                     {
                         midi.addEvent(clockMsg, sampleOffset);
                         uiClockCounter.fetch_add(1, std::memory_order_relaxed);
-                        if (externalMidiOut)
+                        if (localOut)
                             extClock.addEvent(clockMsg, sampleOffset);
                         // post-phase diag logging removed per user request
                     }
@@ -1676,8 +1691,8 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
     }
 
     // Flush any queued external MIDI messages gathered while scheduling.
-    if (externalMidiOut && extClock.getNumEvents() > 0)
-        externalMidiOut->sendBlockOfMessages(extClock, juce::Time::getMillisecondCounterHiRes(), currentSampleRate);
+    if (localOut && extClock.getNumEvents() > 0)
+        localOut->sendBlockOfMessages(extClock, juce::Time::getMillisecondCounterHiRes(), currentSampleRate);
 
     // Per-tick clicks are written directly into the audio buffer in the scheduling loops above.
 
@@ -1881,6 +1896,10 @@ void ClockSyncAudioProcessor::attemptScheduleResync(long long currentBar, int cu
 
 void ClockSyncAudioProcessor::tryFirePattern(double ppqStart, double barLenQ, double barStartPPQ, int numSamples, juce::MidiBuffer& midi, juce::MidiBuffer& extClock, bool suppressDiag, bool preview)
 {
+    // In Sync Latch (GATE) mode, pattern firing is disabled.
+    if (syncLatchEnabled.load(std::memory_order_relaxed))
+        return;
+
     // Allow pattern-driven Starts to fire even when the internal `runActive` flag
     // is false. This makes pattern behaviour consistent with manual triggers: when
     // a pattern step issues a Start it should put the engine into the running
@@ -1964,7 +1983,7 @@ void ClockSyncAudioProcessor::tryFirePattern(double ppqStart, double barLenQ, do
             // Random mode: pick a future target bar; fire when reached then choose a new random interval.
             if (nextRandomPatternTargetBar < 0 || candidateBar >= nextRandomPatternTargetBar)
             {
-                int intervalRnd = 1 + (int) (juce::Random::getSystemRandom().nextInt(16));
+                int intervalRnd = 1 + (int) (random.nextInt(16));
                 nextRandomPatternTargetBar = candidateBar + intervalRnd;
                 fire = true;
             }
@@ -2361,8 +2380,27 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
         // restart and break bar-sync in hosts). Only emit Start when a real
         // start/restart was requested (haveStart/haveBarRestart/deferredMatches).
         const bool legacy = legacyModeEnabled.load(std::memory_order_relaxed);
+
+        // In Sync Latch (GATE) mode, suppress all scheduled restarts/starts.
+        // Only immediate Gate triggers (handled in generateClockAndClick via triggerArmedForNextSixteenth) are allowed.
+        if (syncLatchEnabled.load(std::memory_order_relaxed))
+        {
+             if (resyncMatches) {
+                 resyncPending.store(false, std::memory_order_relaxed);
+                 resyncTargetBar.store(-1, std::memory_order_relaxed);
+                 resyncTargetStep.store(-1, std::memory_order_relaxed);
+                 resyncMatches = false;
+             }
+             haveBarRestart = false;
+             deferredMatches = false;
+        }
+
         // Emit Start for explicit reasons and realign only (rate change no longer directly emits a Start).
         bool shouldEmitStart = (haveStart || haveBarRestart || deferredMatches || resyncMatches || haveRateChange);
+
+        if (syncLatchEnabled.load(std::memory_order_relaxed))
+            shouldEmitStart = false;
+
         // Additional suppression: if this boundary is reached due purely to a pending initial start
         // (haveStart without barRestart/deferred) AND pattern interval mode is active but the pattern
         // has no active steps (mask==0), skip emitting a Start at the bar boundary. This prevents a

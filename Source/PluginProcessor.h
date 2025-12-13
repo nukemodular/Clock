@@ -229,7 +229,8 @@ private:
     std::atomic<bool> audioPulsesEnabled { false };
 
     // External MIDI output (device only)
-    std::unique_ptr<juce::MidiOutput> externalMidiOut;
+    std::shared_ptr<juce::MidiOutput> externalMidiOut;
+    juce::CriticalSection midiOutLock;
     juce::String externalDeviceId;   // identifier of selected external MIDI device
     void updateExternalOut();
     
@@ -366,6 +367,9 @@ private:
     // Even-offset pretrigger: when true, schedule at step-1 but emit Start at OFFSET step.
     std::atomic<bool> evenOffsetPretrigger { false };
     int pretriggerTargetStep { -1 }; // 1..16 target step to fire after pretrigger at step-1
+
+    // Internal random number generator for audio thread (avoids system lock)
+    juce::Random random;
 
     // Cached UI flags (updated via ValueTree::Listener)
     std::atomic<bool> sppMode { false };
