@@ -516,8 +516,7 @@ void ClockSyncAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             if (isNoteOn && msg.getNoteNumber() == gatedSyncNote)
             {
                 isGateOpen.store(true, std::memory_order_relaxed);
-                // Force immediate start at next 16th (don't wait for bar)
-                requestTriggerOnce();
+                // Gate Mode: Immediate start handled in generateClockAndClick via runParamCached transition
             }
             else if (isNoteOff && msg.getNoteNumber() == gatedSyncNote)
             {
@@ -882,6 +881,10 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
             resyncTargetStep.store(-1, std::memory_order_relaxed);
             uiNextRestartPending.store(false, std::memory_order_relaxed);
             suppressUntilRestart = false;
+
+            // Reset duplicate suppression tracking so next trigger always fires (crucial for Gate Mode re-triggering)
+            lastStartBar.store(-1, std::memory_order_relaxed);
+            lastStartStep.store(-1, std::memory_order_relaxed);
         }
         // Keep original behaviour on Run==true: arm a pendingStart handled later in the main logic.
         lastRunParam = runParamCached;
@@ -907,6 +910,12 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
     // Ensure we allow MIDI out when the host is playing so external gear follows the DAW
     // allowMidiOut = allowMidiOut || isPlaying;
 
+    // Transport state transitions: emit Start/Continue/Stop when host play toggles
+    int hostStartSampleThisBlock = -1; // if host started this block, mark sample 0 as a boundary (we'll allow a clock on this frame)
+    bool hostForcedAllowMidiOut = false; // when host START occurs we temporarily allow MIDI clocks even if Run param is off
+    bool haveHostStartMsg = false;
+    juce::MidiMessage hostStartMsg;
+
     // Robust run state handling: don't miss edges that occur between blocks
     if (! runParamCached)
     {
@@ -927,15 +936,48 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
             uiNextRestartPending.store(false, std::memory_order_relaxed);
             suppressUntilRestart = false;
             audioPulsesEnabled.store(false, std::memory_order_relaxed);
+
+            // Reset duplicate suppression tracking
+            lastStartBar.store(-1, std::memory_order_relaxed);
+            lastStartStep.store(-1, std::memory_order_relaxed);
         }
     }
     else // runParamCached == true
     {
         if (! runActive && ! pendingStart)
         {
-            // Arm a start at the next bar if we're currently stopped
-            pendingStart = true;
-            uiPendingStart.store(true, std::memory_order_relaxed);
+            if (syncLatchEnabled.load(std::memory_order_relaxed))
+            {
+                // Gate Mode: Immediate Start (override all scheduling)
+                const auto startMsg = juce::MidiMessage::midiStart();
+                midi.addEvent(startMsg, 0);
+                extClock.addEvent(startMsg, 0);
+                
+                runActive = true;
+                pendingStart = false;
+                uiIsRunning.store(true, std::memory_order_relaxed);
+                uiPendingStart.store(false, std::memory_order_relaxed);
+                audioPulsesEnabled.store(true, std::memory_order_relaxed);
+                suppressUntilRestart = false;
+                
+                // Reset duplicate suppression
+                lastStartBar.store(-1, std::memory_order_relaxed);
+                lastStartStep.store(-1, std::memory_order_relaxed);
+                
+                // Mark that we started at sample 0 so clocks can flow
+                hostStartSampleThisBlock = 0; 
+                hostForcedAllowMidiOut = true; // Ensure clocks flow this block
+                
+                // Clear any pending restarts
+                pendingBarRestart.store(false, std::memory_order_relaxed);
+                uiNextRestartPending.store(false, std::memory_order_relaxed);
+            }
+            else
+            {
+                // Arm a start at the next bar if we're currently stopped
+                pendingStart = true;
+                uiPendingStart.store(true, std::memory_order_relaxed);
+            }
         }
     }
     // removed unused lastRunParam
@@ -966,12 +1008,6 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
         }
         lastTriggerModeEnabled = tmNow;
     }
-
-    // Transport state transitions: emit Start/Continue/Stop when host play toggles
-    int hostStartSampleThisBlock = -1; // if host started this block, mark sample 0 as a boundary (we'll allow a clock on this frame)
-    bool hostForcedAllowMidiOut = false; // when host START occurs we temporarily allow MIDI clocks even if Run param is off
-    bool haveHostStartMsg = false;
-    juce::MidiMessage hostStartMsg;
 
     // If Sync Latch (GATE mode) is enabled, ignore host transport transitions.
     const bool ignoreHostTransport = syncLatchEnabled.load(std::memory_order_relaxed);
@@ -1263,18 +1299,27 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                     uiPendingStart.store(false, std::memory_order_relaxed);
                     // Enable audio pulses on manual trigger (Gate Note On)
                     audioPulsesEnabled.store(true, std::memory_order_relaxed);
+
+                    // FIX: Ensure clocks flow immediately
+                    suppressUntilRestart = false;
+
                     // Schedule resync if idx8 (gate) is enabled, per workflow.md rule 1
                     if (triggerModeEnabled.load(std::memory_order_relaxed))
                     {
-                        // Schedule bar restart as before
-                        pendingBarRestart.store(true, std::memory_order_relaxed);
-                        uiNextRestartPending.store(true, std::memory_order_relaxed);
-                        // Also schedule resync flag (mono, shortest precedence)
-                        int offsetStep = 1;
-                        if (auto* pi = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramResyncOffsetStep)))
-                            offsetStep = juce::jlimit(1,16, pi->get());
-                        int currentStep = stepForStart;
-                        attemptScheduleResync(barForStart, currentStep, offsetStep, false);
+                        // FIX: In Sync Latch (Gate) mode, do NOT schedule a bar restart.
+                        // We just started immediately.
+                        if (! syncLatchEnabled.load(std::memory_order_relaxed))
+                        {
+                            // Schedule bar restart as before
+                            pendingBarRestart.store(true, std::memory_order_relaxed);
+                            uiNextRestartPending.store(true, std::memory_order_relaxed);
+                            // Also schedule resync flag (mono, shortest precedence)
+                            int offsetStep = 1;
+                            if (auto* pi = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramResyncOffsetStep)))
+                                offsetStep = juce::jlimit(1,16, pi->get());
+                            int currentStep = stepForStart;
+                            attemptScheduleResync(barForStart, currentStep, offsetStep, false);
+                        }
                     }
                     // Allow clock at same frame (no suppression)
                 }
@@ -1309,8 +1354,15 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
 
         // Precompute several constants used inside the tick loops to reduce per-tick overhead.
         const double ppqBlockEnd = ppqStart + (double) (numSamples - 1) * ppqPerSample;
-        if (lastTickIndex == std::numeric_limits<long long>::min())
-            lastTickIndex = tickAt(ppqStart, resolutionBefore) - 1;
+        
+        // FIX: Detect transport loop/jump-back and reset tick tracking
+        long long startTickIdx = tickAt(ppqStart, resolutionBefore);
+        if (lastTickIndex == std::numeric_limits<long long>::min() || startTickIdx < lastTickIndex)
+        {
+            if (lastTickIndex != std::numeric_limits<long long>::min())
+                resetAccumulators();
+            lastTickIndex = startTickIdx - 1;
+        }
 
         // Precompute swing/pulse mapping constants for the "before" resolution
         const double pairLenQBefore = 0.5;
