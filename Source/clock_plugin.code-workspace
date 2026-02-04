@@ -5,6 +5,9 @@
 		},
 		{
 			"path": "../../tr808/id"
+		},
+		{
+			"path": "../../shequencer"
 		}
 	],
 	"settings": {}

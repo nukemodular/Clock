@@ -110,36 +110,18 @@ public:
 private:
     void showColourPicker(juce::Colour currentColour, std::function<void(juce::Colour)> setter)
     {
-        struct CallbackSelector : public juce::ColourSelector, public juce::ChangeListener
-        {
-            std::function<void(juce::Colour)> onColorChanged;
-            std::function<void()> onRepaint;
-            
-            CallbackSelector(std::function<void(juce::Colour)> cb, std::function<void()> repaintCb) 
-                : juce::ColourSelector(juce::ColourSelector::showColourspace | juce::ColourSelector::showAlphaChannel),
-                  onColorChanged(cb), onRepaint(repaintCb)
-            {
-                addChangeListener(this);
-            }
-            
-            void changeListenerCallback(juce::ChangeBroadcaster*) override
-            {
-                if (onColorChanged) onColorChanged(getCurrentColour());
-                if (onRepaint) onRepaint();
-            }
-        };
-        
         juce::Component::SafePointer<ColorPaletteToggle> safeThis (this);
-        auto* content = new CallbackSelector(setter, [safeThis](){ 
+        auto* content = new SimpleColorPicker();
+        content->setCurrentColour(currentColour);
+        content->onColorChanged = [setter, safeThis](juce::Colour c) {
+            if (setter) setter(c);
             if (safeThis != nullptr)
             {
                 if(safeThis->onColorChanged) safeThis->onColorChanged(); 
                 safeThis->repaint(); 
             }
-        });
-        content->setCurrentColour(currentColour);
-        content->setSize(180, 160);
-
+        };
+        
         // Point to right edge to encourage placement to the right.
         // Use nullptr parent so it's a desktop window (avoids clipping).
         auto area = getScreenBounds();

@@ -216,9 +216,11 @@ inline HitResult performHitTest(const juce::Point<float>& pt, const HitContext& 
     }
 
     // Ring wedge (offset selection)
-    if (inDonut && mode != InteractionMode::PatternEdit)
+    if (inDonut)
     {
         const float angle = std::atan2(dy, dx); // -pi..pi
+        // Hit testing start at 12 o'clock for identity mapping.
+        // atan2 returns 0 at 3 o'clock, so 12 o'clock is -pi/2.
         const float startAt12 = -juce::MathConstants<float>::halfPi;
         float rel = angle - startAt12;
         while (rel < 0.0f) rel += juce::MathConstants<float>::twoPi;

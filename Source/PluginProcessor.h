@@ -143,6 +143,12 @@ public:
     std::atomic<int> midiRemoteTrigger   { -1 }; // Note Number
     std::atomic<int> midiRemoteResync    { -1 }; // Note Number
     std::atomic<int> midiRemoteGatedSync { -1 }; // Note Number (Gated Sync Mode)
+    // MIDI Remote type toggles (false = NOTE, true = CC)
+    std::atomic<bool> midiRemoteStartIsCC     { false };
+    std::atomic<bool> midiRemoteStopIsCC      { false };
+    std::atomic<bool> midiRemoteTriggerIsCC   { false };
+    std::atomic<bool> midiRemoteResyncIsCC    { false };
+    std::atomic<bool> midiRemoteGatedSyncIsCC { false };
     std::atomic<int> midiRemoteAutoFill  { -1 }; // CC Number
     std::atomic<int> midiRemoteChannel   { 0 };  // 0=Omni, 1-16=Specific
     std::atomic<bool> syncLatchEnabled   { false }; // Gated Sync Mode Toggle

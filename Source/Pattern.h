@@ -26,7 +26,7 @@ public:
     {
         juce::Rectangle<float> outer (centre.x - outerRadius, centre.y - outerRadius, outerRadius*2.0f, outerRadius*2.0f);
         const float stepAngle = juce::MathConstants<float>::twoPi / 16.0f;
-        const float startAngle = -juce::MathConstants<float>::halfPi; // 12 o'clock
+        const float startAngle = 0.0f; // 12 o'clock in JUCE addPieSegment
         // Angular gap calculation: create small visual gaps (~3px arc length) between wedges.
         // Convert 3px (at outer radius) into radians: theta = arcLength / r.
         const float gapPx = 3.0f;
@@ -73,18 +73,15 @@ public:
         if (ang < startAngle) ang += juce::MathConstants<float>::twoPi;
         float rel = ang - startAngle;
         if (rel < 0.0f) rel += juce::MathConstants<float>::twoPi;
-        int idx = (int) std::floor(rel / stepAngle);
-        if (idx < 0 || idx > 15) idx = -1;
-        // Correct orientation: previous mapping was rotated -90deg (offset -4 steps).
-        // Apply +4 step rotation so visual step at 12 o'clock corresponds to index 0.
-        if (idx >= 0) idx = (idx + 4) & 15;
+        int idx = (int) std::floor(rel / stepAngle) & 15;
+        
         // Apply gap: if click lies within the angular gap region for that wedge, treat as no hit.
         const float gapPx = 3.0f;
         float anglePad = gapPx / juce::jmax(1.0f, outerRadius);
         anglePad = std::min(anglePad, stepAngle * 0.40f);
         // Compute local angle within the wedge (pre-rotation) to determine if inside padded interior.
         // Undo rotation to find original wedge number for angular bounds.
-        int rawIdx = (idx - 4 + 16) % 16;
+        int rawIdx = idx;
         float wedgeStart = rawIdx * stepAngle;
         float wedgeEnd = wedgeStart + stepAngle;
         float angInWedge = rel - wedgeStart;

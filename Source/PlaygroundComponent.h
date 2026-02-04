@@ -80,6 +80,7 @@ class Ring16Component : public juce::Component, private juce::Timer
 public:
     Ring16Component(UiThemeColours& t) : theme(t)
     {
+        setWantsKeyboardFocus(true);
         setSize((int)(outerR * 2), (int)(outerR * 2));
         masterStartMs = juce::Time::getMillisecondCounterHiRes();
         ringFlashes.resize(16);
@@ -186,14 +187,14 @@ public:
             const float step = juce::MathConstants<float>::twoPi / 16.0f;
             const float start0 = -juce::MathConstants<float>::halfPi;
             int playheadRaw = useExternalPlayhead ? externalPlayheadRaw : lastStepIndex;
-            static constexpr int kHighlightRotation = 4;
+            static constexpr int kHighlightRotation = 0;
             // Draw outer reference ring faint with adjusted alpha.
             //   g.setColour(theme.accent().withAlpha(0.1f));
             //   g.drawEllipse(b.getCentreX()-outerR, b.getCentreY()-outerR, outerR*2, outerR*2, 1.0f);
             // Selected offset wedge (radially reduced by 1px)
             if (selected >= 0)
             {
-                int selIdx = (selected + kHighlightRotation) & 15;
+                int selIdx = selected;
                 const juce::Path &segHi = wedgePathsSelected[(size_t)selIdx];
                 g.setColour(theme.cyan().withAlpha(0.55f));
                 g.fillPath(segHi);
@@ -203,7 +204,7 @@ public:
             // Chase/playhead wedge (different) — draw full wedge so chase colour renders at full thickness
             if (playheadRaw >= 0)
             {
-                int chaseIdx = (playheadRaw + kHighlightRotation) & 15;
+                int chaseIdx = playheadRaw;
                 const juce::Path &seg = wedgePaths[(size_t)chaseIdx];
                 g.setColour(theme.cyan().withAlpha(isPlaying ? 0.75f : 0.45f));
                 g.fillPath(seg);
@@ -216,11 +217,11 @@ public:
         // Default geometry: start at 12 o'clock (step 1 at top).
         const float start0 = -juce::MathConstants<float>::halfPi;
         int playheadRaw = useExternalPlayhead ? externalPlayheadRaw : lastStepIndex;
-        static constexpr int kHighlightRotation = 4; // visually advance highlight by +4 wedges
+        static constexpr int kHighlightRotation = 0; // visually advance highlight by +4 wedges
         for (int i = 0; i < 16; ++i)
         {
             const juce::Path &seg = wedgePaths[(size_t)i];
-            static constexpr int kHighlightRotation = 4; // visually advance highlight by +4 wedges
+            static constexpr int kHighlightRotation = 0; // visually advance highlight by +4 wedges
             bool isSel = (i == ((selected + kHighlightRotation) & 15));
             bool isPlay = (i == ((playheadRaw + kHighlightRotation) & 15));
             int hoverIdx = hovered >= 0 ? ((hovered + kHighlightRotation) & 15) : -1;
@@ -317,6 +318,10 @@ public:
     }
     void mouseDown(const juce::MouseEvent &e) override
     {
+        // Ensure we have focus when user interacts so subsequent key presses work.
+        if (!hasKeyboardFocus(true))
+            grabKeyboardFocus();
+
         if (patternEditMode)
         {
             // When pattern edit is active we let PlaygroundComponent manage clicks inside inner region.
@@ -370,12 +375,14 @@ public:
         float dx = e.position.x - c.x;
         float dy = e.position.y - c.y;
         float angle = std::atan2(dy, dx);
+        // Hit testing start at 12 o'clock for identity mapping.
+        // atan2 returns 0 at 3 o'clock, so 12 o'clock is -pi/2.
         const float startAt12 = -juce::MathConstants<float>::halfPi;
         float rel = angle - startAt12;
         while (rel < 0.0f)
             rel += juce::MathConstants<float>::twoPi;
         float slice = juce::MathConstants<float>::twoPi / 16.0f;
-        int raw = juce::jlimit(0, 15, (int)std::floor(rel / slice));
+        int raw = (int)std::floor(rel / slice) & 15;
         if (raw != selected)
         {
             selected = raw;
@@ -427,7 +434,7 @@ private:
         wedgePathsSelected.fill(juce::Path());
         const float innerProp = innerR / outerR;
         const float step = juce::MathConstants<float>::twoPi / 16.0f;
-        const float start0 = -juce::MathConstants<float>::halfPi;
+        const float start0 = 0.0f; // 12 o'clock in JUCE addPieSegment
         auto b2 = b.reduced(0.5f);
         float innerPropSel = (innerR + 0.5f) / outerR;
         for (int i = 0; i < 16; ++i)
@@ -461,13 +468,14 @@ private:
             return -1;
         float angle = std::atan2(dy, dx);
         // Hit testing start at 12 o'clock for identity mapping.
+        // atan2 returns 0 at 3 o'clock, so 12 o'clock is -pi/2.
         const float startAt12 = -juce::MathConstants<float>::halfPi;
         float rel = angle - startAt12;
         while (rel < 0.0f)
             rel += juce::MathConstants<float>::twoPi;
         float slice = juce::MathConstants<float>::twoPi / 16.0f;
-        int raw = (int)std::floor(rel / slice);
-        return juce::jlimit(0, 15, raw);
+        int raw = (int)std::floor(rel / slice) & 15;
+        return raw;
     }
     void togglePlay() { setPlaying(!isPlaying); }
     void flashSegmentRaw(int rawIndex, float flashIntensity = 1.0f, bool seedFade = true, bool applyHold = true)
@@ -688,7 +696,7 @@ public:
     inline void setPatternBitmask(uint16_t m) { pattern.setBitmask(m); repaint(); }
 
     // Helper: convert UI step (1..16) to stored bit index (0..15) using visual +4 rotation
-    inline int uiStep1to16ToStoredIndex(int step1to16) const noexcept { int l0 = juce::jlimit(1, 16, step1to16) - 1; return (l0 + 4) & 15; }
+    inline int uiStep1to16ToStoredIndex(int step1to16) const noexcept { int l0 = juce::jlimit(1, 16, step1to16) - 1; return l0; }
 
     // JUCE overrides
     void paint(juce::Graphics &) override;
@@ -947,7 +955,7 @@ inline PlaygroundComponent::PlaygroundComponent(UiThemeColours& t) : theme(t)
                 // logical index through the same visual rotation used by
                 // pattern editing so stored indices line up with playback.
                 int triggerIdx = logical & 15; // current logical step
-                int rotatedTriggerIdx = (triggerIdx + 4) & 15; // account for visual +4 rotation
+                int rotatedTriggerIdx = triggerIdx; // account for visual +4 rotation
                 if (patternBarActive && pattern.getStep(rotatedTriggerIdx))
                 {
                     // Automatic pattern playback should not directly arm or
@@ -1988,6 +1996,11 @@ inline void PlaygroundComponent::mouseDown(const juce::MouseEvent &e)
     }
     switch (hr.type)
     {
+    case ZoneType::RingWedge:
+        if (onResyncStepRequested)
+            onResyncStepRequested(hr.index);
+        repaint();
+        return;
     case ZoneType::ClickPulseButton:
         clickToPulseOn = !clickToPulseOn;
         if (onClickPulseRequested)
@@ -2080,7 +2093,10 @@ inline void PlaygroundComponent::mouseDown(const juce::MouseEvent &e)
             if (onTriggerOnceRequested)
                 onTriggerOnceRequested();
             if (ring)
-                ring->flashCurrentSegment();
+            {
+                int logical = (ringSelectedSegment >= 0) ? ringSelectedSegment : 0;
+                ring->flashSegmentLogical(logical + 1);
+            }
             startFadeTimer();
             repaint();
             return;
@@ -2162,14 +2178,16 @@ inline void PlaygroundComponent::mouseDrag(const juce::MouseEvent &e)
             float dx = e.position.x - centre.x;
             float dy = e.position.y - centre.y;
             float angle = std::atan2(dy, dx);
+            // Hit testing start at 12 o'clock for identity mapping.
+            // atan2 returns 0 at 3 o'clock, so 12 o'clock is -pi/2.
             const float startAt12 = -juce::MathConstants<float>::halfPi;
             float rel = angle - startAt12;
             while (rel < 0.0f)
                 rel += juce::MathConstants<float>::twoPi;
             float slice = juce::MathConstants<float>::twoPi / 16.0f;
-            int raw = juce::jlimit(0, 15, (int)std::floor(rel / slice));
+            int raw = (int)std::floor(rel / slice) & 15;
             // Apply same +4 rotation as click hit-test mapping so visual wedge under cursor matches drag index.
-            static constexpr int kHighlightRotation = 4;
+            static constexpr int kHighlightRotation = 0;
             int rotated = (raw + kHighlightRotation) & 15;
             if (rotated != lastPatternDragWedge)
             {

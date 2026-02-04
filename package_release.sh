@@ -6,7 +6,7 @@ APP_NAME="toolBoy Clock v3"
 DMG_NAME="toolBoy_Clock_v3_Installer.dmg"
 VOL_NAME="toolBoy Clock v3 Installer"
 IDENTITY="Developer ID Application: Dominik Bohn (3J6FW877T8)"
-NOTARY_PROFILE="toolboy-audio" # Replace with your actual profile name if different
+NOTARY_PROFILE="toolboy-notary" # Replace with your actual profile name if different
 STAGING_DIR="release_dmg_temp"
 
 echo "Starting packaging process..."

@@ -46,6 +46,33 @@ namespace
         UiThemeColours& theme;
     };
 
+    // LNF for the MIDI channel numberbox: Arial Bold and accent text.
+    class MidiChannelLNF : public juce::LookAndFeel_V4
+    {
+    public:
+        MidiChannelLNF(UiThemeColours& t) : theme(t)
+        {
+            setColour(juce::Slider::textBoxTextColourId, theme.accent());
+            setColour(juce::Slider::textBoxOutlineColourId, theme.accent());
+            setColour(juce::Slider::textBoxHighlightColourId, theme.accent().withAlpha(0.35f));
+        }
+        juce::Font getLabelFont(juce::Label&) override
+        {
+            return juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold));
+        }
+        juce::Label* createSliderTextBox(juce::Slider& slider) override
+        {
+            auto* l = new juce::Label();
+            l->setJustificationType(juce::Justification::centred);
+            l->setColour(juce::Label::textColourId, slider.findColour(juce::Slider::textBoxTextColourId));
+            l->setColour(juce::Label::outlineColourId, slider.findColour(juce::Slider::textBoxOutlineColourId));
+            l->setFont(getLabelFont(*l));
+            return l;
+        }
+    private:
+        UiThemeColours& theme;
+    };
+
     // Custom LNF for the slider text to ensure Arial Bold
     class MidiRowLNF : public juce::LookAndFeel_V4
     {
@@ -111,14 +138,34 @@ namespace
         enum Type { Note, CC, Channel };
         enum LayoutMode { Full, Compact };
 
-        MidiRemoteRow(const juce::String& labelText, Type type, std::atomic<int>& valueRef, UiThemeColours& t, LayoutMode mode = Full)
-            : value(valueRef), layoutMode(mode), theme(t), lnf(t), decBtn("-", t), incBtn("+", t)
+        MidiRemoteRow(const juce::String& labelText,
+                      Type type,
+                      std::atomic<int>& valueRef,
+                      UiThemeColours& t,
+                      LayoutMode mode = Full,
+                      std::atomic<bool>* typeIsCcFlag = nullptr)
+            : value(valueRef), layoutMode(mode), theme(t), lnf(t), decBtn("-", t), incBtn("+", t), fixedType(type), typeIsCc(typeIsCcFlag)
         {
             label.setText(labelText, juce::dontSendNotification);
             label.setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)));
             label.setColour(juce::Label::textColourId, theme.cyan());
             label.setJustificationType(juce::Justification::centredRight);
             addAndMakeVisible(label);
+
+            if (typeIsCc != nullptr && (fixedType == Note || fixedType == CC))
+            {
+                typeToggle = std::make_unique<HeaderSwitchToggle>(theme);
+                typeToggle->setSize(10, 20);
+                typeToggle->setToggleState(typeIsCc->load(std::memory_order_relaxed));
+                typeToggle->onToggle = [this](bool on) {
+                    if (typeIsCc)
+                        typeIsCc->store(on, std::memory_order_relaxed);
+                    applyTextMapping();
+                    valueSlider.updateText();
+                    repaint();
+                };
+                addAndMakeVisible(*typeToggle);
+            }
 
             // Value Box (using Slider in TextBoxOnly mode for display/entry)
             valueSlider.setSliderStyle(juce::Slider::LinearBar); 
@@ -137,20 +184,7 @@ namespace
             else
             {
                 valueSlider.setRange(-1, 127, 1);
-                if (type == Note)
-                {
-                    valueSlider.textFromValueFunction = [](double val) {
-                        if (val < 0) return juce::String("OFF");
-                        return juce::MidiMessage::getMidiNoteName((int)val, true, true, 3);
-                    };
-                }
-                else
-                {
-                     valueSlider.textFromValueFunction = [](double val) {
-                        if (val < 0) return juce::String("OFF");
-                        return juce::String((int)val);
-                    };
-                }
+                applyTextMapping();
             }
             
             // Ensure initial text is correct
@@ -204,18 +238,48 @@ namespace
             // IncBtn: 42..52 (starts at 42, width 10) -> Overlaps Box by 4px
             // Total width needed = 52
             
-            auto controlsArea = area.removeFromRight(60);
-            int startX = controlsArea.getX();
-            
-            decBtn.setBounds(startX, y, btnW, btnH);
-            valueSlider.setBounds(startX + 9, y, boxW, boxH);
-            incBtn.setBounds(startX + 49, y, btnW, btnH);
+            const bool hasTypeToggle = (typeToggle != nullptr);
+            auto controlsArea = area.removeFromRight(hasTypeToggle ? 74 : 60);
+            int x = controlsArea.getX();
+
+            // Controls order: '-', value, '+', then NOTE/CC switch (requested)
+            decBtn.setBounds(x, y, btnW, btnH);
+            valueSlider.setBounds(x + 9, y, boxW, boxH);
+            incBtn.setBounds(x + 49, y, btnW, btnH);
+
+            if (hasTypeToggle)
+            {
+                // Place directly after '+' with a small gap
+                typeToggle->setBounds(x + 63, y, 10, btnH);
+            }
             
             // Label takes the rest
             label.setBounds(area);
         }
 
     private:
+        void applyTextMapping()
+        {
+            if (fixedType == Channel)
+                return;
+
+            const bool asCc = (typeIsCc != nullptr) ? typeIsCc->load(std::memory_order_relaxed) : (fixedType == CC);
+            if (!asCc)
+            {
+                valueSlider.textFromValueFunction = [](double val) {
+                    if (val < 0) return juce::String("OFF");
+                    return juce::MidiMessage::getMidiNoteName((int)val, true, true, 3);
+                };
+            }
+            else
+            {
+                valueSlider.textFromValueFunction = [](double val) {
+                    if (val < 0) return juce::String("OFF");
+                    return juce::String((int)val);
+                };
+            }
+        }
+
         UiThemeColours& theme;
         MidiRowLNF lnf;
         juce::Label label;
@@ -223,6 +287,9 @@ namespace
         SimpleRectButton decBtn, incBtn;
         std::atomic<int>& value;
         LayoutMode layoutMode;
+        Type fixedType;
+        std::atomic<bool>* typeIsCc { nullptr };
+        std::unique_ptr<HeaderSwitchToggle> typeToggle;
     };
 
     class MidiRemoteSetupComponent : public juce::Component
@@ -230,16 +297,17 @@ namespace
     public:
         MidiRemoteSetupComponent(ClockSyncAudioProcessor& p)
             : theme(p.theme),
-              startRow("START", MidiRemoteRow::Note, p.midiRemoteStart, p.theme, MidiRemoteRow::Compact),
-              stopRow("STOP", MidiRemoteRow::Note, p.midiRemoteStop, p.theme, MidiRemoteRow::Compact),
+                            startRow("START", MidiRemoteRow::Note, p.midiRemoteStart, p.theme, MidiRemoteRow::Compact, &p.midiRemoteStartIsCC),
+                            stopRow("STOP", MidiRemoteRow::Note, p.midiRemoteStop, p.theme, MidiRemoteRow::Compact, &p.midiRemoteStopIsCC),
               offsetRow("OFFSET", MidiRemoteRow::CC, p.midiRemoteOffset, p.theme),
               shuffleRow("SHUFFLE", MidiRemoteRow::CC, p.midiRemoteShuffle, p.theme),
               clockDivRow("CLK DIV.", MidiRemoteRow::CC, p.midiRemoteClockDiv, p.theme),
-              triggerRow("TRIGGER", MidiRemoteRow::Note, p.midiRemoteTrigger, p.theme, MidiRemoteRow::Compact),
-              resyncRow("RESYNC", MidiRemoteRow::Note, p.midiRemoteResync, p.theme, MidiRemoteRow::Compact),
-              gatedSyncRow("GATE", MidiRemoteRow::Note, p.midiRemoteGatedSync, p.theme, MidiRemoteRow::Compact),
+                            triggerRow("TRIGGER", MidiRemoteRow::Note, p.midiRemoteTrigger, p.theme, MidiRemoteRow::Compact, &p.midiRemoteTriggerIsCC),
+                            resyncRow("RESYNC", MidiRemoteRow::Note, p.midiRemoteResync, p.theme, MidiRemoteRow::Compact, &p.midiRemoteResyncIsCC),
+                            gatedSyncRow("GATE", MidiRemoteRow::Note, p.midiRemoteGatedSync, p.theme, MidiRemoteRow::Compact, &p.midiRemoteGatedSyncIsCC),
               autoFillRow("AUTOFILL", MidiRemoteRow::CC, p.midiRemoteAutoFill, p.theme),
-              channelValue(p.midiRemoteChannel)
+                            channelValue(p.midiRemoteChannel),
+                            channelLnf(p.theme)
         {
             titleLabel.setText("MIDI CONTROL       CH:", juce::dontSendNotification);
             titleLabel.setFont(juce::Font(juce::FontOptions("Arial", 14.0f, juce::Font::bold)));
@@ -251,7 +319,8 @@ namespace
             channelSlider.setSliderStyle(juce::Slider::LinearBar);
             channelSlider.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 20, 20);
             channelSlider.setRange(1, 16, 1);
-            channelSlider.setColour(juce::Slider::textBoxTextColourId, theme.cyan().darker(0.8f));
+            channelSlider.setLookAndFeel(&channelLnf);
+            channelSlider.setColour(juce::Slider::textBoxTextColourId, theme.accent());
             channelSlider.setColour(juce::Slider::trackColourId, juce::Colours::transparentBlack);
             channelSlider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
             channelSlider.setValue(channelValue.load());
@@ -267,6 +336,11 @@ namespace
             addAndMakeVisible(resyncRow);
             addAndMakeVisible(gatedSyncRow);
             addAndMakeVisible(autoFillRow);
+        }
+
+        ~MidiRemoteSetupComponent() override
+        {
+            channelSlider.setLookAndFeel(nullptr);
         }
 
         void paint(juce::Graphics& g) override
@@ -333,6 +407,7 @@ namespace
         juce::Label titleLabel;
         std::atomic<int>& channelValue;
         juce::Slider channelSlider;
+        MidiChannelLNF channelLnf;
         MidiRemoteRow startRow, stopRow, offsetRow, shuffleRow, clockDivRow, triggerRow, resyncRow, gatedSyncRow, autoFillRow;
     };
 }
@@ -975,7 +1050,6 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         setupCornerButton = std::make_unique<juce::DrawableButton>("setupCorner", juce::DrawableButton::ImageFitted);
         addAndMakeVisible(*setupCornerButton);
         setupCornerButton->setInterceptsMouseClicks(true, true);
-        setupCornerButton->setTooltip("setup");
         setupCornerButton->setAlwaysOnTop(true);
 
         auto loadSvgDrawable = []() -> std::unique_ptr<juce::Drawable>

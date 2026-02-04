@@ -17,14 +17,17 @@ public:
     HeaderSwitchToggle(UiThemeColours& t) : theme(t) { setSize(10, 20); }
     void paint(juce::Graphics& g) override {
         auto b = getLocalBounds().toFloat();
-        // Draw outer rectangle border
-        g.setColour(theme.base().darker(1.5f));
+        // Accent-coloured switch (requested)
+        g.setColour(theme.cyan().withAlpha(0.35f));
         g.fillRect(b);
+        g.setColour(theme.cyan());
+        g.drawRect(b, 1.0f);
+
         // Draw indicator
         const float indW = 6.0f, indH = 8.0f;
         float indX = (b.getWidth() - indW) * 0.5f;
         float indY = getToggleState() ? (b.getHeight() - indH - 2.0f) : 2.0f ;
-        g.setColour(theme.base());
+        g.setColour(theme.cyan());
         g.fillRect(indX, indY, indW, indH);
     }
     void mouseDown(const juce::MouseEvent&) override {
@@ -424,4 +427,120 @@ private:
     juce::String statusText { "" };
     float ledLevel { 0.0f };
     UiThemeColours& theme;
+};
+
+// ---------------- SimpleColorPicker -----------------
+class SimpleColorPicker : public juce::Component
+{
+public:
+    SimpleColorPicker()
+    {
+        setSize(90, 120);
+    }
+
+    void setCurrentColour(juce::Colour c)
+    {
+        currentHue = c.getHue();
+        currentSat = c.getSaturation();
+        currentBri = c.getBrightness();
+        currentColour = c;
+        repaint();
+    }
+
+    std::function<void(juce::Colour)> onColorChanged;
+
+    void mouseDown(const juce::MouseEvent& e) override
+    {
+        handleMouse(e);
+    }
+    
+    void mouseDrag(const juce::MouseEvent& e) override
+    {
+        handleMouse(e);
+    }
+    
+    void handleMouse(const juce::MouseEvent& e)
+    {
+        int col = e.x / 30;
+        float normY = (float)e.y / (float)getHeight();
+        normY = juce::jlimit(0.0f, 1.0f, normY);
+        
+        if (col == 0) currentHue = normY;
+        else if (col == 1) currentSat = 1.0f - normY;
+        else if (col == 2) currentBri = 1.0f - normY;
+        
+        updateTarget();
+        repaint();
+    }
+    
+    void paint(juce::Graphics& g) override
+    {
+        g.fillAll(juce::Colours::darkgrey); // Background
+        
+        // Hue (Col 0)
+        {
+            juce::ColourGradient grad;
+            grad.point1 = { 15.0f, 0.0f };
+            grad.point2 = { 15.0f, (float)getHeight() };
+            for(float i=0.0f; i<=1.0f; i+=0.1f) grad.addColour(i, juce::Colour::fromHSV(i, 1.0f, 1.0f, 1.0f));
+            g.setGradientFill(grad);
+            g.fillRect(0, 0, 30, getHeight());
+            
+            float y = currentHue * getHeight();
+            g.setColour(juce::Colours::black);
+            g.drawRect(0, (int)y-2, 30, 4, 2);
+            g.setColour(juce::Colours::white);
+            g.drawRect(0, (int)y-2, 30, 4, 1);
+        }
+        
+        // Sat (Col 1)
+        {
+            juce::ColourGradient grad;
+            grad.point1 = { 45.0f, 0.0f };
+            grad.point2 = { 45.0f, (float)getHeight() };
+            // Top: Pure Color (Sat 1), Bottom: White (Sat 0)
+            grad.addColour(0.0f, juce::Colour::fromHSV(currentHue, 1.0f, 1.0f, 1.0f));
+            grad.addColour(1.0f, juce::Colour::fromHSV(currentHue, 0.0f, 1.0f, 1.0f));
+            g.setGradientFill(grad);
+            g.fillRect(30, 0, 30, getHeight());
+            
+            float y = (1.0f - currentSat) * getHeight();
+            g.setColour(juce::Colours::black);
+            g.drawRect(30, (int)y-2, 30, 4, 2);
+            g.setColour(juce::Colours::white);
+            g.drawRect(30, (int)y-2, 30, 4, 1);
+        }
+        
+        // Bri (Col 2)
+        {
+            juce::ColourGradient grad;
+            grad.point1 = { 75.0f, 0.0f };
+            grad.point2 = { 75.0f, (float)getHeight() };
+            // Top: Pure Color (Bri 1), Bottom: Black (Bri 0)
+            grad.addColour(0.0f, juce::Colour::fromHSV(currentHue, currentSat, 1.0f, 1.0f));
+            grad.addColour(1.0f, juce::Colours::black);
+            g.setGradientFill(grad);
+            g.fillRect(60, 0, 30, getHeight());
+            
+            float y = (1.0f - currentBri) * getHeight();
+            g.setColour(juce::Colours::white);
+            g.drawRect(60, (int)y-2, 30, 4, 2);
+            g.setColour(juce::Colours::black);
+            g.drawRect(60, (int)y-2, 30, 4, 1);
+        }
+        
+        g.setColour(juce::Colours::black);
+        g.drawRect(getLocalBounds(), 1);
+    }
+
+private:
+    juce::Colour currentColour;
+    float currentHue = 0.0f, currentSat = 0.0f, currentBri = 1.0f;
+
+    void updateTarget()
+    {
+        currentColour = juce::Colour::fromHSV(currentHue, currentSat, currentBri, 1.0f);
+        if (onColorChanged)
+            onColorChanged(currentColour);
+    }
 };
