@@ -33,7 +33,7 @@ juce_add_plugin(ClockV3
     COMPANY_NAME "toolBoy"
     PRODUCT_NAME "toolBoy Clock v3"
     BUNDLE_ID com.toolboy.clock_v3
-    # Build as an effect (FX) instead of a synth/instrument
+    # Build as an effect (FX) so hosts classify it as an audio effect
     IS_SYNTH FALSE
     # Typically effects don't need MIDI; enable if you require MIDI control
     NEEDS_MIDI_INPUT TRUE

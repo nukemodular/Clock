@@ -88,8 +88,11 @@ ClockSyncAudioProcessor::ClockSyncAudioProcessor()
 #if JucePlugin_IsMidiEffect
           BusesProperties() // MIDI effect: no audio buses
 #elif JucePlugin_IsSynth
-          // Synth/instrument: only output bus
-          BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)
+          // Synth/instrument: expose audio input so it can act as a thru/router when the host provides audio.
+          BusesProperties()
+              .withInput("Input", juce::AudioChannelSet::stereo(), true)
+              .withOutput("Output", juce::AudioChannelSet::stereo(), true)
+              .withOutput("Aux Output", juce::AudioChannelSet::stereo(), true)
 #else
           // Effect plugin (FX): provide both input and output buses
           BusesProperties()
@@ -118,6 +121,10 @@ ClockSyncAudioProcessor::ClockSyncAudioProcessor()
     sppMode.store((bool)parameters.state.getProperty("ui.sppMode", false));
     linearShuffleMode.store((bool)parameters.state.getProperty("ui.linearShuffleMode", false));
 
+    // Restore persisted MIDI Remote input selection (default: host/track MIDI)
+    midiRemoteInDeviceId = parameters.state.getProperty("ui.midiRemoteInDeviceId").toString();
+    updateMidiRemoteInDevice();
+
     // Seed internal random generator
     random.setSeedRandomly();
 
@@ -128,6 +135,206 @@ ClockSyncAudioProcessor::ClockSyncAudioProcessor()
 ClockSyncAudioProcessor::~ClockSyncAudioProcessor()
 {
     parameters.state.removeListener(this);
+}
+
+void ClockSyncAudioProcessor::updateMidiRemoteInDevice()
+{
+    // Close any existing device
+    if (midiRemoteIn)
+    {
+        midiRemoteIn->stop();
+        midiRemoteIn.reset();
+    }
+
+    // Empty => host/track MIDI (no CoreMIDI device opened)
+    if (midiRemoteInDeviceId.isEmpty())
+        return;
+
+    const auto devices = juce::MidiInput::getAvailableDevices();
+    for (const auto& dev : devices)
+    {
+        if (dev.identifier == midiRemoteInDeviceId)
+        {
+            midiRemoteIn = juce::MidiInput::openDevice(dev.identifier, &midiRemoteCollector);
+            if (midiRemoteIn)
+                midiRemoteIn->start();
+            return;
+        }
+    }
+
+    // If the persisted identifier is no longer available, fall back to host MIDI.
+    midiRemoteInDeviceId.clear();
+}
+
+void ClockSyncAudioProcessor::handleRemoteMidiMessage(const juce::MidiMessage& msg)
+{
+    const int gatedSyncMapping = midiRemoteGatedSync.load(std::memory_order_relaxed);
+    const bool gatedSyncIsCC = midiRemoteGatedSyncIsCC.load(std::memory_order_relaxed);
+    const bool gatedSyncActive = (gatedSyncMapping >= 0) && syncLatchEnabled.load(std::memory_order_relaxed);
+
+    if (gatedSyncActive)
+    {
+        // Imperator Mode: Gated Sync overrides other transport controls
+        if (gatedSyncIsCC)
+        {
+            if (msg.isController() && msg.getControllerNumber() == gatedSyncMapping)
+            {
+                const int v = msg.getControllerValue();
+                isGateOpen.store(v >= 64, std::memory_order_relaxed);
+            }
+        }
+        else
+        {
+            const bool isNoteOn  = msg.isNoteOn() && msg.getVelocity() > 0;
+            const bool isNoteOff = msg.isNoteOff() || (msg.isNoteOn() && msg.getVelocity() == 0);
+
+            if (isNoteOn && msg.getNoteNumber() == gatedSyncMapping)
+            {
+                isGateOpen.store(true, std::memory_order_relaxed);
+                // Gate Mode: Immediate start handled in generateClockAndClick via runParamCached transition
+            }
+            else if (isNoteOff && msg.getNoteNumber() == gatedSyncMapping)
+            {
+                isGateOpen.store(false, std::memory_order_relaxed);
+            }
+        }
+        return;
+    }
+
+    // Standard Remote Control
+    // Start/Stop/Trigger/Resync (Note Inputs)
+    if (msg.isNoteOn() && msg.getVelocity() > 0)
+    {
+        const int note = msg.getNoteNumber();
+        const int remoteStart    = midiRemoteStart.load(std::memory_order_relaxed);
+        const int remoteStop     = midiRemoteStop.load(std::memory_order_relaxed);
+        const int remoteTrigger  = midiRemoteTrigger.load(std::memory_order_relaxed);
+        const int remoteResync   = midiRemoteResync.load(std::memory_order_relaxed);
+        const bool startIsCC     = midiRemoteStartIsCC.load(std::memory_order_relaxed);
+        const bool stopIsCC      = midiRemoteStopIsCC.load(std::memory_order_relaxed);
+        const bool triggerIsCC   = midiRemoteTriggerIsCC.load(std::memory_order_relaxed);
+        const bool resyncIsCC    = midiRemoteResyncIsCC.load(std::memory_order_relaxed);
+
+        if (! startIsCC && remoteStart >= 0 && note == remoteStart)
+        {
+            if (auto* p = parameters.getParameter(paramRun))
+                if (p->getValue() < 0.5f)
+                    p->setValueNotifyingHost(1.0f);
+        }
+        else if (! stopIsCC && remoteStop >= 0 && note == remoteStop)
+        {
+            if (auto* p = parameters.getParameter(paramRun))
+                if (p->getValue() > 0.5f)
+                    p->setValueNotifyingHost(0.0f);
+        }
+        else if (! triggerIsCC && remoteTrigger >= 0 && note == remoteTrigger)
+        {
+            requestTriggerOnce();
+        }
+        else if (! resyncIsCC && remoteResync >= 0 && note == remoteResync)
+        {
+            notifyResyncOffsetChanged();
+        }
+    }
+
+    if (msg.isController())
+    {
+        const int cc = msg.getControllerNumber();
+        const int val = msg.getControllerValue();
+
+        // Action remotes can optionally use CC (trigger on non-zero value)
+        {
+            const int remoteStart    = midiRemoteStart.load(std::memory_order_relaxed);
+            const int remoteStop     = midiRemoteStop.load(std::memory_order_relaxed);
+            const int remoteTrigger  = midiRemoteTrigger.load(std::memory_order_relaxed);
+            const int remoteResync   = midiRemoteResync.load(std::memory_order_relaxed);
+            const bool startIsCC     = midiRemoteStartIsCC.load(std::memory_order_relaxed);
+            const bool stopIsCC      = midiRemoteStopIsCC.load(std::memory_order_relaxed);
+            const bool triggerIsCC   = midiRemoteTriggerIsCC.load(std::memory_order_relaxed);
+            const bool resyncIsCC    = midiRemoteResyncIsCC.load(std::memory_order_relaxed);
+
+            // Special case: START and STOP share the same CC controller number.
+            if (startIsCC && stopIsCC
+                && remoteStart >= 0 && remoteStop >= 0
+                && remoteStart == remoteStop
+                && cc == remoteStart)
+            {
+                if (val > 63)
+                {
+                    if (auto* p = parameters.getParameter(paramRun))
+                        if (p->getValue() < 0.5f)
+                            p->setValueNotifyingHost(1.0f);
+                }
+                else if (val < 64)
+                {
+                    if (auto* p = parameters.getParameter(paramRun))
+                        if (p->getValue() > 0.5f)
+                            p->setValueNotifyingHost(0.0f);
+                }
+            }
+            else if (val > 0)
+            {
+                if (startIsCC && remoteStart >= 0 && cc == remoteStart)
+                {
+                    if (auto* p = parameters.getParameter(paramRun))
+                        if (p->getValue() < 0.5f)
+                            p->setValueNotifyingHost(1.0f);
+                }
+                else if (stopIsCC && remoteStop >= 0 && cc == remoteStop)
+                {
+                    if (auto* p = parameters.getParameter(paramRun))
+                        if (p->getValue() > 0.5f)
+                            p->setValueNotifyingHost(0.0f);
+                }
+                else if (triggerIsCC && remoteTrigger >= 0 && cc == remoteTrigger)
+                {
+                    requestTriggerOnce();
+                }
+                else if (resyncIsCC && remoteResync >= 0 && cc == remoteResync)
+                {
+                    notifyResyncOffsetChanged();
+                }
+            }
+        }
+
+        const int remoteOffset   = midiRemoteOffset.load(std::memory_order_relaxed);
+        const int remoteShuffle  = midiRemoteShuffle.load(std::memory_order_relaxed);
+        const int remoteClockDiv = midiRemoteClockDiv.load(std::memory_order_relaxed);
+        const int remoteAutoFill = midiRemoteAutoFill.load(std::memory_order_relaxed);
+
+        if (remoteOffset >= 0 && cc == remoteOffset)
+        {
+            int step = juce::jmap(val, 0, 127, 1, 16);
+            if (auto* p = parameters.getParameter(paramResyncOffsetStep))
+                p->setValueNotifyingHost((float) (step - 1) / 15.0f);
+        }
+        else if (remoteShuffle >= 0 && cc == remoteShuffle)
+        {
+            if (isLinearShuffleEnabled())
+            {
+                if (auto* p = parameters.getParameter(paramShuffleLinear))
+                    p->setValueNotifyingHost((float) val / 127.0f);
+            }
+            else
+            {
+                int step = juce::jmap(val, 0, 127, 1, 7);
+                if (auto* p = parameters.getParameter(paramShuffleStep))
+                    p->setValueNotifyingHost((float) (step - 1) / 6.0f);
+            }
+        }
+        else if (remoteClockDiv >= 0 && cc == remoteClockDiv)
+        {
+            int idx = juce::jmap(val, 0, 127, 0, 3);
+            if (auto* p = parameters.getParameter(paramClockRateIndex))
+                p->setValueNotifyingHost((float) idx / 3.0f);
+        }
+        else if (remoteAutoFill >= 0 && cc == remoteAutoFill)
+        {
+            int idx = juce::jmap(val, 0, 127, 0, 8);
+            if (auto* p = parameters.getParameter(paramPatternBars))
+                p->setValueNotifyingHost((float) idx / 8.0f);
+        }
+    }
 }
 
 // Helper: current shuffle shift in quarter-notes.
@@ -273,6 +480,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout ClockSyncAudioProcessor::cre
 void ClockSyncAudioProcessor::prepareToPlay(double sr, int /*samplesPerBlock*/)
 {
     currentSampleRate = sr > 0.0 ? sr : 44100.0;
+    midiRemoteCollector.reset(currentSampleRate);
     lastWasPlaying = false;
     lastTickIndex = std::numeric_limits<long long>::min();
     pendingRateIndex = -1;
@@ -363,12 +571,24 @@ bool ClockSyncAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts)
     return layouts.getMainInputChannelSet() == juce::AudioChannelSet::disabled()
         && layouts.getMainOutputChannelSet() == juce::AudioChannelSet::disabled();
 #elif JucePlugin_IsSynth
-    // Synth/instrument: no audio input; allow mono or stereo output
-    if (layouts.getMainInputChannelSet() != juce::AudioChannelSet::disabled())
+    // Synth/instrument: allow mono/stereo output, and optionally mono/stereo input (for input-through routing).
+    const auto in  = layouts.getMainInputChannelSet();
+    const auto out = layouts.getMainOutputChannelSet();
+    const auto aux = layouts.getChannelSet(false, 1);
+
+    if (out == juce::AudioChannelSet::disabled())
         return false;
 
-    const auto out = layouts.getMainOutputChannelSet();
     if (out != juce::AudioChannelSet::mono() && out != juce::AudioChannelSet::stereo())
+        return false;
+
+    if (in != juce::AudioChannelSet::disabled()
+        && in != juce::AudioChannelSet::mono()
+        && in != juce::AudioChannelSet::stereo())
+        return false;
+
+    // Allow Aux to be disabled or stereo
+    if (aux != juce::AudioChannelSet::disabled() && aux != juce::AudioChannelSet::stereo())
         return false;
 
     return true;
@@ -506,194 +726,22 @@ int ClockSyncAudioProcessor::getPulseWidthMs() const
 }
 void ClockSyncAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
-    // Process incoming MIDI for remote control
-    for (const auto metadata : midi)
+    // MIDI Remote control input source:
+    // - empty selection => use host/track MIDI
+    // - otherwise => use selected CoreMIDI device
+    const bool useHostMidiForRemote = midiRemoteInDeviceId.isEmpty();
+
+    if (useHostMidiForRemote)
     {
-        const auto msg = metadata.getMessage();
-        
-        const int gatedSyncMapping = midiRemoteGatedSync.load(std::memory_order_relaxed);
-        const bool gatedSyncIsCC = midiRemoteGatedSyncIsCC.load(std::memory_order_relaxed);
-        const bool gatedSyncActive = (gatedSyncMapping >= 0) && syncLatchEnabled.load(std::memory_order_relaxed);
-
-        if (gatedSyncActive)
-        {
-            // Imperator Mode: Gated Sync overrides other transport controls
-            if (gatedSyncIsCC)
-            {
-                if (msg.isController() && msg.getControllerNumber() == gatedSyncMapping)
-                {
-                    const int v = msg.getControllerValue();
-                    isGateOpen.store(v >= 64, std::memory_order_relaxed);
-                }
-            }
-            else
-            {
-                bool isNoteOn = msg.isNoteOn() && msg.getVelocity() > 0;
-                bool isNoteOff = msg.isNoteOff() || (msg.isNoteOn() && msg.getVelocity() == 0);
-
-                if (isNoteOn && msg.getNoteNumber() == gatedSyncMapping)
-                {
-                    isGateOpen.store(true, std::memory_order_relaxed);
-                    // Gate Mode: Immediate start handled in generateClockAndClick via runParamCached transition
-                }
-                else if (isNoteOff && msg.getNoteNumber() == gatedSyncMapping)
-                {
-                    isGateOpen.store(false, std::memory_order_relaxed);
-                }
-            }
-        }
-        else
-        {
-            // Standard Remote Control
-            // Start/Stop/Trigger/Resync (Note Inputs)
-            if (msg.isNoteOn() && msg.getVelocity() > 0)
-            {
-                int note = msg.getNoteNumber();
-                const int remoteStart    = midiRemoteStart.load(std::memory_order_relaxed);
-                const int remoteStop     = midiRemoteStop.load(std::memory_order_relaxed);
-                const int remoteTrigger  = midiRemoteTrigger.load(std::memory_order_relaxed);
-                const int remoteResync   = midiRemoteResync.load(std::memory_order_relaxed);
-                const bool startIsCC     = midiRemoteStartIsCC.load(std::memory_order_relaxed);
-                const bool stopIsCC      = midiRemoteStopIsCC.load(std::memory_order_relaxed);
-                const bool triggerIsCC   = midiRemoteTriggerIsCC.load(std::memory_order_relaxed);
-                const bool resyncIsCC    = midiRemoteResyncIsCC.load(std::memory_order_relaxed);
-
-                if (!startIsCC && remoteStart >= 0 && note == remoteStart)
-                {
-                    // Start (Run = true)
-                    if (auto* p = parameters.getParameter(paramRun))
-                    {
-                        if (p->getValue() < 0.5f)
-                            p->setValueNotifyingHost(1.0f);
-                    }
-                }
-                else if (!stopIsCC && remoteStop >= 0 && note == remoteStop)
-                {
-                    // Stop (Run = false)
-                    if (auto* p = parameters.getParameter(paramRun))
-                    {
-                        if (p->getValue() > 0.5f)
-                            p->setValueNotifyingHost(0.0f);
-                    }
-                }
-                else if (!triggerIsCC && remoteTrigger >= 0 && note == remoteTrigger)
-                {
-                    requestTriggerOnce();
-                }
-                else if (!resyncIsCC && remoteResync >= 0 && note == remoteResync)
-                {
-                    notifyResyncOffsetChanged();
-                }
-            }
-        }
-
-        if (msg.isController())
-        {
-            int cc = msg.getControllerNumber();
-            int val = msg.getControllerValue();
-
-            // Action remotes can optionally use CC (trigger on non-zero value)
-            {
-                const int remoteStart    = midiRemoteStart.load(std::memory_order_relaxed);
-                const int remoteStop     = midiRemoteStop.load(std::memory_order_relaxed);
-                const int remoteTrigger  = midiRemoteTrigger.load(std::memory_order_relaxed);
-                const int remoteResync   = midiRemoteResync.load(std::memory_order_relaxed);
-                const bool startIsCC     = midiRemoteStartIsCC.load(std::memory_order_relaxed);
-                const bool stopIsCC      = midiRemoteStopIsCC.load(std::memory_order_relaxed);
-                const bool triggerIsCC   = midiRemoteTriggerIsCC.load(std::memory_order_relaxed);
-                const bool resyncIsCC    = midiRemoteResyncIsCC.load(std::memory_order_relaxed);
-
-                // Special case: START and STOP share the same CC controller number.
-                // Interpret the CC value threshold instead of treating both as independent triggers.
-                if (startIsCC && stopIsCC
-                    && remoteStart >= 0 && remoteStop >= 0
-                    && remoteStart == remoteStop
-                    && cc == remoteStart)
-                {
-                    if (val > 63)
-                    {
-                        if (auto* p = parameters.getParameter(paramRun))
-                            if (p->getValue() < 0.5f)
-                                p->setValueNotifyingHost(1.0f);
-                    }
-                    else if (val < 64)
-                    {
-                        if (auto* p = parameters.getParameter(paramRun))
-                            if (p->getValue() > 0.5f)
-                                p->setValueNotifyingHost(0.0f);
-                    }
-                    // val == 64 => neutral, do nothing
-                }
-                else
-
-                if (val > 0)
-                {
-                    if (startIsCC && remoteStart >= 0 && cc == remoteStart)
-                    {
-                        if (auto* p = parameters.getParameter(paramRun))
-                            if (p->getValue() < 0.5f)
-                                p->setValueNotifyingHost(1.0f);
-                    }
-                    else if (stopIsCC && remoteStop >= 0 && cc == remoteStop)
-                    {
-                        if (auto* p = parameters.getParameter(paramRun))
-                            if (p->getValue() > 0.5f)
-                                p->setValueNotifyingHost(0.0f);
-                    }
-                    else if (triggerIsCC && remoteTrigger >= 0 && cc == remoteTrigger)
-                    {
-                        requestTriggerOnce();
-                    }
-                    else if (resyncIsCC && remoteResync >= 0 && cc == remoteResync)
-                    {
-                        notifyResyncOffsetChanged();
-                    }
-                }
-            }
-            
-            const int remoteOffset   = midiRemoteOffset.load(std::memory_order_relaxed);
-            const int remoteShuffle  = midiRemoteShuffle.load(std::memory_order_relaxed);
-            const int remoteClockDiv = midiRemoteClockDiv.load(std::memory_order_relaxed);
-            const int remoteAutoFill = midiRemoteAutoFill.load(std::memory_order_relaxed);
-
-            if (remoteOffset >= 0 && cc == remoteOffset)
-            {
-                // Map 0-127 -> 1-16
-                int step = juce::jmap(val, 0, 127, 1, 16);
-                if (auto* p = parameters.getParameter(paramResyncOffsetStep))
-                    p->setValueNotifyingHost((float)(step - 1) / 15.0f);
-            }
-            else if (remoteShuffle >= 0 && cc == remoteShuffle)
-            {
-                if (isLinearShuffleEnabled())
-                {
-                    // Map 0-127 -> 0.0 - 1.0 (Linear Shuffle Parameter)
-                    if (auto* p = parameters.getParameter(paramShuffleLinear))
-                        p->setValueNotifyingHost((float)val / 127.0f);
-                }
-                else
-                {
-                    // Map 0-127 -> 1-7
-                    int step = juce::jmap(val, 0, 127, 1, 7);
-                    if (auto* p = parameters.getParameter(paramShuffleStep))
-                        p->setValueNotifyingHost((float)(step - 1) / 6.0f);
-                }
-            }
-            else if (remoteClockDiv >= 0 && cc == remoteClockDiv)
-            {
-                // Map 0-127 -> 0-3
-                int idx = juce::jmap(val, 0, 127, 0, 3);
-                if (auto* p = parameters.getParameter(paramClockRateIndex))
-                    p->setValueNotifyingHost((float)idx / 3.0f);
-            }
-            else if (remoteAutoFill >= 0 && cc == remoteAutoFill)
-            {
-                // Map 0-127 -> 0-8 (OFF,1,2,4,8,16,32,64,RND)
-                int idx = juce::jmap(val, 0, 127, 0, 8);
-                if (auto* p = parameters.getParameter(paramPatternBars))
-                    p->setValueNotifyingHost((float)idx / 8.0f);
-            }
-        }
+        for (const auto metadata : midi)
+            handleRemoteMidiMessage(metadata.getMessage());
+    }
+    else
+    {
+        juce::MidiBuffer remoteIn;
+        midiRemoteCollector.removeNextBlockOfMessages(remoteIn, buffer.getNumSamples());
+        for (const auto metadata : remoteIn)
+            handleRemoteMidiMessage(metadata.getMessage());
     }
 
     juce::ScopedNoDenormals noDenormals;
@@ -834,6 +882,16 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
     }
 
     const int numSamples = buffer.getNumSamples();
+    // Detect callback lateness under CPU pressure.
+    // If the audio callback arrives late, any MIDI clock derived from it is inherently late.
+    // Additionally, timed MIDI sending uses a background thread which may be delayed too.
+    const double wallNowMs = juce::Time::getMillisecondCounterHiRes();
+    const double expectedBlockMs = (currentSampleRate > 0.0)
+        ? (1000.0 * (double) numSamples / currentSampleRate)
+        : 0.0;
+    const double wallDeltaMs = (lastClockBlockWallMs >= 0.0) ? (wallNowMs - lastClockBlockWallMs) : expectedBlockMs;
+    lastClockBlockWallMs = wallNowMs;
+    const bool callbackLate = (expectedBlockMs > 0.0) && (wallDeltaMs > expectedBlockMs * 1.5);
     startSampleForRunSignal = -1;
     bool wasRunningAtStart = audioPulsesEnabled.load(std::memory_order_relaxed);
     
@@ -1408,7 +1466,10 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                 if (nextGridOffset >= 0 && nextGridOffset < numSamples)
                 {
                     const auto startMsg = juce::MidiMessage::midiStart();
-                    long long barForStart = computeCurrentBar(ppqStart, barLenQ);
+                    // Use the PPQ position where the Start is actually emitted.
+                    // Using ppqStart here can be off-by-one near bar boundaries and
+                    // causes resync scheduling to slip by an extra bar.
+                    long long barForStart = computeCurrentBar(nextBoundaryQ, barLenQ);
                     // Use active shiftQ (linear or quantized) to derive logical step consistently
                     int stepForStart = computeLogicalStepFromPPQ(nextBoundaryQ, barLenQ, shiftQActive);
                     // Duplicate suppression: skip if same bar+step already emitted
@@ -1890,7 +1951,11 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
         // throttle non-audio threads. JUCE's timed MIDI sending uses a background thread,
         // which can lead to clumped / jittery MIDI clock when the process isn't foreground.
         // In that case, prefer immediate sending for better continuity.
-        if (! juce::Process::isForegroundProcess())
+        // Prefer immediate sending when:
+        // - the process is backgrounded (macOS may throttle helper threads), OR
+        // - the audio callback is arriving late (CPU pressure), OR
+        // - we simply want to avoid relying on a background sender thread.
+        if (! juce::Process::isForegroundProcess() || callbackLate)
             localOut->sendBlockOfMessagesNow(extClock);
         else
             localOut->sendBlockOfMessages(extClock, juce::Time::getMillisecondCounterHiRes(), currentSampleRate);
@@ -2506,9 +2571,9 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
         // Determine which bar this scheduled restart will fall into. If a pattern
         // previously requested a deferred restart for that bar, mark the deferred
         // match so the restart is applied (and consume the deferred request).
-        const long long scheduledRestartBar = computeCurrentBar(ppqStart + deltaQ + 1e-9, barLenQ);
+        scheduledRestartBar = computeCurrentBar(ppqStart + deltaQ + 1e-9, barLenQ);
         const long long pendingTarget = pendingPatternRestartTargetBar.load(std::memory_order_relaxed);
-        const bool deferredMatches = (pendingTarget >= 0 && pendingTarget == scheduledRestartBar);
+        deferredMatches = (pendingTarget >= 0 && pendingTarget == scheduledRestartBar);
         if (deferredMatches)
             pendingPatternRestartTargetBar.store(-1, std::memory_order_relaxed);
     }

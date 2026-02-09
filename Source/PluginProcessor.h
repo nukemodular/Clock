@@ -53,6 +53,11 @@ public:
 
     //==============================================================================
     juce::AudioProcessorValueTreeState& getAPVTS() { return parameters; }
+
+    // MIDI Remote input source selection (UI-controlled):
+    // - empty string => use host-provided MIDI (track input)
+    // - otherwise => CoreMIDI device identifier opened by the plugin
+    juce::String getMidiRemoteInDeviceId() const { return midiRemoteInDeviceId; }
     
     // One-shot trigger request from the editor: retrigger at next 1/16, then restart at next bar
     void requestTriggerOnce(); // (modified) schedule Start at next BAR + offset step (never mid-bar)
@@ -100,7 +105,6 @@ public:
     bool consumeUiHostStartPending() { return uiHostStartPending.exchange(false, std::memory_order_acq_rel); }
     // Consume a pending idx1 blink step set by pattern triggers (returns 1..16, or 0 if none)
     int consumeUiIdx1BlinkStep() { return uiBlinkIdx1Step.exchange(0, std::memory_order_acq_rel); }
-    
 
     // Legacy mode: when enabled we emit a MIDI Stop a few ticks before each scheduled Start
     // (trigger restart, bar restart, rate change) and gate MIDI clock pulses between the Stop
@@ -187,6 +191,10 @@ private:
     // Runtime state
     double currentSampleRate { 44100.0 };
     double samplesPerQuarter { 44100.0 * 60.0 / 120.0 };
+    // Audio-thread wall-clock tracking (ms) to detect when the host callback itself is arriving late.
+    // When the system is CPU-stressed, JUCE's timed MIDI sending (background thread) can be delayed,
+    // so we fall back to immediate sends to avoid extra deferral.
+    double lastClockBlockWallMs { -1.0 };
     bool lastWasPlaying { false };
     long long lastTickIndex { std::numeric_limits<long long>::min() };
     // Bar-aligned scheduling
@@ -381,6 +389,16 @@ private:
     std::atomic<bool> sppMode { false };
     std::atomic<bool> linearShuffleMode { false };
 
+    // MIDI Remote input device selection (persisted in APVTS state):
+    // empty => host MIDI (track input); non-empty => open CoreMIDI device
+    juce::String midiRemoteInDeviceId;
+    std::unique_ptr<juce::MidiInput> midiRemoteIn;
+    juce::MidiMessageCollector midiRemoteCollector;
+
+    void updateMidiRemoteInDevice();
+
+    void handleRemoteMidiMessage(const juce::MidiMessage& msg);
+
     // ValueTree listener callback
     void valueTreePropertyChanged(juce::ValueTree& treeWhosePropertyHasChanged, const juce::Identifier& property) override
     {
@@ -388,6 +406,11 @@ private:
             sppMode.store((bool)treeWhosePropertyHasChanged.getProperty(property), std::memory_order_relaxed);
         else if (property == juce::Identifier("ui.linearShuffleMode"))
             linearShuffleMode.store((bool)treeWhosePropertyHasChanged.getProperty(property), std::memory_order_relaxed);
+        else if (property == juce::Identifier("ui.midiRemoteInDeviceId"))
+        {
+            midiRemoteInDeviceId = treeWhosePropertyHasChanged.getProperty(property).toString();
+            updateMidiRemoteInDevice();
+        }
     }
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ClockSyncAudioProcessor)

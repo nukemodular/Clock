@@ -171,6 +171,12 @@ private:
     juce::TextButton nameMidiSwitch { "NAME" };
     // Sync Latch toggle
     juce::TextButton syncLatchButton { "SYNC" };
+
+    // MIDI Remote input selector button (opens popup window)
+    juce::TextButton midiInButton { "MIDI" };
+
+    // MIDI Remote input selector window (owned by the editor)
+    std::unique_ptr<juce::DocumentWindow> midiInWindow;
     // Name editor helper
     void toggleNameEditorOrCommit();
     // Small center-dot click toggle
@@ -218,6 +224,8 @@ private:
     bool setupSvgLoaded { false }; // diagnostic: true if assets/setup.svg loaded
 
     void updateSetupButtonImages();
+
+    void showMidiInWindow();
 
     // Editor-level hover text (overrides playground text when hovering editor controls)
     juce::String editorHoverText;

@@ -11,6 +11,7 @@
 #include "UiComponents.h"
 #include "HitRouting.h"
 #include <array>
+#include <vector>
 #include <optional>
 
 
@@ -130,6 +131,116 @@ namespace
         
     private:
         UiThemeColours& theme;
+    };
+
+    class MidiInRoutingComponent : public juce::Component
+    {
+    public:
+        explicit MidiInRoutingComponent(ClockSyncAudioProcessor& p)
+            : processor(p)
+        {
+            title.setText("Select MIDI Remote input", juce::dontSendNotification);
+            title.setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)));
+            title.setColour(juce::Label::textColourId, processor.theme.cyan());
+            addAndMakeVisible(title);
+
+            deviceBox.setJustificationType(juce::Justification::centred);
+            deviceBox.setColour(juce::ComboBox::outlineColourId, processor.theme.cyan());
+            deviceBox.setColour(juce::ComboBox::textColourId, processor.theme.cyan());
+            deviceBox.setColour(juce::ComboBox::backgroundColourId, processor.theme.base());
+            deviceBox.setColour(juce::ComboBox::arrowColourId, processor.theme.cyan());
+            addAndMakeVisible(deviceBox);
+
+            deviceBox.onChange = [this]()
+            {
+                const int idx = deviceBox.getSelectedItemIndex();
+                if (idx < 0)
+                    return;
+
+                auto& st = processor.getAPVTS().state;
+
+                // Index 0 is "Host/Track MIDI"
+                if (idx == 0)
+                {
+                    st.setProperty("ui.midiRemoteInDeviceId", juce::String(), nullptr);
+                    return;
+                }
+
+                const int devIdx = idx - 1;
+                if (devIdx >= 0 && devIdx < (int) devices.size())
+                    st.setProperty("ui.midiRemoteInDeviceId", devices[(size_t) devIdx].identifier, nullptr);
+            };
+
+            rebuildList();
+        }
+
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced(10);
+            title.setBounds(area.removeFromTop(18));
+            area.removeFromTop(8);
+            deviceBox.setBounds(area.removeFromTop(26));
+        }
+
+        void paint(juce::Graphics& g) override
+        {
+            g.fillAll(processor.theme.base());
+        }
+
+        void rebuildList()
+        {
+            deviceBox.clear();
+            devices.clear();
+            {
+                const auto arr = juce::MidiInput::getAvailableDevices();
+                devices.reserve((size_t) arr.size());
+                for (const auto& d : arr)
+                    devices.push_back(d);
+            }
+
+            int itemId = 1;
+            deviceBox.addItem("Host / Track MIDI", itemId++);
+
+            for (const auto& d : devices)
+                deviceBox.addItem(d.name, itemId++);
+
+            const auto wantId = processor.getMidiRemoteInDeviceId();
+            if (wantId.isEmpty())
+            {
+                deviceBox.setSelectedItemIndex(0, juce::dontSendNotification);
+                return;
+            }
+
+            int selectIndex = 0;
+            for (size_t i = 0; i < devices.size(); ++i)
+            {
+                if (devices[i].identifier == wantId)
+                {
+                    selectIndex = 1 + (int) i;
+                    break;
+                }
+            }
+            deviceBox.setSelectedItemIndex(selectIndex, juce::dontSendNotification);
+        }
+
+    private:
+        ClockSyncAudioProcessor& processor;
+        juce::Label title;
+        juce::ComboBox deviceBox;
+        std::vector<juce::MidiDeviceInfo> devices;
+    };
+
+    class MidiInRoutingWindow : public juce::DocumentWindow
+    {
+    public:
+        using juce::DocumentWindow::DocumentWindow;
+        std::function<void()> onClosed;
+
+        void closeButtonPressed() override
+        {
+            if (onClosed)
+                onClosed();
+        }
     };
 
     class MidiRemoteRow : public juce::Component
@@ -604,6 +715,13 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     }
     syncLatchAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         processor.getAPVTS(), ClockSyncAudioProcessor::paramSyncLatchEnabled, syncLatchButton);
+
+    // MIDI Remote input selector button
+    addAndMakeVisible(midiInButton);
+    midiInButton.setButtonText("MIDI");
+    midiInButton.setLookAndFeel(syncLatchLNF.get());
+    midiInButton.setClickingTogglesState(false);
+    midiInButton.onClick = [this] { showMidiInWindow(); };
 
     // Header switch toggle (created once)
     headerSwitchToggle = std::make_unique<HeaderSwitchToggle>(processor.theme);
@@ -1508,6 +1626,9 @@ void ClockSyncAudioProcessorEditor::resized()
     // Sync Latch Button (bottom left)
     syncLatchButton.setBounds(8, 216, 36, 16); 
 
+    // MIDI button (above GATE)
+    midiInButton.setBounds(8, 198, 36, 16);
+
     // Force absolute placement to keep toggle at exact design coordinates.
     if (headerSwitchToggle) {
         headerSwitchToggle->setBounds(286, 5, 10, 20);
@@ -1515,6 +1636,39 @@ void ClockSyncAudioProcessorEditor::resized()
         headerSwitchToggle->toFront(true);
         headerSwitchToggle->setAlwaysOnTop(true);
     }
+}
+
+void ClockSyncAudioProcessorEditor::showMidiInWindow()
+{
+    if (midiInWindow)
+    {
+        midiInWindow->toFront(true);
+        return;
+    }
+
+    auto safeThis = juce::Component::SafePointer<ClockSyncAudioProcessorEditor>(this);
+
+    auto* w = new MidiInRoutingWindow(
+        "MIDI",
+        processor.theme.base(),
+        juce::DocumentWindow::closeButton,
+        true);
+
+    w->setUsingNativeTitleBar(true);
+    w->setResizable(false, false);
+    w->setAlwaysOnTop(true);
+    w->setContentOwned(new MidiInRoutingComponent(processor), true);
+    w->centreAroundComponent(this, 260, 90);
+    w->setVisible(true);
+    w->toFront(true);
+
+    w->onClosed = [safeThis]()
+    {
+        if (safeThis)
+            safeThis->midiInWindow.reset();
+    };
+
+    midiInWindow.reset(w);
 }
 
 bool ClockSyncAudioProcessorEditor::keyPressed(const juce::KeyPress& key)
@@ -2280,6 +2434,7 @@ void ClockSyncAudioProcessorEditor::updateSetupButtonImages()
 ClockSyncAudioProcessorEditor::~ClockSyncAudioProcessorEditor()
 {
     processor.onThemeChanged = nullptr;
+    midiInWindow.reset();
     // Ensure vblank updater is destroyed before member animators go away
     vblankUpdater.reset();
     arrowDown.reset();
@@ -2287,6 +2442,8 @@ ClockSyncAudioProcessorEditor::~ClockSyncAudioProcessorEditor()
     refreshButton.setLookAndFeel(nullptr);
     nameBox.setLookAndFeel(nullptr);
     nameMidiSwitch.setLookAndFeel(nullptr);
+    syncLatchButton.setLookAndFeel(nullptr);
+    midiInButton.setLookAndFeel(nullptr);
     // Clear help button look-and-feel
     helpToggle.setLookAndFeel(nullptr);
 }
