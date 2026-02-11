@@ -14,12 +14,18 @@ DEFAULT_NOTARY_PROFILE="toolboy-audio"
 IDENTITY="${IDENTITY:-$DEFAULT_IDENTITY}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-$DEFAULT_NOTARY_PROFILE}"
 
-if [ -f "id/codesign_id.txt" ] && [ "$IDENTITY" = "$DEFAULT_IDENTITY" ]; then
-    IDENTITY="$(cat "id/codesign_id.txt")"
+# Optional directory containing helper text files:
+# - codesign_id.txt
+# - notary_profile.txt
+# You can point this at a folder outside the repo to avoid committing anything.
+ID_DIR="${ID_DIR:-id}"
+
+if [ -f "$ID_DIR/codesign_id.txt" ] && [ "$IDENTITY" = "$DEFAULT_IDENTITY" ]; then
+    IDENTITY="$(cat "$ID_DIR/codesign_id.txt")"
 fi
 
-if [ -f "id/notary_profile.txt" ] && [ "$NOTARY_PROFILE" = "$DEFAULT_NOTARY_PROFILE" ]; then
-    NOTARY_PROFILE="$(cat "id/notary_profile.txt")"
+if [ -f "$ID_DIR/notary_profile.txt" ] && [ "$NOTARY_PROFILE" = "$DEFAULT_NOTARY_PROFILE" ]; then
+    NOTARY_PROFILE="$(cat "$ID_DIR/notary_profile.txt")"
 fi
 
 STAGING_DIR="release_dmg_temp"

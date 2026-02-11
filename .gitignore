@@ -9,6 +9,9 @@
 # macOS disk images
 *.dmg
 
+# Local signing/notarization helper files (keep out of git)
+/id/
+
 # CMake generated files
 /CMakeFiles/
 /CMakeCache.txt
