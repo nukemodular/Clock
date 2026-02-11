@@ -58,7 +58,8 @@ if xcrun notarytool submit "$DMG_NAME" --keychain-profile "$NOTARY_PROFILE" --wa
     xcrun stapler staple "$DMG_NAME"
 else
     echo "Notarization failed. Please check your keychain profile '$NOTARY_PROFILE'."
-    echo "You can list profiles with: xcrun notarytool list-profiles"
+    echo "Create (or overwrite) the profile with: xcrun notarytool store-credentials '$NOTARY_PROFILE' ..."
+    echo "See available options via: xcrun notarytool help store-credentials"
     # Do not exit with error, just warn, so the DMG is still available
 fi
 
