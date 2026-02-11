@@ -5,8 +5,23 @@ set -e
 APP_NAME="toolBoy Clock v3"
 DMG_NAME="toolBoy_Clock_v3_Installer.dmg"
 VOL_NAME="toolBoy Clock v3 Installer"
-IDENTITY="Developer ID Application: Dominik Bohn (3J6FW877T8)"
-NOTARY_PROFILE="toolboy-notary" # Replace with your actual profile name if different
+
+# Allow overriding via environment variables, and optionally via local id/ files.
+# (Do NOT commit private keys/secrets.)
+DEFAULT_IDENTITY="Developer ID Application: Dominik Bohn (3J6FW877T8)"
+DEFAULT_NOTARY_PROFILE="toolboy-audio"
+
+IDENTITY="${IDENTITY:-$DEFAULT_IDENTITY}"
+NOTARY_PROFILE="${NOTARY_PROFILE:-$DEFAULT_NOTARY_PROFILE}"
+
+if [ -f "id/codesign_id.txt" ] && [ "$IDENTITY" = "$DEFAULT_IDENTITY" ]; then
+    IDENTITY="$(cat "id/codesign_id.txt")"
+fi
+
+if [ -f "id/notary_profile.txt" ] && [ "$NOTARY_PROFILE" = "$DEFAULT_NOTARY_PROFILE" ]; then
+    NOTARY_PROFILE="$(cat "id/notary_profile.txt")"
+fi
+
 STAGING_DIR="release_dmg_temp"
 
 echo "Starting packaging process..."
