@@ -17,9 +17,7 @@ public:
     HeaderSwitchToggle(UiThemeColours& t) : theme(t) { setSize(10, 20); }
     void paint(juce::Graphics& g) override {
         auto b = getLocalBounds().toFloat();
-        // Accent-coloured switch (requested)
-        g.setColour(theme.cyan().withAlpha(0.35f));
-        g.fillRect(b);
+        // Outline-only frame + indicator (no inner fill).
         g.setColour(theme.cyan());
         g.drawRect(b, 1.0f);
 
@@ -54,6 +52,39 @@ public:
     };
     void paint(juce::Graphics& g) override
     {
+        const auto middleEllipsize = [](const juce::String& s, const juce::Font& font, int maxWidth) -> juce::String
+        {
+            const auto stringWidthPx = [&font](const juce::String& str) -> int
+            {
+                juce::GlyphArrangement ga;
+                ga.addLineOfText(font, str, 0.0f, 0.0f);
+                return (int) std::ceil(ga.getBoundingBox(0, -1, true).getWidth());
+            };
+
+            if (maxWidth <= 0)
+                return {};
+
+            if (stringWidthPx(s) <= maxWidth)
+                return s;
+
+            const juce::String dots("...");
+            if (stringWidthPx(dots) >= maxWidth)
+                return dots;
+
+            const int len = s.length();
+            for (int keep = len; keep > 0; --keep)
+            {
+                const int prefix = (keep + 1) / 2;
+                const int suffix = keep / 2;
+                const int suffixStart = juce::jmax(0, len - suffix);
+                const juce::String cand = s.substring(0, prefix) + dots + s.substring(suffixStart);
+                if (stringWidthPx(cand) <= maxWidth)
+                    return cand;
+            }
+
+            return dots;
+        };
+
         // Draw combo background (no text) to avoid LookAndFeel text drawing
         auto bounds = getLocalBounds();
         g.setColour(theme.base());
@@ -112,8 +143,11 @@ public:
                 auto col = findColour(overlayTextColourId);
                 if (col.isTransparent()) col = findColour(juce::ComboBox::textColourId);
                 g.setColour(col);
-                g.setFont(juce::Font(juce::FontOptions("Arial", 13.0f, juce::Font::bold)));
-                g.drawFittedText(placeholder, getLocalBounds().reduced(6, 0), juce::Justification::centred, 1);
+                const auto font = juce::Font(juce::FontOptions("Arial", 13.0f, juce::Font::bold));
+                g.setFont(font);
+                const auto textArea = getLocalBounds().reduced(6, 0);
+                const auto txt = middleEllipsize(placeholder, font, textArea.getWidth());
+                g.drawText(txt, textArea, juce::Justification::centred, true);
             }
         }
         else
@@ -129,8 +163,11 @@ public:
                     auto col = findColour(overlayTextColourId);
                     if (col.isTransparent()) col = findColour(juce::ComboBox::textColourId);
                     g.setColour(col);
-                    g.setFont(juce::Font(juce::FontOptions("Arial", 13.0f, juce::Font::bold)));
-                    g.drawFittedText(t, getLocalBounds().reduced(6, 0), juce::Justification::centred, 1);
+                    const auto font = juce::Font(juce::FontOptions("Arial", 13.0f, juce::Font::bold));
+                    g.setFont(font);
+                    const auto textArea = getLocalBounds().reduced(6, 0);
+                    const auto txt = middleEllipsize(t, font, textArea.getWidth());
+                    g.drawText(txt, textArea, juce::Justification::centred, true);
                 }
             }
         }
@@ -406,13 +443,14 @@ public:
     void paint(juce::Graphics& g) override
     {
         auto b = getLocalBounds();
-        auto textArea = b.withTrimmedLeft(10);
+        // Leave enough room so the LED shadow isn't clipped by our own bounds.
+        auto textArea = b.withTrimmedLeft(12);
         g.setColour(theme.cyan());
         g.setFont(juce::Font(juce::FontOptions("Arial", 10.0f, juce::Font::bold)));
         g.drawFittedText(statusText, textArea, juce::Justification::centredLeft, 1);
 
         const float ledR = 3.0f;
-        auto cx = (float) (b.getX() + 2);
+        auto cx = (float) (b.getX() + 5);
         auto cy = (float) b.getCentreY();
         g.setColour(juce::Colours::black.withAlpha(0.5f));
         g.fillEllipse(cx - ledR - 1.5f, cy - ledR + 1.5f, ledR * 2.0f, ledR * 2.0f);

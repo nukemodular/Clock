@@ -59,12 +59,12 @@ namespace
         }
         juce::Font getLabelFont(juce::Label&) override
         {
-            return juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold));
+            return juce::Font(juce::FontOptions("Arial", 14.0f, juce::Font::bold));
         }
         juce::Label* createSliderTextBox(juce::Slider& slider) override
         {
             auto* l = new juce::Label();
-            l->setJustificationType(juce::Justification::centred);
+            l->setJustificationType(juce::Justification::centredLeft);
             l->setColour(juce::Label::textColourId, slider.findColour(juce::Slider::textBoxTextColourId));
             l->setColour(juce::Label::outlineColourId, slider.findColour(juce::Slider::textBoxOutlineColourId));
             l->setFont(getLabelFont(*l));
@@ -133,116 +133,6 @@ namespace
         UiThemeColours& theme;
     };
 
-    class MidiInRoutingComponent : public juce::Component
-    {
-    public:
-        explicit MidiInRoutingComponent(ClockSyncAudioProcessor& p)
-            : processor(p)
-        {
-            title.setText("Select MIDI Remote input", juce::dontSendNotification);
-            title.setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)));
-            title.setColour(juce::Label::textColourId, processor.theme.cyan());
-            addAndMakeVisible(title);
-
-            deviceBox.setJustificationType(juce::Justification::centred);
-            deviceBox.setColour(juce::ComboBox::outlineColourId, processor.theme.cyan());
-            deviceBox.setColour(juce::ComboBox::textColourId, processor.theme.cyan());
-            deviceBox.setColour(juce::ComboBox::backgroundColourId, processor.theme.base());
-            deviceBox.setColour(juce::ComboBox::arrowColourId, processor.theme.cyan());
-            addAndMakeVisible(deviceBox);
-
-            deviceBox.onChange = [this]()
-            {
-                const int idx = deviceBox.getSelectedItemIndex();
-                if (idx < 0)
-                    return;
-
-                auto& st = processor.getAPVTS().state;
-
-                // Index 0 is "Host/Track MIDI"
-                if (idx == 0)
-                {
-                    st.setProperty("ui.midiRemoteInDeviceId", juce::String(), nullptr);
-                    return;
-                }
-
-                const int devIdx = idx - 1;
-                if (devIdx >= 0 && devIdx < (int) devices.size())
-                    st.setProperty("ui.midiRemoteInDeviceId", devices[(size_t) devIdx].identifier, nullptr);
-            };
-
-            rebuildList();
-        }
-
-        void resized() override
-        {
-            auto area = getLocalBounds().reduced(10);
-            title.setBounds(area.removeFromTop(18));
-            area.removeFromTop(8);
-            deviceBox.setBounds(area.removeFromTop(26));
-        }
-
-        void paint(juce::Graphics& g) override
-        {
-            g.fillAll(processor.theme.base());
-        }
-
-        void rebuildList()
-        {
-            deviceBox.clear();
-            devices.clear();
-            {
-                const auto arr = juce::MidiInput::getAvailableDevices();
-                devices.reserve((size_t) arr.size());
-                for (const auto& d : arr)
-                    devices.push_back(d);
-            }
-
-            int itemId = 1;
-            deviceBox.addItem("Host / Track MIDI", itemId++);
-
-            for (const auto& d : devices)
-                deviceBox.addItem(d.name, itemId++);
-
-            const auto wantId = processor.getMidiRemoteInDeviceId();
-            if (wantId.isEmpty())
-            {
-                deviceBox.setSelectedItemIndex(0, juce::dontSendNotification);
-                return;
-            }
-
-            int selectIndex = 0;
-            for (size_t i = 0; i < devices.size(); ++i)
-            {
-                if (devices[i].identifier == wantId)
-                {
-                    selectIndex = 1 + (int) i;
-                    break;
-                }
-            }
-            deviceBox.setSelectedItemIndex(selectIndex, juce::dontSendNotification);
-        }
-
-    private:
-        ClockSyncAudioProcessor& processor;
-        juce::Label title;
-        juce::ComboBox deviceBox;
-        std::vector<juce::MidiDeviceInfo> devices;
-    };
-
-    class MidiInRoutingWindow : public juce::DocumentWindow
-    {
-    public:
-        using juce::DocumentWindow::DocumentWindow;
-        std::function<void()> onClosed;
-
-        void closeButtonPressed() override
-        {
-            if (onClosed)
-                onClosed();
-        }
-    };
-
     class MidiRemoteRow : public juce::Component
     {
     public:
@@ -261,6 +151,8 @@ namespace
             label.setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)));
             label.setColour(juce::Label::textColourId, theme.cyan());
             label.setJustificationType(juce::Justification::centredRight);
+            // Avoid "squashed" text when space is tight: don't allow horizontal scaling.
+            label.setMinimumHorizontalScale(1.0f);
             addAndMakeVisible(label);
 
             if (typeIsCc != nullptr && (fixedType == Note || fixedType == CC))
@@ -328,6 +220,11 @@ namespace
         {
             valueSlider.setLookAndFeel(nullptr);
         }
+        juce::Rectangle<int> getValueBoxBounds() const { return valueSlider.getBounds(); }
+        juce::Rectangle<int> getTypeToggleBounds() const
+        {
+            return typeToggle ? typeToggle->getBounds() : juce::Rectangle<int>();
+        }
 
         void resized() override
         {
@@ -350,18 +247,21 @@ namespace
             // Total width needed = 52
             
             const bool hasTypeToggle = (typeToggle != nullptr);
-            auto controlsArea = area.removeFromRight(hasTypeToggle ? 74 : 60);
+            // Keep the control cluster compact but ensure it doesn't overflow (switch must fit).
+            // NOTE: For rows without the NOTE/CC toggle, the +/- cluster needs 57px
+            // (incBtn ends at x + 57). Using 55px clips the '+' by ~2px.
+            auto controlsArea = area.removeFromRight(hasTypeToggle ? 70 : 57);
             int x = controlsArea.getX();
 
             // Controls order: '-', value, '+', then NOTE/CC switch (requested)
-            decBtn.setBounds(x, y, btnW, btnH);
-            valueSlider.setBounds(x + 9, y, boxW, boxH);
-            incBtn.setBounds(x + 49, y, btnW, btnH);
+            decBtn.setBounds(x - 1, y, btnW, btnH);
+            valueSlider.setBounds(x + 8, y, boxW, boxH);
+            incBtn.setBounds(x + 47, y, btnW, btnH);
 
             if (hasTypeToggle)
             {
                 // Place directly after '+' with a small gap
-                typeToggle->setBounds(x + 63, y, 10, btnH);
+                typeToggle->setBounds(x + 60, y, 10, btnH);
             }
             
             // Label takes the rest
@@ -407,7 +307,7 @@ namespace
     {
     public:
         MidiRemoteSetupComponent(ClockSyncAudioProcessor& p)
-            : theme(p.theme),
+            : processor(p), theme(p.theme),
                             startRow("START", MidiRemoteRow::Note, p.midiRemoteStart, p.theme, MidiRemoteRow::Compact, &p.midiRemoteStartIsCC),
                             stopRow("STOP", MidiRemoteRow::Note, p.midiRemoteStop, p.theme, MidiRemoteRow::Compact, &p.midiRemoteStopIsCC),
               offsetRow("OFFSET", MidiRemoteRow::CC, p.midiRemoteOffset, p.theme),
@@ -420,15 +320,15 @@ namespace
                             channelValue(p.midiRemoteChannel),
                             channelLnf(p.theme)
         {
-            titleLabel.setText("MIDI CONTROL       CH:", juce::dontSendNotification);
+            titleLabel.setText("MIDI CONTROL  CHANNEL", juce::dontSendNotification);
             titleLabel.setFont(juce::Font(juce::FontOptions("Arial", 14.0f, juce::Font::bold)));
             titleLabel.setColour(juce::Label::textColourId, theme.cyan());
-            titleLabel.setJustificationType(juce::Justification::centredRight);
+            titleLabel.setJustificationType(juce::Justification::centred);
             addAndMakeVisible(titleLabel);
 
             // Channel Slider
             channelSlider.setSliderStyle(juce::Slider::LinearBar);
-            channelSlider.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 20, 20);
+            channelSlider.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 24, 20);
             channelSlider.setRange(1, 16, 1);
             channelSlider.setLookAndFeel(&channelLnf);
             channelSlider.setColour(juce::Slider::textBoxTextColourId, theme.accent());
@@ -447,11 +347,62 @@ namespace
             addAndMakeVisible(resyncRow);
             addAndMakeVisible(gatedSyncRow);
             addAndMakeVisible(autoFillRow);
+
+            // Dedicated LNF: no arrow/button width + middle-ellipsis text.
+            remotePortLnf = std::make_unique<RemotePortComboLNF>(theme);
+
+            // REMOTE PORT selector (embedded here; replaces the old popup window)
+            remotePortBox.setJustificationType(juce::Justification::centred);
+            remotePortBox.setColour(juce::ComboBox::outlineColourId, theme.cyan());
+            remotePortBox.setColour(juce::ComboBox::backgroundColourId, theme.base());
+            // Hide the internal label text; we draw it ourselves in the LNF.
+            remotePortBox.setColour(juce::ComboBox::textColourId, juce::Colours::transparentBlack);
+            // No arrow (and no reserved arrow space).
+            remotePortBox.setColour(juce::ComboBox::arrowColourId, juce::Colours::transparentBlack);
+            remotePortBox.setLookAndFeel(remotePortLnf.get());
+            addAndMakeVisible(remotePortBox);
+
+            remotePortLabel.setText("REMOTE PORT", juce::dontSendNotification);
+            remotePortLabel.setFont(juce::Font(juce::FontOptions("Arial", 10.0f, juce::Font::bold)));
+            remotePortLabel.setColour(juce::Label::textColourId, theme.cyan());
+            remotePortLabel.setJustificationType(juce::Justification::centred);
+            addAndMakeVisible(remotePortLabel);
+
+            noteCcLabel.setText("NOTE/CC", juce::dontSendNotification);
+            noteCcLabel.setFont(juce::Font(juce::FontOptions("Arial", 10.0f, juce::Font::bold)));
+            noteCcLabel.setColour(juce::Label::textColourId, theme.cyan());
+            noteCcLabel.setJustificationType(juce::Justification::centred);
+            addAndMakeVisible(noteCcLabel);
+
+            addAndMakeVisible(noteCcTriangle);
+
+            remotePortBox.onChange = [this]()
+            {
+                const int idx = remotePortBox.getSelectedItemIndex();
+                if (idx < 0)
+                    return;
+
+                auto& st = processor.getAPVTS().state;
+
+                // Index 0 is "Host/Track MIDI"
+                if (idx == 0)
+                {
+                    st.setProperty("ui.midiRemoteInDeviceId", juce::String(), nullptr);
+                    return;
+                }
+
+                const int devIdx = idx - 1;
+                if (devIdx >= 0 && devIdx < (int) remoteDevices.size())
+                    st.setProperty("ui.midiRemoteInDeviceId", remoteDevices[(size_t) devIdx].identifier, nullptr);
+            };
+
+            rebuildRemotePortList();
         }
 
         ~MidiRemoteSetupComponent() override
         {
             channelSlider.setLookAndFeel(nullptr);
+            remotePortBox.setLookAndFeel(nullptr);
         }
 
         void paint(juce::Graphics& g) override
@@ -465,7 +416,8 @@ namespace
 
         void resized() override
         {
-            auto area = getLocalBounds().reduced(8, 8);
+            // Keep padding minimal so labels/buttons don't clip.
+            auto area = getLocalBounds().reduced(6, 8);
             
             // Header row (Title + Channel)
             auto headerRow = area.removeFromTop(24);
@@ -479,15 +431,35 @@ namespace
             int totalW = labelW + sliderW;
             int startX = (headerRow.getWidth() - totalW) / 2;
             
-            titleLabel.setBounds(headerRow.getX() + startX, headerRow.getY(), labelW, headerRow.getHeight());
-            channelSlider.setBounds(titleLabel.getRight(), headerRow.getY(), sliderW, headerRow.getHeight());
+            titleLabel.setBounds(headerRow.getX() + startX + 10, headerRow.getY(), labelW, headerRow.getHeight());
+            // Requested: nudge the channel number box left.
+            channelSlider.setBounds(titleLabel.getRight() - 5, headerRow.getY(), sliderW, headerRow.getHeight());
             
             // Gap + extra shift requested
             area.removeFromTop(10);
 
-            // 2 Columns with bigger gap
-            auto leftCol = area.removeFromLeft(area.getWidth() / 2).reduced(10, 0);
-            auto rightCol = area.reduced(10, 0);
+            // 2 Columns (fixed widths in base coordinates)
+            // Prefer a wider right column (it was getting clipped on the right).
+            constexpr int kLeftColW  = 150;
+            constexpr int kRightColW = 150;
+            constexpr int kMinGapW   = 4;
+
+            auto cols = area;
+            const int availW = cols.getWidth();
+
+            // If there isn't enough width for both target columns, shrink the left column first.
+            constexpr int kMinLeftColW = 120;
+            const int rightW = juce::jlimit(0, availW,
+                                            juce::jmin(kRightColW, juce::jmax(0, availW - kMinGapW - kMinLeftColW)));
+            const int leftW  = juce::jlimit(0, availW, juce::jmin(kLeftColW, juce::jmax(0, availW - kMinGapW - rightW)));
+
+            auto rightCol = cols.removeFromRight(rightW);
+            cols.removeFromRight(juce::jmin(kMinGapW, cols.getWidth()));
+            auto leftCol  = cols.removeFromLeft(leftW);
+
+            // Column nudges (requested): left column +5 relative to previous; right column -5 additional.
+            leftCol = leftCol.translated(0, 0);
+            rightCol = rightCol.translated(-10, 0);
             
             int h = 24;
             int gap = 4;
@@ -511,16 +483,298 @@ namespace
             clockDivRow.setBounds(rightCol.removeFromTop(h));
             rightCol.removeFromTop(gap);
             autoFillRow.setBounds(rightCol.removeFromTop(h));
+
+            // REMOTE PORT combobox: under AUTOFILL
+            rightCol.removeFromTop(6);
+            // Match GATE numfield height (MidiRemoteRow value box is 20px tall)
+            const int comboH = 20;
+            remotePortBox.setBounds(rightCol.removeFromTop(comboH));
+            // Trim 20px from the left side (gain space alignment as requested)
+            {
+                auto r = remotePortBox.getBounds();
+                const int trimL = 20;
+                const int newW = juce::jmax(1, r.getWidth() - trimL);
+                remotePortBox.setBounds(r.getX() + trimL, r.getY(), newW, r.getHeight());
+            }
+            const auto labelLine = rightCol.removeFromTop(12);
+            remotePortLabel.setBounds(labelLine);
+
+            // Under the NOTE/CC switches:
+            // - small up-pointing triangle (same line as REMOTE PORT label)
+            // - NOTE/CC label below the triangle (next line)
+            {
+                const auto gateToggle = gatedSyncRow.getTypeToggleBounds()
+                                             .translated(gatedSyncRow.getX(), gatedSyncRow.getY());
+                if (! gateToggle.isEmpty())
+                {
+                    const int triW = 10;
+                    const int triH = 6;
+                    const int cx = gateToggle.getCentreX();
+                    noteCcTriangle.setBounds(cx - triW / 2,
+                                             labelLine.getY() + (labelLine.getHeight() - triH) / 2,
+                                             triW,
+                                             triH);
+                    noteCcTriangle.setVisible(true);
+
+                    const auto noteLine = rightCol.removeFromTop(12);
+                    juce::Font f(juce::FontOptions("Arial", 10.0f, juce::Font::bold));
+                    juce::GlyphArrangement ga;
+                    ga.addLineOfText(f, noteCcLabel.getText(), 0.0f, 0.0f);
+                    const int textW = (int) std::ceil(ga.getBoundingBox(0, -1, true).getWidth());
+                    const int labelW = juce::jlimit(24, 64, textW + 6);
+                    noteCcLabel.setBounds(cx - labelW / 2, noteLine.getY(), labelW, noteLine.getHeight());
+                    noteCcLabel.setVisible(true);
+                }
+                else
+                {
+                    noteCcTriangle.setVisible(false);
+                    noteCcLabel.setVisible(false);
+                }
+            }
         }
 
     private:
+        struct RemotePortComboLNF final : public juce::LookAndFeel_V4
+        {
+            explicit RemotePortComboLNF(UiThemeColours& t) : theme(t)
+            {
+                setColour(juce::PopupMenu::backgroundColourId, theme.base());
+                setColour(juce::PopupMenu::textColourId, theme.cyan());
+                setColour(juce::PopupMenu::highlightedBackgroundColourId, theme.cyan());
+                setColour(juce::PopupMenu::highlightedTextColourId, theme.base());
+            }
+
+            void positionComboBoxText (juce::ComboBox& box, juce::Label& labelToPosition) override
+            {
+                // Fill the full component width so JUCE's internal "button" area becomes 0px.
+                labelToPosition.setBounds (box.getLocalBounds());
+                labelToPosition.setFont (getComboBoxFont (box));
+            }
+
+            static juce::String middleEllipsize(const juce::String& s, const juce::Font& font, int maxWidth)
+            {
+                const auto stringWidthPx = [&font](const juce::String& str) -> int
+                {
+                    juce::GlyphArrangement ga;
+                    ga.addLineOfText(font, str, 0.0f, 0.0f);
+                    return (int) std::ceil(ga.getBoundingBox(0, -1, true).getWidth());
+                };
+
+                if (maxWidth <= 0)
+                    return {};
+
+                if (stringWidthPx(s) <= maxWidth)
+                    return s;
+
+                const juce::String dots("...");
+                if (stringWidthPx(dots) >= maxWidth)
+                    return dots;
+
+                const int len = s.length();
+                for (int keep = len; keep > 0; --keep)
+                {
+                    const int prefix = (keep + 1) / 2;
+                    const int suffix = keep / 2;
+                    const int suffixStart = juce::jmax(0, len - suffix);
+                    const juce::String cand = s.substring(0, prefix) + dots + s.substring(suffixStart);
+                    if (stringWidthPx(cand) <= maxWidth)
+                        return cand;
+                }
+
+                return dots;
+            }
+
+            void drawComboBox(juce::Graphics& g, int w, int h, bool, int, int, int, int, juce::ComboBox& box) override
+            {
+                auto bounds = juce::Rectangle<int>(0, 0, w, h);
+
+                g.setColour(box.findColour(juce::ComboBox::backgroundColourId));
+                g.fillRoundedRectangle(bounds.toFloat(), 3.0f);
+
+                g.setColour(box.findColour(juce::ComboBox::outlineColourId));
+                g.drawRoundedRectangle(bounds.toFloat().reduced(0.5f), 3.0f, 1.5f);
+
+                const auto textBounds = bounds.reduced(4);
+                const auto font = getComboBoxFont(box);
+                const auto txt = middleEllipsize(box.getText(), font, textBounds.getWidth());
+
+                g.setColour(theme.cyan());
+                g.setFont(font);
+                g.drawText(txt, textBounds, juce::Justification::centred, false);
+            }
+
+            juce::Font getComboBoxFont(juce::ComboBox&) override
+            {
+                return juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold));
+            }
+
+            juce::Font getPopupMenuFont() override
+            {
+                return juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold));
+            }
+
+            void drawPopupMenuBackground(juce::Graphics& g, int w, int h) override
+            {
+                g.fillAll(theme.base());
+                g.setColour(theme.cyan());
+                g.drawRect(juce::Rectangle<int>(0, 0, w, h));
+            }
+
+            void drawPopupMenuItem(juce::Graphics& g,
+                                   const juce::Rectangle<int>& area,
+                                   const bool isSeparator,
+                                   const bool isActive,
+                                   const bool isHighlighted,
+                                   const bool isTicked,
+                                   const bool /*hasSubMenu*/,
+                                   const juce::String& text,
+                                   const juce::String& /*shortcutKeyText*/,
+                                   const juce::Drawable* /*icon*/,
+                                   const juce::Colour* /*textColour*/) override
+            {
+                if (isSeparator)
+                {
+                    const int y = area.getCentreY();
+                    g.setColour(theme.cyan().withAlpha(0.6f));
+                    g.drawLine((float)area.getX() + 6.0f, (float)y, (float)area.getRight() - 6.0f, (float)y, 1.0f);
+                    return;
+                }
+
+                auto r = area.reduced(2, 0);
+                if (isHighlighted)
+                {
+                    g.setColour(theme.cyan());
+                    g.fillRect(r);
+                }
+
+                const auto font = getPopupMenuFont();
+                g.setFont(font);
+
+                juce::Colour fg = isHighlighted ? theme.base() : theme.cyan();
+                if (! isActive)
+                    fg = fg.withAlpha(0.45f);
+                g.setColour(fg);
+
+                auto textArea = r.reduced(8, 0);
+
+                // Optional tick indicator (kept minimal; only base/cyan).
+                if (isTicked)
+                {
+                    const int box = 6;
+                    const int cx = textArea.getX();
+                    const int cy = textArea.getCentreY() - box / 2;
+                    juce::Rectangle<int> tickBox(cx, cy, box, box);
+                    g.drawRect(tickBox);
+                    textArea.removeFromLeft(box + 6);
+                }
+
+                g.drawText(text, textArea, juce::Justification::centredLeft, true);
+            }
+
+            UiThemeColours& theme;
+        };
+
+        struct UpTriangle final : public juce::Component
+        {
+            explicit UpTriangle(UiThemeColours& t) : theme(t) {}
+
+            void paint(juce::Graphics& g) override
+            {
+                auto b = getLocalBounds().toFloat();
+                juce::Path p;
+                p.startNewSubPath(b.getCentreX(), b.getY());
+                p.lineTo(b.getRight(), b.getBottom());
+                p.lineTo(b.getX(), b.getBottom());
+                p.closeSubPath();
+                g.setColour(theme.cyan().withAlpha(0.9f));
+                g.fillPath(p);
+            }
+
+            UiThemeColours& theme;
+        };
+
+        void rebuildRemotePortList()
+        {
+            remotePortBox.clear();
+            remoteDevices.clear();
+
+            const auto arr = juce::MidiInput::getAvailableDevices();
+            remoteDevices.reserve((size_t) arr.size());
+            for (const auto& d : arr)
+                remoteDevices.push_back(d);
+
+            int itemId = 1;
+            remotePortBox.addItem("Host / Track MIDI", itemId++);
+            for (const auto& d : remoteDevices)
+                remotePortBox.addItem(d.name, itemId++);
+
+            const auto wantId = processor.getMidiRemoteInDeviceId();
+            if (wantId.isEmpty())
+            {
+                remotePortBox.setSelectedItemIndex(0, juce::dontSendNotification);
+                return;
+            }
+
+            int selectIndex = 0;
+            for (size_t i = 0; i < remoteDevices.size(); ++i)
+            {
+                if (remoteDevices[i].identifier == wantId)
+                {
+                    selectIndex = 1 + (int) i;
+                    break;
+                }
+            }
+            remotePortBox.setSelectedItemIndex(selectIndex, juce::dontSendNotification);
+        }
+
+        ClockSyncAudioProcessor& processor;
         UiThemeColours& theme;
         juce::Label titleLabel;
         std::atomic<int>& channelValue;
         juce::Slider channelSlider;
         MidiChannelLNF channelLnf;
         MidiRemoteRow startRow, stopRow, offsetRow, shuffleRow, clockDivRow, triggerRow, resyncRow, gatedSyncRow, autoFillRow;
+
+        juce::ComboBox remotePortBox;
+        juce::Label remotePortLabel;
+        juce::Label noteCcLabel;
+        UpTriangle noteCcTriangle { theme };
+        std::vector<juce::MidiDeviceInfo> remoteDevices;
+        std::unique_ptr<RemotePortComboLNF> remotePortLnf;
     };
+}
+
+
+class ClockEditorPaintLayer final : public juce::Component
+{
+public:
+    enum class Kind { Backdrop, OverlayBg, HeaderBg, OverlayFg };
+
+    ClockEditorPaintLayer(ClockSyncAudioProcessorEditor& e, Kind k) : editor(e), kind(k)
+    {
+        setInterceptsMouseClicks(false, false);
+        setOpaque(false);
+    }
+
+    void paint(juce::Graphics& g) override
+    {
+        switch (kind)
+        {
+            case Kind::Backdrop:  editor.paintBackdropLayer(g); break;
+            case Kind::OverlayBg: editor.paintOverlayBackgroundLayer(g); break;
+            case Kind::HeaderBg:  editor.paintHeaderBackgroundLayer(g); break;
+            case Kind::OverlayFg: editor.paintOverlayForegroundLayer(g); break;
+        }
+    }
+
+private:
+    ClockSyncAudioProcessorEditor& editor;
+    Kind kind;
+};
+
+namespace
+{
+    static constexpr int kMaxScaleFactor = 6; // sensible upper bound for hosts that support large editors
 }
 
 
@@ -529,12 +783,31 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     : juce::AudioProcessorEditor(&p), processor(p), 
       deviceBox(p.theme), nameBox(p.theme),
       clickButton(p.theme), idleClockToggle(p.theme), helpToggle(p.theme),
-      colorPaletteToggle(p.theme)
+    colorPaletteToggle(p.theme)
 {
-    setResizable(false, false);
-    setResizeLimits(300, 240, 300, 240);
-    setSize(300, 240);
+    // Scalable editor: allow resizing but keep a fixed aspect ratio (no stretching).
+    // Keep scaling, but remove the bottom-right corner resizer graphic.
+    setResizable(true, false);
+    setResizeLimits(kBaseW, kBaseH, kBaseW * kMaxScaleFactor, kBaseH * kMaxScaleFactor);
+    if (auto* c = getConstrainer())
+        c->setFixedAspectRatio((double) kBaseW / (double) kBaseH);
+    setSize(kBaseW, kBaseH);
     startTimerHz(60);
+
+    // Root container: all UI children are reparented into this so we can scale uniformly.
+    addAndMakeVisible(uiRoot);
+    uiRoot.setInterceptsMouseClicks(false, true);
+    uiRoot.setBounds(0, 0, kBaseW, kBaseH);
+
+    // Scalable paint layers (inside uiRoot)
+    backdropLayer  = std::make_unique<ClockEditorPaintLayer>(*this, ClockEditorPaintLayer::Kind::Backdrop);
+    overlayBgLayer = std::make_unique<ClockEditorPaintLayer>(*this, ClockEditorPaintLayer::Kind::OverlayBg);
+    headerBgLayer  = std::make_unique<ClockEditorPaintLayer>(*this, ClockEditorPaintLayer::Kind::HeaderBg);
+    overlayFgLayer = std::make_unique<ClockEditorPaintLayer>(*this, ClockEditorPaintLayer::Kind::OverlayFg);
+    uiRoot.addAndMakeVisible(*backdropLayer);
+    uiRoot.addAndMakeVisible(*overlayBgLayer);
+    uiRoot.addAndMakeVisible(*headerBgLayer);
+    uiRoot.addAndMakeVisible(*overlayFgLayer);
 
     themeLNF = std::make_unique<ThemeLNF>(processor.theme);
     syncLatchLNF = std::make_unique<SyncLatchLNF>(processor.theme);
@@ -716,12 +989,6 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     syncLatchAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         processor.getAPVTS(), ClockSyncAudioProcessor::paramSyncLatchEnabled, syncLatchButton);
 
-    // MIDI Remote input selector button
-    addAndMakeVisible(midiInButton);
-    midiInButton.setButtonText("MIDI");
-    midiInButton.setLookAndFeel(syncLatchLNF.get());
-    midiInButton.setClickingTogglesState(false);
-    midiInButton.onClick = [this] { showMidiInWindow(); };
 
     // Header switch toggle (created once)
     headerSwitchToggle = std::make_unique<HeaderSwitchToggle>(processor.theme);
@@ -734,10 +1001,39 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     headerSwitchToggle->setAlwaysOnTop(true);
     // Toggle behaviour: adjust editor canvas height and arrow visibility
     headerSwitchToggle->onToggle = [this](bool on){
-        if (arrowDown) arrowDown->setVisible(on && (setupSubmenuTargetOn || setupSubmenuProgress > 0.0f));
-        int baseH = on ? 240 : 30;
-        int extra = (!on && (setupSubmenuTargetOn || setupSubmenuProgress > 0.0f)) ? (int) std::round(setupSubmenuProgress * 25.0f) : 0;
-        setSize(getWidth(), baseH + extra);
+        canvasExpanded = on;
+
+        // Keep visual affordances consistent
+        if (arrowDown)
+            arrowDown->setVisible((setupSubmenuTargetOn || setupSubmenuProgress > 0.0f) && on);
+
+        // Show/hide canvas-heavy content when compact
+        if (playgroundComp) playgroundComp->setVisible(on);
+        if (svgDancer) svgDancer->setVisible(on);
+        syncLatchButton.setVisible(on);
+        idleClockToggle.setVisible(on);
+
+        const bool submenuActive = (setupSubmenuTargetOn || setupSubmenuProgress > 0.0f);
+        const int effectiveBaseH = on ? kBaseH : (kHeaderBaseH + (submenuActive ? kCompactExtraH : 0));
+
+        // Lock aspect ratio per-mode: expanded uses 300x240, compact uses 300x(30 [+25])
+        if (auto* c = getConstrainer())
+        {
+            c->setFixedAspectRatio((double) kBaseW / (double) effectiveBaseH);
+            // Update size limits per-mode so compact doesn't force a super-wide window.
+            c->setSizeLimits(kBaseW,
+                             effectiveBaseH,
+                             kBaseW * kMaxScaleFactor,
+                             effectiveBaseH * kMaxScaleFactor);
+        }
+
+        // Preserve the current width; compute height from ratio so the host doesn't stretch
+        const double scaleFromWidth = (double) getWidth() / (double) kBaseW;
+        const int targetH = (int) std::round((double) effectiveBaseH * scaleFromWidth);
+        setSize(getWidth(), juce::jmax(1, targetH));
+
+        resized();
+        repaint();
     };
     // Header visibility handled centrally via updateHeaderVisibility()
     // Ensure pulseWidthValueLabel is always constructed before use
@@ -1072,12 +1368,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
             if (playgroundComp) { playgroundComp->setExternalHoverBlocked(active); if (!active) playgroundComp->clearForcedHoverIndex(); }
             // Arrow visibility depends on header toggle: hide arrowDown when headerSwitchToggle is OFF
             if (arrowDown) arrowDown->setVisible(active && (!headerSwitchToggle || headerSwitchToggle->getToggleState()));
-            // Animate canvas height along with submenu slide: when header toggle is ON, base height is 240 and submenu adds 0; when OFF base is 30 and submenu adds up to 30px
-            int baseH = (headerSwitchToggle && headerSwitchToggle->getToggleState()) ? 240 : 30;
-            int extraH = (headerSwitchToggle && headerSwitchToggle->getToggleState()) ? 0 : 25;
-            int newH = baseH + (int) std::round(setupSubmenuProgress * (float) extraH);
-            if (newH != getHeight()) setSize(getWidth(), newH);
-            repaint(0,0,getWidth(),80);
+            repaint();
         }).build());
     vblankUpdater = std::make_unique<juce::VBlankAnimatorUpdater>(this);
     vblankUpdater->addAnimator(*setupAnimator);
@@ -1212,17 +1503,19 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
                 {
                     setupOverlayComp = std::make_unique<MidiRemoteSetupComponent>(processor);
                     setupOverlayComp->setInterceptsMouseClicks(true, true); // consume clicks
-                    addAndMakeVisible(*setupOverlayComp);
-                    setupOverlayComp->toFront(true);
+                    uiRoot.addAndMakeVisible(*setupOverlayComp);
+                    setupOverlayComp->setAlwaysOnTop(true);
                 }
                 // Position overlay comp to match visual overlay rect
                 const int overlayW = 295;
                 const int overlayH = 205;
                 const int headerH = 30;
-                const int canvasH = juce::jmax(0, getHeight() - headerH);
-                const int x = (getWidth() - overlayW) / 2;
+                const int canvasH = juce::jmax(0, kBaseH - headerH);
+                const int x = (kBaseW - overlayW) / 2;
                 const int y = headerH + (canvasH - overlayH) / 2;
                 setupOverlayComp->setBounds(x, y, overlayW, overlayH);
+                setupOverlayComp->toFront(true);
+                if (setupCornerButton) setupCornerButton->toFront(true);
             }
             else
             {
@@ -1234,6 +1527,63 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     // Setup corner button placement handled in resized(); visibility centralized.
     if (setupCornerButton) setupCornerButton->toFront(true);
 
+    // Reparent our UI children into uiRoot (keep the resizer corner component as a direct child).
+    {
+        std::vector<juce::Component*> children;
+        children.reserve((size_t) getNumChildComponents());
+        for (int i = 0; i < getNumChildComponents(); ++i)
+            children.push_back(getChildComponent(i));
+
+        for (auto* c : children)
+        {
+            if (c == nullptr) continue;
+            if (c == &uiRoot) continue;
+            if (dynamic_cast<juce::ResizableCornerComponent*>(c) != nullptr) continue;
+            if (dynamic_cast<juce::ResizableBorderComponent*>(c) != nullptr) continue;
+            uiRoot.addAndMakeVisible(*c);
+        }
+
+        // Ensure paint layers are ordered correctly:
+        // Back -> Front: backdrop, playground, submenuBg, help/?/palette (behind), submenu controls,
+        // headerBg (covers submenu under header), header controls, overlayFg, gear.
+        if (overlayBgLayer && playgroundComp)
+            playgroundComp->toBehind(overlayBgLayer.get());
+        if (backdropLayer && playgroundComp)
+            backdropLayer->toBehind(playgroundComp.get());
+        if (headerBgLayer)
+            headerBgLayer->toFront(false);
+        if (overlayFgLayer)
+            overlayFgLayer->toFront(false);
+
+        // Things that should be covered by the submenu when it's out:
+        if (overlayBgLayer)
+        {
+            helpToggle.toBehind(overlayBgLayer.get());
+            colorPaletteToggle.toBehind(overlayBgLayer.get());
+        }
+
+        // Submenu controls must be above submenu background but behind the header background.
+        if (headerBgLayer)
+        {
+            idleModeButton.toBehind(headerBgLayer.get());
+            legacyModernButton.toBehind(headerBgLayer.get());
+            sppButton.toBehind(headerBgLayer.get());
+            if (pulseWidthSlider) pulseWidthSlider->toBehind(headerBgLayer.get());
+            if (pulseWidthValueLabel) pulseWidthValueLabel->toBehind(headerBgLayer.get());
+            if (arrowDown) arrowDown->toBehind(headerBgLayer.get());
+        }
+
+        // Header controls should be on top of the header background.
+        refreshButton.toFront(true);
+        deviceBox.toFront(true);
+        nameBox.toFront(true);
+        nameMidiSwitch.toFront(true);
+        setupButton.toFront(true);
+        if (statusBar) statusBar->toFront(true);
+        if (headerSwitchToggle) headerSwitchToggle->toFront(true);
+        if (setupCornerButton) setupCornerButton->toFront(true);
+    }
+
     // Centralize initial visibility and layout.
     updateHeaderVisibility();
     resized();
@@ -1242,39 +1592,8 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
 
 void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    g.fillAll (processor.theme.accent());
-    auto bounds = getLocalBounds().toFloat();
-    // juce::ColourGradient bgGrad(processor.theme.base(), bounds.getTopLeft(), processor.theme.base().darker(0.12f), bounds.getBottomLeft(), false);
-    // g.setGradientFill(bgGrad); 
-    g.setColour (processor.theme.accent().darker(0.9f) );
-    g.fillRect(bounds);
-    // Decorative backdrop circles
-    {
-        auto centre = bounds.getCentre();
-        const auto& sizes = UiLayout::kBackdropSizes;
-        for (size_t i = 0; i < sizes.size(); ++i)
-        {
-            const float baseSz = (float) sizes[i];
-            //const float darkFactor = 0.888f + 0.888f * (float) i;
-            const float alphaFactor = 0.1f * (float) i;
-            const float progress = backdropPulseProgress[i];
-            const float extraScale = backdropPulseScale[i] * progress;
-            const float sz = baseSz * (UiLayout::kBackdropMultiplier + extraScale);
-            //juce::Colour col = processor.theme.accent().darker(darkFactor);
-            juce::Colour col = processor.theme.base().withAlpha(alphaFactor);
-            juce::Rectangle<float> rc(centre.x - sz * 0.5f, centre.y - sz * 0.5f + 10.0f, sz, sz);
-            g.setColour(col); g.fillEllipse(rc);
-        }
-        // Hide dancer while pattern edit mode is active to reduce visual clutter.
-        // if (!patternEditMode)
-        //    drawDancer(g);
-        // Run-state indicator is now drawn by the PlaygroundComponent so it can
-        // sit between the dancer and the ring wedges with correct z-order. The
-        // editor no longer draws it here to avoid duplicate/ misplaced renders.
-    }
-    // Build number drawing moved to paintOverChildren to ensure visibility
-
-    // Pattern ring drawn in paintOverChildren when edit mode active (to appear above playground).
+    // All custom painting is handled by scalable paint layers inside uiRoot.
+    g.fillAll(processor.theme.accent().darker(0.9f));
 }
 
 // --- Unified HitRouting helpers ---
@@ -1304,156 +1623,7 @@ HitResult ClockSyncAudioProcessorEditor::routeHit(const juce::MouseEvent& e, boo
 
 void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
 {
-    // Hover Text: render above base/content but below submenu/header
-    // Hide hover text if setup overlay is visible
-    if (!setupOverlayVisible)
-    {
-        const int y = 30; // just under the 30px header
-        const int h = 16;
-        
-        juce::String hoverText = editorHoverText;
-        if (hoverText.isEmpty() && playgroundComp && playgroundComp->getHoverTextEnabled())
-            hoverText = playgroundComp->getCurrentHoverText();
-            
-        if (hoverText.isNotEmpty())
-        {
-            g.setColour(processor.theme.cyan());
-            g.setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)));
-            g.drawFittedText(hoverText, juce::Rectangle<int>(0, y, getWidth(), h), juce::Justification::centred, 1);
-        }
-    }
-
-    // Build number moved to bottom centered
-    {
-        g.setColour(processor.theme.cyan().withAlpha(0.9f));
-        g.setFont(juce::Font(juce::FontOptions("Arial", 10.0f, juce::Font::bold)));
-        juce::String buildText = juce::String(PLUGIN_VERSION_WITH_BUILD);
-        g.drawFittedText(buildText, juce::Rectangle<int>(55, 218, getWidth(), 16), juce::Justification::centredLeft, 1);
-    }
-
-    // Submenu should draw first (behind header) so header masks its top portion.
-    const bool submenuActive = (setupSubmenuTargetOn || setupSubmenuProgress > 0.0f);
-    if (submenuActive)
-    {
-        const float hiddenTop = -10.0f; // fully hidden behind header
-        const float shownTop  = 25.0f;  // final revealed position (shift upward by 20px per request)
-        const float submenuH  =  30.0f;
-        const float topY = hiddenTop + (shownTop - hiddenTop) * setupSubmenuProgress;
-        juce::Rectangle<float> submenuRect(0.0f, topY, (float)getWidth(), submenuH);
-        // Drop shadow for submenu (lighter & smaller than header shadow). Draw first, then fill.
-        {
-            juce::DropShadow ds(juce::Colours::black.withAlpha(0.45f), 14, juce::Point<int>(0, 6));
-            // Slightly shrink width to avoid horizontal bleed; allow a couple px extra height for blur.
-            auto shadowInt = submenuRect.toNearestInt().expanded(-2, 2);
-            ds.drawForRectangle(g, shadowInt);
-        }
-        g.setColour(processor.theme.base());
-        g.fillRect(submenuRect);
-        // Repaint buttons manually AFTER fill so they appear above submenu background (normal child paint occurred earlier & is covered).
-        // Only repaint the components; layout is handled in updateSetupSubmenuLayout
-        auto repaintComp = [&g](juce::Component* c){ if (!c || !c->isVisible()) return; juce::Graphics::ScopedSaveState ss(g); g.setOrigin(c->getX(), c->getY()); c->paint(g); g.setOrigin(0,0); };
-        repaintComp(pulseWidthSlider ? pulseWidthSlider.get() : nullptr);
-        repaintComp(pulseWidthValueLabel ? pulseWidthValueLabel.get() : nullptr);
-        repaintComp(arrowDown ? arrowDown.get() : nullptr);
-        repaintComp(&idleModeButton);
-        repaintComp(&legacyModernButton);
-        repaintComp(&sppButton);
-
-        // Hover tooltips (avoid drawing above header region 0..30)
-        juce::Font vf(juce::FontOptions("Arial", 11.0f, juce::Font::bold));
-        if (hoveredSetupIndex >= 0)
-        {
-            g.setColour(processor.theme.accent());
-            g.setFont(vf);
-            auto drawTip = [&](const juce::String& text, const juce::Component& c){
-                juce::Rectangle<int> r = c.getBounds();
-                juce::Rectangle<int> tipR(r.getX(), r.getY() - 12, r.getWidth(), r.getHeight());
-                if (tipR.getBottom() < 30) return; // clipped by header
-                g.drawFittedText(text, tipR, juce::Justification::centred, 1);
-            };
-            if (hoveredSetupIndex == 0) drawTip("send midi-clocks when idle/stopped", idleModeButton);
-            else if (hoveredSetupIndex == 1) drawTip("legacy sends always stop before start", legacyModernButton);
-            else if (hoveredSetupIndex == 2) drawTip("send song position pointer", sppButton);
-        }
-    }
-
-    // Pattern edit drawing moved fully into PlaygroundComponent; suppress duplicate backdrop here.
-    // (Previous pattern.draw caused second semi-transparent wedge layer.)
-    if (patternEditMode)
-    {
-        // No-op: intentional removal to avoid double rendering.
-    }
-
-    // Draw fixed header (30px) at top (on top of submenu).
-    const int headerPaintH = 30;
-    juce::Rectangle<float> headerRect(0.0f, 0.0f, (float) getWidth(), (float) headerPaintH);
-    // Draw drop shadow (using juce::DropShadow) first so base fill sits on top.
-    {
-        juce::DropShadow ds(juce::Colours::black.withAlpha(0.45f), 14, juce::Point<int>(0, 6));
-        // Use integer rect for shadow drawing; shrink width slightly to avoid horizontal bleed
-        auto shadowInt = headerRect.toNearestInt().withWidth(headerRect.getWidth() - 2);
-        ds.drawForRectangle(g, shadowInt);
-    }
-    // Base header fill rectangle
-    g.setColour(processor.theme.base());
-    g.fillRect(headerRect);
-    // Repaint visible header child components manually so they appear above the header background fill.
-    auto repaintHeaderComp = [&g](juce::Component& c)
-    {
-        if (! c.isVisible()) return;
-        juce::Graphics::ScopedSaveState ss(g);
-        g.setOrigin(c.getX(), c.getY());
-        c.paint(g);
-        g.setOrigin(0,0);
-    };
-    repaintHeaderComp(nameMidiSwitch);
-    //if (refreshButton.isVisible()) repaintHeaderComp(refreshButton);
-    //if (setupButton.isVisible()) repaintHeaderComp(setupButton);
-     repaintHeaderComp(refreshButton);
-     repaintHeaderComp(setupButton);
-    repaintHeaderComp(deviceBox);
-    repaintHeaderComp(nameBox);
-    // Ensure the status bar (LED + text) is repainted above the header fill so
-    // it remains visible — it is a child component but the header is painted
-    // in paintOverChildren which would otherwise cover children drawn earlier.
-    if (statusBar && statusBar->isVisible()) repaintHeaderComp(*statusBar);
-    // Draw the header toggle above the header background, right of status bar
-    if (headerSwitchToggle && headerSwitchToggle->isVisible())
-        repaintHeaderComp(*headerSwitchToggle);
-    // Setup submenu drawn separately below; buttons repainted there.
-
-    // Skip fallback ring/dancer drawing when playground is active.
-
-    // (Removed) No header diagnostics per user request
-
-    // --- Diagnostics: SVG missing indicator near setup icon ---
-    if (!setupSvgLoaded)
-    {
-        g.setColour(juce::Colours::red);
-        g.setFont(juce::Font(juce::FontOptions("Arial", 10.0f, juce::Font::bold)));
-        g.drawFittedText("SVG MISSING", juce::Rectangle<int>(getWidth()-100, getHeight()-40, 96, 16), juce::Justification::centredRight, 1);
-    }
-
-
-    // Draw popup menu rings (if configured). Place them at the centres of
-    // the components they replace so they visually substitute the legacy UI.
-    auto drawAtComp = [&](const std::unique_ptr<PopupMenuRing>& pr, const juce::Component& c)
-    {
-        if (! pr) return;
-        auto b = c.getBounds().toFloat();
-        const float baseX = b.getCentreX();
-        const float baseY = b.getCentreY();
-        const float baseR = std::min(b.getWidth(), b.getHeight()) * 0.5f;
-        pr->draw(g, baseX, baseY, baseR, processor.theme);
-    };
-
-    // Legacy popup rings fully removed (PlaygroundComponent provides internal popup UI).
-
-    // StatusBarComponent now paints status + LED.
-
-    // Debug offset panel removed per user request to declutter lower area during shuffle hit testing.
-    // Draw the independent setup overlay on top of everything (front-most)
-    // (Overlay drawing is now handled by MidiRemoteSetupComponent)
+    // Scalable overlay painting is handled by uiRoot layers.
 
     // Debug stack (left side): show last clicked stored step, logical mapping, host bar and scheduled targets
     // {
@@ -1497,13 +1667,32 @@ void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
 
 void ClockSyncAudioProcessorEditor::resized()
 {
-    // Static absolute positions for fixed 300x300 canvas
-    // Ensure shared playground component occupies the full editor. The header
-    // overlays in Z, not by shifting content in Y.
+    // Compute uniform scale to fit the current editor size while keeping aspect ratio.
+    const bool submenuActive = (setupSubmenuTargetOn || setupSubmenuProgress > 0.0f);
+    const int effectiveBaseH = canvasExpanded ? kBaseH : (kHeaderBaseH + (submenuActive ? kCompactExtraH : 0));
+
+    const double sx = (double) getWidth()  / (double) kBaseW;
+    const double sy = (double) getHeight() / (double) effectiveBaseH;
+    uiScale = juce::jlimit(0.01, (double) kMaxScaleFactor, std::min(sx, sy));
+
+    const int scaledW = (int) std::round((double) kBaseW * uiScale);
+    const int scaledH = (int) std::round((double) effectiveBaseH * uiScale);
+    uiOffset = { (getWidth() - scaledW) / 2, (getHeight() - scaledH) / 2 };
+
+    uiRoot.setBounds(0, 0, kBaseW, kBaseH);
+    uiRoot.setTransform(juce::AffineTransform::scale((float) uiScale));
+    uiRoot.setTopLeftPosition(uiOffset);
+
+    if (backdropLayer)  backdropLayer->setBounds(0, 0, kBaseW, kBaseH);
+    if (overlayBgLayer) overlayBgLayer->setBounds(0, 0, kBaseW, kBaseH);
+    if (headerBgLayer)  headerBgLayer->setBounds(0, 0, kBaseW, kBaseH);
+    if (overlayFgLayer) overlayFgLayer->setBounds(0, 0, kBaseW, kBaseH);
+
+    // Ensure shared playground component occupies the full base canvas.
     if (playgroundComp)
     {
-        playgroundComp->setBounds(0, 0, getWidth(), getHeight());
-        playgroundComp->setHeaderHeight(30); // keep fixed; Setup expansion only paints extra base area
+        playgroundComp->setBounds(0, 0, kBaseW, kBaseH);
+        playgroundComp->setHeaderHeight(30);
     }
     // Header area is painted, no components there (top 28px)
 
@@ -1519,11 +1708,11 @@ void ClockSyncAudioProcessorEditor::resized()
         const int gap = 4;
         const int buttonW = std::max(16, contentH - 6); // square-ish refresh button (width ~= height)
         const int toggleW = 14; // same width for name/midi toggle
-        const int fullComboOriginal = getWidth() - marginX * 2 - buttonW - gap - toggleW - gap; // account for toggle + refresh
+        const int fullComboOriginal = kBaseW - marginX * 2 - buttonW - gap - toggleW - gap; // account for toggle + refresh
         int comboW = fullComboOriginal - 90; // keep prior shrink
         // Reduce all combo widths by 10px as requested, but keep a sensible minimum
         comboW = std::max(60, comboW - 10);
-        const int centerX = getWidth() / 2;
+        const int centerX = kBaseW / 2;
         const int comboX = centerX - comboW / 2;
         // place refresh button immediately left of the combo
         refreshButton.setBounds(comboX + comboW -1, marginY + 5, toggleW, contentH - 10);
@@ -1561,10 +1750,19 @@ void ClockSyncAudioProcessorEditor::resized()
             float x0,y0,r0; if (playgroundComp->getCircleInfo(0,x0,y0,r0))
             {
                 const int d = (int) std::round(r0 * 2.0f);
-                ringArea = juce::Rectangle<int>((int)std::round(x0 - r0), (int)std::round(y0 - r0), d, d);
+                ringAreaBase = juce::Rectangle<int>((int)std::round(x0 - r0), (int)std::round(y0 - r0), d, d);
             }
         }
-        if (svgDancer) svgDancer->setBounds(ringArea);
+        if (svgDancer) svgDancer->setBounds(ringAreaBase);
+
+        // Map base ring area to editor coords for hit-testing / repaint rectangles.
+        {
+            const float x = (float) uiOffset.x + ringAreaBase.getX() * (float) uiScale;
+            const float y = (float) uiOffset.y + ringAreaBase.getY() * (float) uiScale;
+            const float w = ringAreaBase.getWidth() * (float) uiScale;
+            const float h = ringAreaBase.getHeight() * (float) uiScale;
+            ringArea = juce::Rectangle<float>(x, y, w, h).toNearestInt();
+        }
 
         // circle 1 handled by playground visuals.
 
@@ -1584,32 +1782,39 @@ void ClockSyncAudioProcessorEditor::resized()
         // Help toggle: moved to right, aligned with setupCornerButton (gear icon), y=30
         const int helpSize = 20;
         const int setupSize = 30; 
-        helpToggle.setBounds(getWidth() - 25, 30, helpSize, helpSize);
+        helpToggle.setBounds(kBaseW - 25, 30, helpSize, helpSize);
         
         // Color palette toggle at top left (swapped with build number)
         colorPaletteToggle.setBounds(7, 27, 35, 27);
 
         if (setupCornerButton){
-            setupCornerButton->setBounds(getWidth() - setupSize, 210, setupSize, setupSize);
+            setupCornerButton->setBounds(kBaseW - setupSize, 210, setupSize, setupSize);
             setupCornerButton->setEdgeIndent(setupSize / 4);
         }
     }
     else
     {
         // Fallback positions if playground absent; keep clickButton hidden.
-        if (svgDancer) svgDancer->setBounds(ringArea);
-        ringArea = juce::Rectangle<int>(150 - 70, 130 - 70, 140, 140);
+        ringAreaBase = juce::Rectangle<int>(150 - 70, 130 - 70, 140, 140);
+        if (svgDancer) svgDancer->setBounds(ringAreaBase);
+        {
+            const float x = (float) uiOffset.x + ringAreaBase.getX() * (float) uiScale;
+            const float y = (float) uiOffset.y + ringAreaBase.getY() * (float) uiScale;
+            const float w = ringAreaBase.getWidth() * (float) uiScale;
+            const float h = ringAreaBase.getHeight() * (float) uiScale;
+            ringArea = juce::Rectangle<float>(x, y, w, h).toNearestInt();
+        }
         //idleClockToggle.setBounds(234 - 14, 132 - 14, 28, 28);
         // shuffleScaleToggle removed.
         // no legacy triggerRect fallback
         // stepOffsetMenu no longer present.
         const int helpSize = 20; 
         const int setupSize = 30; 
-        helpToggle.setBounds(getWidth() - 25, 30, helpSize, helpSize);
+        helpToggle.setBounds(kBaseW - 25, 30, helpSize, helpSize);
         colorPaletteToggle.setBounds(7, 27, 35, 27);
         
         if (setupCornerButton){
-            setupCornerButton->setBounds(getWidth() - setupSize, 210, setupSize, setupSize);
+            setupCornerButton->setBounds(kBaseW - setupSize, 210, setupSize, setupSize);
             setupCornerButton->setEdgeIndent(setupSize / 4);
         }
     }
@@ -1620,14 +1825,12 @@ void ClockSyncAudioProcessorEditor::resized()
         // Provide area matching previous manual drawing region (right segment of header minus margins)
         const int headerH = 30;
         const int w = 50; // width for text + LED
-        statusBar->setBounds(getWidth() - w - 6, 0, w, headerH);
+        statusBar->setBounds(kBaseW - w - 6, 0, w, headerH);
     }
 
     // Sync Latch Button (bottom left)
     syncLatchButton.setBounds(8, 216, 36, 16); 
 
-    // MIDI button (above GATE)
-    midiInButton.setBounds(8, 198, 36, 16);
 
     // Force absolute placement to keep toggle at exact design coordinates.
     if (headerSwitchToggle) {
@@ -1636,40 +1839,131 @@ void ClockSyncAudioProcessorEditor::resized()
         headerSwitchToggle->toFront(true);
         headerSwitchToggle->setAlwaysOnTop(true);
     }
+
+    // Keep the status bar LED/shadow above nearby header widgets.
+    if (statusBar)
+        statusBar->toFront(false);
+
+    // Keep the gear button always front-most.
+    if (setupCornerButton)
+        setupCornerButton->toFront(true);
 }
 
-void ClockSyncAudioProcessorEditor::showMidiInWindow()
+void ClockSyncAudioProcessorEditor::paintBackdropLayer(juce::Graphics& g)
 {
-    if (midiInWindow)
+    g.fillAll(processor.theme.accent().darker(0.9f));
+    auto bounds = uiRoot.getLocalBounds().toFloat();
+    g.setColour(processor.theme.accent().darker(0.9f));
+    g.fillRect(bounds);
+
+    // Hover text is intentionally drawn *behind* the submenu so it gets covered when submenu is out.
+    if (!setupOverlayVisible)
     {
-        midiInWindow->toFront(true);
-        return;
+        const int y = 30; // just under the 30px header
+        const int h = 16;
+
+        juce::String hoverText = editorHoverText;
+        if (hoverText.isEmpty() && playgroundComp && playgroundComp->getHoverTextEnabled())
+            hoverText = playgroundComp->getCurrentHoverText();
+
+        if (hoverText.isNotEmpty())
+        {
+            g.setColour(processor.theme.cyan());
+            g.setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)));
+            g.drawFittedText(hoverText, juce::Rectangle<int>(0, y, kBaseW, h), juce::Justification::centred, 1);
+        }
     }
 
-    auto safeThis = juce::Component::SafePointer<ClockSyncAudioProcessorEditor>(this);
-
-    auto* w = new MidiInRoutingWindow(
-        "MIDI",
-        processor.theme.base(),
-        juce::DocumentWindow::closeButton,
-        true);
-
-    w->setUsingNativeTitleBar(true);
-    w->setResizable(false, false);
-    w->setAlwaysOnTop(true);
-    w->setContentOwned(new MidiInRoutingComponent(processor), true);
-    w->centreAroundComponent(this, 260, 90);
-    w->setVisible(true);
-    w->toFront(true);
-
-    w->onClosed = [safeThis]()
+    // Decorative backdrop circles
+    auto centre = bounds.getCentre();
+    const auto& sizes = UiLayout::kBackdropSizes;
+    for (size_t i = 0; i < sizes.size(); ++i)
     {
-        if (safeThis)
-            safeThis->midiInWindow.reset();
-    };
-
-    midiInWindow.reset(w);
+        const float baseSz = (float) sizes[i];
+        const float alphaFactor = 0.1f * (float) i;
+        const float progress = backdropPulseProgress[i];
+        const float extraScale = backdropPulseScale[i] * progress;
+        const float sz = baseSz * (UiLayout::kBackdropMultiplier + extraScale);
+        juce::Colour col = processor.theme.base().withAlpha(alphaFactor);
+        juce::Rectangle<float> rc(centre.x - sz * 0.5f, centre.y - sz * 0.5f + 10.0f, sz, sz);
+        g.setColour(col);
+        g.fillEllipse(rc);
+    }
 }
+
+void ClockSyncAudioProcessorEditor::paintOverlayBackgroundLayer(juce::Graphics& g)
+{
+    // Submenu background (behind controls)
+    const bool submenuActive = (setupSubmenuTargetOn || setupSubmenuProgress > 0.0f);
+    if (submenuActive)
+    {
+        const float hiddenTop = -10.0f;
+        const float shownTop  = 25.0f;
+        const float submenuH  = 30.0f;
+        const float topY = hiddenTop + (shownTop - hiddenTop) * setupSubmenuProgress;
+        juce::Rectangle<float> submenuRect(0.0f, topY, (float) kBaseW, submenuH);
+        {
+            juce::DropShadow ds(juce::Colours::black.withAlpha(0.45f), 14, juce::Point<int>(0, 6));
+            auto shadowInt = submenuRect.toNearestInt().expanded(-2, 2);
+            ds.drawForRectangle(g, shadowInt);
+        }
+        g.setColour(processor.theme.base());
+        g.fillRect(submenuRect);
+    }
+}
+
+void ClockSyncAudioProcessorEditor::paintHeaderBackgroundLayer(juce::Graphics& g)
+{
+    // Header background (covers submenu content when it slides under the header)
+    const int headerPaintH = 30;
+    juce::Rectangle<float> headerRect(0.0f, 0.0f, (float) kBaseW, (float) headerPaintH);
+    {
+        juce::DropShadow ds(juce::Colours::black.withAlpha(0.45f), 14, juce::Point<int>(0, 6));
+        auto shadowInt = headerRect.toNearestInt().withWidth((int) headerRect.getWidth() - 2);
+        ds.drawForRectangle(g, shadowInt);
+    }
+    g.setColour(processor.theme.base());
+    g.fillRect(headerRect);
+}
+
+void ClockSyncAudioProcessorEditor::paintOverlayForegroundLayer(juce::Graphics& g)
+{
+    // Build number
+    {
+        // Match GATE (off) tint.
+        g.setColour(processor.theme.cyan().withAlpha(0.4f));
+        g.setFont(juce::Font(juce::FontOptions("Arial", 10.0f, juce::Font::bold)));
+        juce::String buildText = juce::String(PLUGIN_VERSION_WITH_BUILD);
+        g.drawFittedText(buildText, juce::Rectangle<int>(55, 218, kBaseW, 16), juce::Justification::centredLeft, 1);
+    }
+
+    // Submenu hover tooltips
+    const bool submenuActive = (setupSubmenuTargetOn || setupSubmenuProgress > 0.0f);
+    if (submenuActive && hoveredSetupIndex >= 0)
+    {
+        juce::Font vf(juce::Font(juce::FontOptions("Arial", 11.0f, juce::Font::bold)));
+        g.setColour(processor.theme.accent());
+        g.setFont(vf);
+        auto drawTip = [&](const juce::String& text, const juce::Component& c){
+            juce::Rectangle<int> r = c.getBounds();
+            juce::Rectangle<int> tipR(r.getX(), r.getY() - 12, r.getWidth(), r.getHeight());
+            if (tipR.getBottom() < 30) return;
+            g.drawFittedText(text, tipR, juce::Justification::centred, 1);
+        };
+        if (hoveredSetupIndex == 0) drawTip("send midi-clocks when idle/stopped", idleModeButton);
+        else if (hoveredSetupIndex == 1) drawTip("legacy sends always stop before start", legacyModernButton);
+        else if (hoveredSetupIndex == 2) drawTip("send song position pointer", sppButton);
+    }
+
+    // Diagnostics: SVG missing indicator
+    if (!setupSvgLoaded)
+    {
+        g.setColour(juce::Colours::red);
+        g.setFont(juce::Font(juce::FontOptions("Arial", 10.0f, juce::Font::bold)));
+        g.drawFittedText("SVG MISSING", juce::Rectangle<int>(kBaseW - 100, kBaseH - 40, 96, 16), juce::Justification::centredRight, 1);
+    }
+}
+
 
 bool ClockSyncAudioProcessorEditor::keyPressed(const juce::KeyPress& key)
 {
@@ -1732,7 +2026,7 @@ void ClockSyncAudioProcessorEditor::updateSetupSubmenuLayout()
     const int btnH = 14;
     const int gap = 4;
     const int totalW = sliderW + btnW * 3 + gap * 4;
-    const int x0 = (getWidth() - totalW) / 2;
+    const int x0 = (kBaseW - totalW) / 2;
     // Move slider down a bit and make it taller so value box is not hidden
     const int yButtons = (int) std::round(topY + 10); // 6px padding from top of submenu
 
@@ -2434,7 +2728,6 @@ void ClockSyncAudioProcessorEditor::updateSetupButtonImages()
 ClockSyncAudioProcessorEditor::~ClockSyncAudioProcessorEditor()
 {
     processor.onThemeChanged = nullptr;
-    midiInWindow.reset();
     // Ensure vblank updater is destroyed before member animators go away
     vblankUpdater.reset();
     arrowDown.reset();
@@ -2443,7 +2736,6 @@ ClockSyncAudioProcessorEditor::~ClockSyncAudioProcessorEditor()
     nameBox.setLookAndFeel(nullptr);
     nameMidiSwitch.setLookAndFeel(nullptr);
     syncLatchButton.setLookAndFeel(nullptr);
-    midiInButton.setLookAndFeel(nullptr);
     // Clear help button look-and-feel
     helpToggle.setLookAndFeel(nullptr);
 }

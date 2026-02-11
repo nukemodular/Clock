@@ -14,6 +14,8 @@
 #include "HitRouting.h" // unified hit-test
 #include "SvgDancerComponent.h"
 
+class ClockEditorPaintLayer;
+
 class ColorPaletteToggle : public juce::Component
 {
     UiThemeColours& theme;
@@ -145,6 +147,35 @@ public:
     void mouseMove(const juce::MouseEvent&) override;
 
 private:
+    friend class ClockEditorPaintLayer;
+
+    // Base design size for scalable UI (all layout authored for this size)
+    static constexpr int kBaseW = 300;
+    static constexpr int kBaseH = 240;
+    static constexpr int kHeaderBaseH = 30;
+    static constexpr int kCompactExtraH = 25; // matches legacy submenu extra height when compact
+
+    bool canvasExpanded { true };
+
+    // Root container that is uniformly scaled to fit the host-provided editor size.
+    juce::Component uiRoot;
+    double uiScale { 1.0 };
+    juce::Point<int> uiOffset { 0, 0 };
+
+    // Painter layers (children of uiRoot). These keep custom painting scalable.
+    std::unique_ptr<juce::Component> backdropLayer;
+    std::unique_ptr<juce::Component> overlayBgLayer; // submenu background
+    std::unique_ptr<juce::Component> headerBgLayer;  // header background (covers submenu when sliding under)
+    std::unique_ptr<juce::Component> overlayFgLayer;
+
+    // Ring area in base coords (for child bounds) and in editor coords (for hit tests / repaint).
+    juce::Rectangle<int> ringAreaBase;
+
+    void paintBackdropLayer(juce::Graphics&);
+    void paintOverlayBackgroundLayer(juce::Graphics&); // submenu bg
+    void paintHeaderBackgroundLayer(juce::Graphics&);
+    void paintOverlayForegroundLayer(juce::Graphics&);
+
     // Header switch toggle (custom accent toggle in header)
     std::unique_ptr<HeaderSwitchToggle> headerSwitchToggle;
 
@@ -172,11 +203,6 @@ private:
     // Sync Latch toggle
     juce::TextButton syncLatchButton { "SYNC" };
 
-    // MIDI Remote input selector button (opens popup window)
-    juce::TextButton midiInButton { "MIDI" };
-
-    // MIDI Remote input selector window (owned by the editor)
-    std::unique_ptr<juce::DocumentWindow> midiInWindow;
     // Name editor helper
     void toggleNameEditorOrCommit();
     // Small center-dot click toggle
@@ -225,7 +251,6 @@ private:
 
     void updateSetupButtonImages();
 
-    void showMidiInWindow();
 
     // Editor-level hover text (overrides playground text when hovering editor controls)
     juce::String editorHoverText;
