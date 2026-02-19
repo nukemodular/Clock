@@ -2,6 +2,11 @@
 #include "PluginEditor.h"
 #include "UiTheme.h"
 
+#if JUCE_MAC
+ #include <CoreMIDI/CoreMIDI.h>
+ #include <AudioToolbox/AudioToolbox.h>
+#endif
+
 
 
 
@@ -81,6 +86,335 @@ namespace {
         return barStartPPQ + posInBar;
     }
 }
+
+#if JUCE_MAC
+struct ClockSyncAudioProcessor::TimestampedCoreMidiOut final
+{
+        ~TimestampedCoreMidiOut()
+        {
+            if (port != 0)
+                MIDIPortDispose(port);
+            if (client != 0)
+                MIDIClientDispose(client);
+        }
+
+        static std::shared_ptr<TimestampedCoreMidiOut> open (const juce::String& deviceIdentifier)
+        {
+            if (deviceIdentifier.isEmpty())
+                return {};
+
+            // JUCE macOS identifiers are based on CoreMIDI UniqueIDs, but may be composed.
+            // Common forms include:
+            //  - "<endpointUID>"
+            //  - "<deviceUID> <endpointUID>" (multi-entity devices)
+            //  - comma-separated lists for connected/virtual endpoints
+
+            const auto trimmed = deviceIdentifier.trim();
+
+            auto getIntProp = [] (MIDIObjectRef obj, CFStringRef prop, SInt32& out) -> bool
+            {
+                out = 0;
+                return (MIDIObjectGetIntegerProperty (obj, prop, &out) == noErr);
+            };
+
+            auto getStringProp = [] (MIDIObjectRef obj, CFStringRef prop) -> juce::String
+            {
+                CFStringRef str = nullptr;
+                if (MIDIObjectGetStringProperty (obj, prop, &str) != noErr || str == nullptr)
+                    return {};
+                juce::String result = juce::String::fromCFString (str);
+                CFRelease (str);
+                return result;
+            };
+
+            auto getObjectUidString = [&] (MIDIObjectRef obj) -> juce::String
+            {
+                SInt32 uid = 0;
+                if (getIntProp (obj, kMIDIPropertyUniqueID, uid))
+                    return juce::String (uid);
+                // Fallback: some objects may only expose a string UniqueID.
+                return getStringProp (obj, kMIDIPropertyUniqueID);
+            };
+
+            auto getMidiObjectInfo = [&] (MIDIObjectRef obj) -> std::pair<juce::String, juce::String>
+            {
+                // Returns {name, identifier} like JUCE getMidiObjectInfo
+                juce::String name;
+                {
+                    const auto n = getStringProp (obj, kMIDIPropertyName);
+                    if (n.isNotEmpty())
+                        name = n;
+                }
+
+                juce::String identifier = getObjectUidString (obj);
+                return { name, identifier };
+            };
+
+            auto getEndpointInfo = [&] (MIDIEndpointRef endpoint, bool isExternal) -> std::pair<juce::String, juce::String>
+            {
+                if (endpoint == 0)
+                    return {};
+
+                MIDIEntityRef entity = 0;
+                MIDIEndpointGetEntity (endpoint, &entity);
+
+                // probably virtual
+                if (entity == 0)
+                    return getMidiObjectInfo (endpoint);
+
+                auto result = getMidiObjectInfo (endpoint);
+
+                // endpoint is empty - try the entity
+                if (result.first.isEmpty() && result.second.isEmpty())
+                    result = getMidiObjectInfo (entity);
+
+                // now consider the device
+                MIDIDeviceRef device = 0;
+                MIDIEntityGetDevice (entity, &device);
+
+                if (device != 0)
+                {
+                    const auto deviceInfo = getMidiObjectInfo (device);
+
+                    if (! (deviceInfo.first.isEmpty() && deviceInfo.second.isEmpty()))
+                    {
+                        // If an external device has only one entity, throw away the endpoint name and
+                        // just use the device name.
+                        if (isExternal && MIDIDeviceGetNumberOfEntities (device) < 2)
+                        {
+                            result = deviceInfo;
+                        }
+                        else if (! result.first.startsWithIgnoreCase (deviceInfo.first))
+                        {
+                            // prepend the device name and identifier to the entity's
+                            result.first = (deviceInfo.first + " " + result.first).trimEnd();
+                            result.second = deviceInfo.second + " " + result.second;
+                        }
+                    }
+                }
+
+                return result;
+            };
+
+            auto getConnectedEndpointIdentifier = [&] (MIDIEndpointRef endpoint) -> juce::String
+            {
+                if (endpoint == 0)
+                    return {};
+
+                juce::String outIdentifier;
+
+                CFDataRef connections = nullptr;
+                MIDIObjectGetDataProperty (endpoint, kMIDIPropertyConnectionUniqueID, &connections);
+
+                if (connections != nullptr)
+                {
+                    const int numConnections = (int) CFDataGetLength (connections) / (int) sizeof (MIDIUniqueID);
+
+                    if (numConnections > 0)
+                    {
+                        auto* pid = reinterpret_cast<const SInt32*> (CFDataGetBytePtr (connections));
+
+                        for (int i = 0; i < numConnections; ++i, ++pid)
+                        {
+                            auto id = (MIDIUniqueID) juce::ByteOrder::swapIfLittleEndian ((juce::uint32) *pid);
+
+                            MIDIObjectRef connObject = 0;
+                            MIDIObjectType connObjectType {};
+                            if (MIDIObjectFindByUniqueID (id, &connObject, &connObjectType) == noErr)
+                            {
+                                std::pair<juce::String, juce::String> deviceInfo;
+
+                                if (connObjectType == kMIDIObjectType_ExternalSource
+                                    || connObjectType == kMIDIObjectType_ExternalDestination)
+                                {
+                                    deviceInfo = getEndpointInfo ((MIDIEndpointRef) connObject, true);
+                                }
+                                else
+                                {
+                                    deviceInfo = getMidiObjectInfo (connObject);
+                                }
+
+                                if (! deviceInfo.second.isEmpty())
+                                {
+                                    if (outIdentifier.isNotEmpty())
+                                        outIdentifier += ", ";
+                                    outIdentifier += deviceInfo.second;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (outIdentifier.isEmpty())
+                    outIdentifier = getEndpointInfo (endpoint, false).second;
+
+                return outIdentifier;
+            };
+
+            auto extractSignedUniqueIds = [] (const juce::String& s) -> std::vector<SInt32>
+            {
+                std::vector<SInt32> ids;
+                ids.reserve (4);
+
+                const auto text = s.toStdString();
+                const char* p = text.c_str();
+                while (*p != 0)
+                {
+                    while (*p != 0 && ! (*p == '-' || (*p >= '0' && *p <= '9')))
+                        ++p;
+                    if (*p == 0)
+                        break;
+
+                    const char* start = p;
+                    if (*p == '-')
+                        ++p;
+                    bool anyDigits = false;
+                    while (*p >= '0' && *p <= '9')
+                    {
+                        anyDigits = true;
+                        ++p;
+                    }
+                    if (! anyDigits)
+                        continue;
+
+                    const juce::String token (juce::String::fromUTF8 (start, (int) (p - start)));
+                    ids.push_back ((SInt32) token.getIntValue());
+                }
+
+                return ids;
+            };
+
+            MIDIEndpointRef found = 0;
+
+            // First try: treat any numeric tokens as possible endpoint UniqueIDs.
+            // For JUCE identifiers like "deviceUID endpointUID", the endpointUID is typically last.
+            // If the identifier is a comma-separated connection list (Audio MIDI Setup external devices),
+            // the tokens refer to connected objects, not the destination endpoint's own UniqueID.
+            const auto candidates = extractSignedUniqueIds (trimmed);
+            if (! trimmed.containsChar (',') && ! candidates.empty())
+            {
+                const ItemCount n = MIDIGetNumberOfDestinations();
+                for (auto it = candidates.rbegin(); it != candidates.rend() && found == 0; ++it)
+                {
+                    const SInt32 wantUid = *it;
+                    for (ItemCount i = 0; i < n; ++i)
+                    {
+                        const MIDIEndpointRef ep = MIDIGetDestination (i);
+                        if (ep == 0)
+                            continue;
+
+                        SInt32 uid = 0;
+                        if (getIntProp (ep, kMIDIPropertyUniqueID, uid) && uid == wantUid)
+                        {
+                            found = ep;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Second try: compare against JUCE-style composed identifier for each endpoint.
+            if (found == 0)
+            {
+                const ItemCount n = MIDIGetNumberOfDestinations();
+                for (ItemCount i = 0; i < n; ++i)
+                {
+                    const MIDIEndpointRef ep = MIDIGetDestination (i);
+                    if (ep == 0)
+                        continue;
+
+                    // This matches JUCE's getConnectedEndpointInfo().identifier, which is what
+                    // MidiOutput::getAvailableDevices() returns on macOS.
+                    const auto epId = getConnectedEndpointIdentifier (ep);
+                    if (epId.isNotEmpty() && epId.trim() == trimmed)
+                    {
+                        found = ep;
+                        break;
+                    }
+                }
+            }
+
+            if (found == 0)
+                return {};
+
+            MIDIClientRef client = 0;
+            if (MIDIClientCreate(CFSTR("toolBoyClockCoreMIDI"), nullptr, nullptr, &client) != noErr || client == 0)
+                return {};
+
+            MIDIPortRef port = 0;
+            if (MIDIOutputPortCreate(client, CFSTR("toolBoyClockOut"), &port) != noErr || port == 0)
+            {
+                MIDIClientDispose(client);
+                return {};
+            }
+
+            auto out = std::make_shared<TimestampedCoreMidiOut>();
+            out->client = client;
+            out->port = port;
+            out->endpoint = found;
+            return out;
+        }
+
+        void sendBlock (const juce::MidiBuffer& buffer, double sampleRate) noexcept
+        {
+            if (port == 0 || endpoint == 0)
+                return;
+            if (! (sampleRate > 0.0))
+                return;
+            if (buffer.getNumEvents() <= 0)
+                return;
+
+            // Use CoreMIDI timestamps so the system schedules delivery, instead of
+            // relying on a user-space timer thread (which may be throttled when
+            // the host/app is backgrounded).
+            const double ticksPerSecond = juce::Time::getHighResolutionTicksPerSecond();
+            const double ticksPerSample = (ticksPerSecond > 0.0) ? (ticksPerSecond / sampleRate) : 0.0;
+            const MIDITimeStamp base = (MIDITimeStamp) juce::Time::getHighResolutionTicks();
+
+            auto* list = reinterpret_cast<MIDIPacketList*>(packetStorage.data());
+            auto* pkt = MIDIPacketListInit(list);
+            const size_t listCapacity = packetStorage.size();
+
+            auto flush = [&]() noexcept
+            {
+                if (list->numPackets > 0)
+                    MIDISend(port, endpoint, list);
+                pkt = MIDIPacketListInit(list);
+            };
+
+            for (const auto metadata : buffer)
+            {
+                const auto* data = metadata.data;
+                const int numBytes = metadata.numBytes;
+                const int samplePos = metadata.samplePosition;
+
+                if (data == nullptr || numBytes <= 0)
+                    continue;
+                if (numBytes > 256)
+                    continue; // shouldn't happen for clock/start/stop/SPP
+
+                const MIDITimeStamp ts = base + (MIDITimeStamp) std::llround((double) samplePos * ticksPerSample);
+
+                pkt = MIDIPacketListAdd(list, listCapacity, pkt, ts, (UInt16) numBytes, data);
+                if (pkt == nullptr)
+                {
+                    flush();
+                    pkt = MIDIPacketListAdd(list, listCapacity, pkt, ts, (UInt16) numBytes, data);
+                    if (pkt == nullptr)
+                        break; // give up rather than looping forever
+                }
+            }
+
+            flush();
+        }
+
+        MIDIClientRef client { 0 };
+        MIDIPortRef port { 0 };
+        MIDIEndpointRef endpoint { 0 };
+
+        std::array<uint8_t, 65536> packetStorage {};
+};
+#endif
 
 //==============================================================================
 ClockSyncAudioProcessor::ClockSyncAudioProcessor()
@@ -681,7 +1015,20 @@ bool ClockSyncAudioProcessor::isDuplicateStart(long long barForStart, int stepFo
 
 void ClockSyncAudioProcessor::updateExternalOut()
 {
-    // Create new instance first (if any)
+   #if JUCE_MAC
+    // macOS: Use CoreMIDI timestamped packets (scheduled by the OS) so clock
+    // remains stable even when the host/app is backgrounded.
+    std::shared_ptr<TimestampedCoreMidiOut> newCore;
+    if (externalDeviceId.isNotEmpty())
+        newCore = TimestampedCoreMidiOut::open(externalDeviceId);
+
+    {
+        juce::ScopedLock sl(midiOutLock);
+        externalCoreMidiOut = newCore;
+        externalMidiOut.reset();
+    }
+   #else
+    // Other platforms: fall back to JUCE MidiOutput
     std::shared_ptr<juce::MidiOutput> newOut;
     if (externalDeviceId.isNotEmpty())
     {
@@ -697,6 +1044,7 @@ void ClockSyncAudioProcessor::updateExternalOut()
         juce::ScopedLock sl(midiOutLock);
         externalMidiOut = newOut;
     }
+   #endif
 }
 
 void ClockSyncAudioProcessor::setExternalDeviceId(const juce::String& id)
@@ -875,11 +1223,25 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
     // swapping the device (or state load is updating), skip external output
     // for this block rather than risking an audio-thread stall.
     std::shared_ptr<juce::MidiOutput> localOut;
+   #if JUCE_MAC
+    std::shared_ptr<TimestampedCoreMidiOut> localCoreOut;
+   #endif
     {
         juce::ScopedTryLock sl(midiOutLock);
         if (sl.isLocked())
+        {
             localOut = externalMidiOut;
+           #if JUCE_MAC
+            localCoreOut = externalCoreMidiOut;
+           #endif
+        }
     }
+
+    const bool haveExternalOut = (bool) localOut
+       #if JUCE_MAC
+        || (bool) localCoreOut
+       #endif
+        ;
 
     const int numSamples = buffer.getNumSamples();
     // Detect callback lateness under CPU pressure.
@@ -1677,7 +2039,7 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                     {
                         midi.addEvent(clockMsg, sampleOffset);
                         uiClockCounter.fetch_add(1, std::memory_order_relaxed);
-                        if (localOut)
+                        if (haveExternalOut)
                             extClock.addEvent(clockMsg, sampleOffset);
                         // pre-phase diag logging removed per user request
                     }
@@ -1846,7 +2208,7 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                     {
                         midi.addEvent(clockMsg, sampleOffset);
                         uiClockCounter.fetch_add(1, std::memory_order_relaxed);
-                        if (localOut)
+                        if (haveExternalOut)
                             extClock.addEvent(clockMsg, sampleOffset);
                         // post-phase diag logging removed per user request
                     }
@@ -1951,10 +2313,23 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
     // collapses an entire audio block's worth of MIDI Clock into a burst.
     // Switching screens/apps (foreground changes) or brief CPU spikes can
     // otherwise trigger that path and knock external devices out of sync.
-    if (localOut && extClock.getNumEvents() > 0)
+    if (extClock.getNumEvents() > 0)
     {
-        // Timed sending preserves the intended spacing inside the block.
-        localOut->sendBlockOfMessages(extClock, juce::Time::getMillisecondCounterHiRes(), currentSampleRate);
+       #if JUCE_MAC
+        if (localCoreOut)
+        {
+            localCoreOut->sendBlock(extClock, currentSampleRate);
+        }
+        else if (localOut)
+        {
+            // Timed sending preserves the intended spacing inside the block.
+            // Note: this relies on a timer thread, so may drift if the host/app is backgrounded.
+            localOut->sendBlockOfMessages(extClock, juce::Time::getMillisecondCounterHiRes(), currentSampleRate);
+        }
+       #else
+        if (localOut)
+            localOut->sendBlockOfMessages(extClock, juce::Time::getMillisecondCounterHiRes(), currentSampleRate);
+       #endif
     }
 
     // Per-tick clicks are written directly into the audio buffer in the scheduling loops above.

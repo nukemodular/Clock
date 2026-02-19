@@ -306,7 +306,8 @@ namespace
     class MidiRemoteSetupComponent : public juce::Component
     {
     public:
-        MidiRemoteSetupComponent(ClockSyncAudioProcessor& p)
+        MidiRemoteSetupComponent(ClockSyncAudioProcessor& p,
+                                 const std::vector<juce::MidiDeviceInfo>& cachedRemoteInputs)
             : processor(p), theme(p.theme),
                             startRow("START", MidiRemoteRow::Note, p.midiRemoteStart, p.theme, MidiRemoteRow::Compact, &p.midiRemoteStartIsCC),
                             stopRow("STOP", MidiRemoteRow::Note, p.midiRemoteStop, p.theme, MidiRemoteRow::Compact, &p.midiRemoteStopIsCC),
@@ -396,7 +397,10 @@ namespace
                     st.setProperty("ui.midiRemoteInDeviceId", remoteDevices[(size_t) devIdx].identifier, nullptr);
             };
 
-            rebuildRemotePortList();
+            // IMPORTANT: Do not enumerate CoreMIDI devices here.
+            // On macOS, device enumeration can briefly stall MIDI I/O and cause
+            // external MIDI clock hiccups. Use the editor-provided cached list.
+            setRemoteDevices(cachedRemoteInputs);
         }
 
         ~MidiRemoteSetupComponent() override
@@ -693,15 +697,19 @@ namespace
             UiThemeColours& theme;
         };
 
+    public:
+        void setRemoteDevices(const std::vector<juce::MidiDeviceInfo>& devices)
+        {
+            remoteDevices = devices;
+            rebuildRemotePortList();
+        }
+
+    private:
         void rebuildRemotePortList()
         {
             remotePortBox.clear();
-            remoteDevices.clear();
 
-            const auto arr = juce::MidiInput::getAvailableDevices();
-            remoteDevices.reserve((size_t) arr.size());
-            for (const auto& d : arr)
-                remoteDevices.push_back(d);
+            // Always include Host/Track MIDI at index 0.
 
             int itemId = 1;
             remotePortBox.addItem("Host / Track MIDI", itemId++);
@@ -1501,7 +1509,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
             {
                 if (! setupOverlayComp)
                 {
-                    setupOverlayComp = std::make_unique<MidiRemoteSetupComponent>(processor);
+                    setupOverlayComp = std::make_unique<MidiRemoteSetupComponent>(processor, remoteMidiInputs);
                     setupOverlayComp->setInterceptsMouseClicks(true, true); // consume clicks
                     uiRoot.addAndMakeVisible(*setupOverlayComp);
                     setupOverlayComp->setAlwaysOnTop(true);
@@ -3239,6 +3247,23 @@ void ClockSyncAudioProcessorEditor::refreshDeviceList()
     midiOutputs.clear();
     auto arr = juce::MidiOutput::getAvailableDevices();
     for (auto& d : arr) midiOutputs.push_back(d);
+
+    // Cache MIDI input devices for the "system settings" (gear) overlay.
+    // We intentionally do this here (explicit refresh / editor init) and
+    // avoid enumerating inputs when the overlay is opened while playing.
+    remoteMidiInputs.clear();
+    {
+        auto inArr = juce::MidiInput::getAvailableDevices();
+        remoteMidiInputs.reserve((size_t) inArr.size());
+        for (const auto& d : inArr)
+            remoteMidiInputs.push_back(d);
+    }
+
+    // If the overlay is currently open, update its combobox list from the cache.
+    if (setupOverlayComp)
+        if (auto* overlay = dynamic_cast<MidiRemoteSetupComponent*>(setupOverlayComp.get()))
+            overlay->setRemoteDevices(remoteMidiInputs);
+
     deviceBox.clear(juce::dontSendNotification);
     int idx = 1;
     // First item acts as a placeholder; selection id 1 corresponds to 'no external port selected'.

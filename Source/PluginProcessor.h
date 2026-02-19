@@ -175,6 +175,9 @@ public:
                 return true;
         }
 private:
+#if JUCE_MAC
+    struct TimestampedCoreMidiOut;
+#endif
     std::atomic<int> pulseWidthMs { 1 }; // mirror for fast access, but value comes from APVTS
     juce::AudioParameterInt* pulseWidthParam = nullptr;
     
@@ -247,6 +250,10 @@ private:
     juce::CriticalSection midiOutLock;
     juce::String externalDeviceId;   // identifier of selected external MIDI device
     void updateExternalOut();
+
+#if JUCE_MAC
+    std::shared_ptr<TimestampedCoreMidiOut> externalCoreMidiOut;
+#endif
     
     // Lightweight UI signal: incremented on each emitted MIDI clock
     std::atomic<unsigned long long> uiClockCounter { 0 };

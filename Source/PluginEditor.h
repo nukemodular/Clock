@@ -233,6 +233,10 @@ private:
     void populateNameBox();
     void showNewNameDialog();
     std::vector<juce::MidiDeviceInfo> midiOutputs;
+    // Cached MIDI input devices for the MIDI Remote overlay (gear / "system settings").
+    // Populated by refreshDeviceList(); the overlay reuses this cache to avoid
+    // CoreMIDI enumeration glitches while playing.
+    std::vector<juce::MidiDeviceInfo> remoteMidiInputs;
     // Persisted instrument names
     juce::StringArray instrumentNames;
     // Inline entry editor
