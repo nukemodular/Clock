@@ -1945,20 +1945,16 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
     }
 
     // Flush any queued external MIDI messages gathered while scheduling.
+    //
+    // IMPORTANT (macOS): Avoid sendBlockOfMessagesNow() for clock streams.
+    // That API sends all events immediately (no per-sample timing), which
+    // collapses an entire audio block's worth of MIDI Clock into a burst.
+    // Switching screens/apps (foreground changes) or brief CPU spikes can
+    // otherwise trigger that path and knock external devices out of sync.
     if (localOut && extClock.getNumEvents() > 0)
     {
-        // On macOS, when the standalone app (or some hosts) is backgrounded, the OS may
-        // throttle non-audio threads. JUCE's timed MIDI sending uses a background thread,
-        // which can lead to clumped / jittery MIDI clock when the process isn't foreground.
-        // In that case, prefer immediate sending for better continuity.
-        // Prefer immediate sending when:
-        // - the process is backgrounded (macOS may throttle helper threads), OR
-        // - the audio callback is arriving late (CPU pressure), OR
-        // - we simply want to avoid relying on a background sender thread.
-        if (! juce::Process::isForegroundProcess() || callbackLate)
-            localOut->sendBlockOfMessagesNow(extClock);
-        else
-            localOut->sendBlockOfMessages(extClock, juce::Time::getMillisecondCounterHiRes(), currentSampleRate);
+        // Timed sending preserves the intended spacing inside the block.
+        localOut->sendBlockOfMessages(extClock, juce::Time::getMillisecondCounterHiRes(), currentSampleRate);
     }
 
     // Per-tick clicks are written directly into the audio buffer in the scheduling loops above.
