@@ -5,6 +5,8 @@
 #include <utility>
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
+#include "GumroadLicenseValidator.h"
+#include "LicenseDialog.h"
 #include "build_info.h"
 #include "BinaryData.h"
 #include "UiTheme.h"
@@ -18,6 +20,7 @@
 namespace
 {
     const auto kFixedHeaderBaseColour = UiThemeColours::fixedBaseColour();
+    constexpr auto kGumroadProductId = "eaWDZgauhj9vCNxpyiBoIQ==";
 
     // Simple rectangular button
     class SimpleRectButton : public juce::Button
@@ -421,7 +424,11 @@ namespace
 
             g.setColour(theme.cyan().withAlpha(0.72f));
             g.setFont(juce::Font(juce::FontOptions("Arial", 10.0f, juce::Font::plain)));
-            g.drawFittedText("licensed to customer@email.com",
+            const auto licensedUser = processor.getLicenseUserUI().trim();
+            const auto licenseLine = licensedUser.isNotEmpty()
+                                        ? ("licensed to " + licensedUser)
+                                        : juce::String("licensed to customer@email.com");
+            g.drawFittedText(licenseLine,
                              juce::Rectangle<int>(10, 187, getWidth() - 20, 12),
                              juce::Justification::centred,
                              1);
@@ -1640,6 +1647,37 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     updateHeaderVisibility();
     resized();
     setVisible(true);
+
+    if (! processor.isLicensedUI())
+    {
+        toolboy_license::LicenseDialog::Config dialogConfig;
+        dialogConfig.title = "Register Clock v3";
+        dialogConfig.overlayColour = processor.theme.fixedBase().withAlpha(0.92f);
+        dialogConfig.panelColour = processor.theme.base().withAlpha(0.985f);
+        dialogConfig.textColour = processor.theme.cyan();
+        dialogConfig.accentColour = processor.theme.accent();
+
+        toolboy_license::GumroadLicenseValidator::Config validatorConfig;
+        validatorConfig.productId = kGumroadProductId;
+
+        licenseDialog = std::make_unique<toolboy_license::LicenseDialog>(
+            dialogConfig,
+            toolboy_license::GumroadLicenseValidator::makeValidator(std::move(validatorConfig)),
+            [this](const juce::String& licensedUser, const juce::String& providerKey)
+            {
+                return processor.saveLicenseUI(licensedUser, providerKey);
+            },
+            [this]()
+            {
+                repaint();
+                if (setupOverlayComp)
+                    setupOverlayComp->repaint();
+            });
+
+        addAndMakeVisible(*licenseDialog);
+        licenseDialog->setBounds(getLocalBounds());
+        licenseDialog->toFront(true);
+    }
 }
 
 void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
@@ -1740,6 +1778,13 @@ void ClockSyncAudioProcessorEditor::resized()
     uiRoot.setTransform(juce::AffineTransform::scale((float) uiScale));
     uiRoot.setTopLeftPosition(uiOffset);
     colorPaletteToggle.setPopupScale((float) uiScale);
+
+    if (licenseDialog)
+    {
+        licenseDialog->setBounds(getLocalBounds());
+        if (licenseDialog->isVisible())
+            licenseDialog->toFront(true);
+    }
 
     if (backdropLayer)  backdropLayer->setBounds(0, 0, kBaseW, kBaseH);
     if (overlayBgLayer) overlayBgLayer->setBounds(0, 0, kBaseW, kBaseH);

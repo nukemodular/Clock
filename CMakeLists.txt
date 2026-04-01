@@ -75,6 +75,12 @@ juce_add_plugin(ClockV3
 target_sources(ClockV3
     PRIVATE
         Source/DancerFramesCache.cpp
+        Source/GumroadLicenseValidator.cpp
+        Source/GumroadLicenseValidator.h
+        Source/LicenseDialog.cpp
+        Source/LicenseDialog.h
+        Source/LicenseManager.cpp
+        Source/LicenseManager.h
         Source/PluginProcessor.cpp
         Source/PluginEditor.cpp
         Source/PluginProcessor.h
@@ -99,6 +105,7 @@ target_link_libraries(ClockV3
         juce::juce_dsp
         juce::juce_gui_extra
         juce::juce_animation
+        juce::juce_cryptography
         juce::juce_core
     DancerFrames
 )

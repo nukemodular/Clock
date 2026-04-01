@@ -3,8 +3,10 @@ set -e
 
 # Configuration
 APP_NAME="toolBoy Clock v3"
+FALLBACK_APP_NAME="Clock v3"
 DMG_NAME="toolBoy_Clock_v3_Installer.dmg"
 VOL_NAME="toolBoy Clock v3 Installer"
+BUILD_PRESET="release"
 
 # Allow overriding via environment variables, and optionally via local id/ files.
 # (Do NOT commit private keys/secrets.)
@@ -30,7 +32,51 @@ fi
 
 STAGING_DIR="release_dmg_temp"
 
+find_bundle_dir() {
+    local format_dir="$1"
+    local suffix="$2"
+
+    if [ -d "build/release/ClockV3_artefacts/Release/${format_dir}/${APP_NAME}.${suffix}" ]; then
+        printf '%s' "build/release/ClockV3_artefacts/Release/${format_dir}/${APP_NAME}.${suffix}"
+        return 0
+    fi
+
+    if [ -d "build/release/ClockV3_artefacts/Release/${format_dir}/${FALLBACK_APP_NAME}.${suffix}" ]; then
+        printf '%s' "build/release/ClockV3_artefacts/Release/${format_dir}/${FALLBACK_APP_NAME}.${suffix}"
+        return 0
+    fi
+
+    return 1
+}
+
+find_bundle_binary() {
+    local bundle_path="$1"
+    local bundle_name
+    bundle_name="$(basename "$bundle_path")"
+    bundle_name="${bundle_name%.*}"
+    printf '%s' "$bundle_path/Contents/MacOS/$bundle_name"
+}
+
+verify_universal_binary() {
+    local binary_path="$1"
+    local archs
+
+    archs="$(lipo -archs "$binary_path")"
+    echo "Verified architectures for $(basename "$binary_path"): $archs"
+
+    if [[ "$archs" != *"arm64"* ]] || [[ "$archs" != *"x86_64"* ]]; then
+        echo "Error: expected universal binary with arm64 and x86_64: $binary_path"
+        exit 1
+    fi
+}
+
 echo "Starting packaging process..."
+
+echo "Configuring release preset..."
+cmake --preset "$BUILD_PRESET"
+
+echo "Building universal release..."
+cmake --build --preset "$BUILD_PRESET"
 
 # Clean staging
 rm -rf "$STAGING_DIR"
@@ -38,29 +84,52 @@ mkdir -p "$STAGING_DIR"
 
 # Copy artifacts
 echo "Copying artifacts..."
-if [ -d "build/release/ClockV3_artefacts/Release/AU/$APP_NAME.component" ]; then
-    cp -R "build/release/ClockV3_artefacts/Release/AU/$APP_NAME.component" "$STAGING_DIR/"
-else
-    echo "Error: AU component not found at build/release/ClockV3_artefacts/Release/AU/$APP_NAME.component"
+AU_SOURCE="$(find_bundle_dir "AU" "component")"
+VST3_SOURCE="$(find_bundle_dir "VST3" "vst3")"
+
+if [ -z "$AU_SOURCE" ]; then
+    echo "Error: AU component not found in release artefacts."
     exit 1
 fi
 
-if [ -d "build/release/ClockV3_artefacts/Release/VST3/$APP_NAME.vst3" ]; then
-    cp -R "build/release/ClockV3_artefacts/Release/VST3/$APP_NAME.vst3" "$STAGING_DIR/"
-else
-    echo "Error: VST3 bundle not found at build/release/ClockV3_artefacts/Release/VST3/$APP_NAME.vst3"
+if [ -z "$VST3_SOURCE" ]; then
+    echo "Error: VST3 bundle not found in release artefacts."
     exit 1
 fi
+
+cp -R "$AU_SOURCE" "$STAGING_DIR/$APP_NAME.component"
+cp -R "$VST3_SOURCE" "$STAGING_DIR/$APP_NAME.vst3"
+
+AU_BINARY="$(find_bundle_binary "$STAGING_DIR/$APP_NAME.component")"
+VST3_BINARY="$(find_bundle_binary "$STAGING_DIR/$APP_NAME.vst3")"
+
+verify_universal_binary "$AU_BINARY"
+verify_universal_binary "$VST3_BINARY"
 
 # Create symlinks to /Library/Audio/Plug-Ins/...
 echo "Creating symlinks..."
+ln -s "/Library/Audio/Plug-Ins" "$STAGING_DIR/Plug-Ins"
 ln -s "/Library/Audio/Plug-Ins/Components" "$STAGING_DIR/Components"
 ln -s "/Library/Audio/Plug-Ins/VST3" "$STAGING_DIR/VST3"
+
+cat > "$STAGING_DIR/INSTALL.txt" <<'EOF'
+toolBoy Clock v3 install
+
+1. Drag toolBoy Clock v3.component onto the Components link.
+2. Drag toolBoy Clock v3.vst3 onto the VST3 link.
+3. Or open the Plug-Ins link and copy the bundles manually.
+
+Formats included:
+- Audio Unit: Components
+- VST3: VST3
+EOF
 
 # Codesign
 echo "Codesigning binaries..."
 codesign --force --deep --options runtime --sign "$IDENTITY" --timestamp "$STAGING_DIR/$APP_NAME.component"
 codesign --force --deep --options runtime --sign "$IDENTITY" --timestamp "$STAGING_DIR/$APP_NAME.vst3"
+codesign --verify --deep --strict --verbose=2 "$STAGING_DIR/$APP_NAME.component"
+codesign --verify --deep --strict --verbose=2 "$STAGING_DIR/$APP_NAME.vst3"
 
 # Create DMG
 echo "Creating DMG..."
@@ -70,6 +139,7 @@ hdiutil create -volname "$VOL_NAME" -srcfolder "$STAGING_DIR" -ov -format UDZO "
 # Sign DMG
 echo "Signing DMG..."
 codesign --force --sign "$IDENTITY" --timestamp "$DMG_NAME"
+codesign --verify --strict --verbose=2 "$DMG_NAME"
 
 # Notarize
 echo "Notarizing DMG (using profile '$NOTARY_PROFILE')..."
@@ -77,6 +147,11 @@ if xcrun notarytool submit "$DMG_NAME" --keychain-profile "$NOTARY_PROFILE" --wa
     echo "Notarization successful."
     echo "Stapling ticket..."
     xcrun stapler staple "$DMG_NAME"
+    echo "Validating stapled DMG..."
+    xcrun stapler validate "$DMG_NAME"
+    if ! spctl -a -vv -t open "$DMG_NAME"; then
+        echo "Warning: spctl open assessment returned a non-fatal result for the DMG."
+    fi
 else
     echo "Notarization failed. Please check your keychain profile '$NOTARY_PROFILE'."
     echo "Create (or overwrite) the profile with: xcrun notarytool store-credentials '$NOTARY_PROFILE' ..."

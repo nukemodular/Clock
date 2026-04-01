@@ -4,6 +4,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_dsp/juce_dsp.h>
+#include "LicenseManager.h"
 #include "UiTheme.h"
 
 class ClockSyncAudioProcessor : public juce::AudioProcessor, public juce::ValueTree::Listener
@@ -105,6 +106,22 @@ public:
     bool consumeUiHostStartPending() { return uiHostStartPending.exchange(false, std::memory_order_acq_rel); }
     // Consume a pending idx1 blink step set by pattern triggers (returns 1..16, or 0 if none)
     int consumeUiIdx1BlinkStep() { return uiBlinkIdx1Step.exchange(0, std::memory_order_acq_rel); }
+    bool isLicensedUI() const { return toolboy_license::LicenseManager::isLicensed(licenseConfig_); }
+    juce::String getLicenseUserUI() const
+    {
+        juce::String licensedUser;
+        juce::String storedHash;
+        if (! toolboy_license::LicenseManager::loadLicense(licenseConfig_, licensedUser, storedHash))
+            return {};
+
+        return toolboy_license::LicenseManager::validateHardware(licenseConfig_, licensedUser, storedHash)
+            ? licensedUser
+            : juce::String();
+    }
+    bool saveLicenseUI(const juce::String& licensedUser, const juce::String& providerKey) const
+    {
+        return toolboy_license::LicenseManager::saveLicense(licenseConfig_, licensedUser, providerKey);
+    }
 
     // Legacy mode: when enabled we emit a MIDI Stop a few ticks before each scheduled Start
     // (trigger restart, bar restart, rate change) and gate MIDI clock pulses between the Stop
@@ -178,6 +195,13 @@ private:
 #if JUCE_MAC
     struct TimestampedCoreMidiOut;
 #endif
+    const toolboy_license::LicenseManager::Config licenseConfig_ {
+        "toolBoy/Clock v3",
+        "clock_v3.lic",
+        "toolboy_clock_v3_gumroad_2026",
+        "toolboy_clock_v3_machine",
+        "toolBoy"
+    };
     std::atomic<int> pulseWidthMs { 1 }; // mirror for fast access, but value comes from APVTS
     juce::AudioParameterInt* pulseWidthParam = nullptr;
     

@@ -15,6 +15,7 @@
 #include "SvgDancerComponent.h"
 
 class ClockEditorPaintLayer;
+namespace toolboy_license { class LicenseDialog; }
 
 class ColorPaletteToggle : public juce::Component
 {
@@ -180,8 +181,9 @@ private:
         auto popupBounds = box.getBounds();
         const int popupGap = (int) std::round(-4.0f * popupScale);
         const int screenGap = juce::jmax(2, (int) std::round(2.0f * popupScale));
+        const bool openToRight = getDotBounds(dotIndex).getCentreX() >= (getWidth() / 2);
 
-        if (dotIndex == 0)
+        if (openToRight)
             popupBounds.setX(targetArea.getRight() + popupGap);
         else
             popupBounds.setX(targetArea.getX() - popupBounds.getWidth() - popupGap);
@@ -367,6 +369,7 @@ private:
     // Canvas overlay toggled by setup.svg (independent of header submenu)
     bool setupOverlayVisible { false };
     std::unique_ptr<juce::Component> setupOverlayComp; // consumes mouse inside overlay bounds
+    std::unique_ptr<toolboy_license::LicenseDialog> licenseDialog;
     // std::unique_ptr<juce::DrawableButton> setupOverlayClose; // Removed as per request
 
     // Handle Escape to close overlay when visible
