@@ -20,18 +20,41 @@ endif()
 
 add_subdirectory(JUCE)
 
-# Embed consolidated dancer SVG (layered file) only; individual per-frame assets removed.
+# Embed per-frame dancer SVGs and setup art.
 juce_add_binary_data(DancerFrames
   NAMESPACE BinaryData
   SOURCES
-    assets/dancer_fix.svg
+        assets/Dancer_frames/Dancer_1.svg
+        assets/Dancer_frames/Dancer_2.svg
+        assets/Dancer_frames/Dancer_3.svg
+        assets/Dancer_frames/Dancer_4.svg
+        assets/Dancer_frames/Dancer_5.svg
+        assets/Dancer_frames/Dancer_6.svg
+        assets/Dancer_frames/Dancer_7.svg
+        assets/Dancer_frames/Dancer_8.svg
+        assets/Dancer_frames/Dancer_9.svg
+        assets/Dancer_frames/Dancer_10.svg
+        assets/Dancer_frames/Dancer_11.svg
+        assets/Dancer_frames/Dancer_12.svg
+        assets/Dancer_frames/Dancer_13.svg
+        assets/Dancer_frames/Dancer_14.svg
+        assets/Dancer_frames/Dancer_15.svg
+        assets/Dancer_frames/Dancer_16.svg
+        assets/Dancer_frames/Dancer_17.svg
+        assets/Dancer_frames/Dancer_18.svg
+        assets/Dancer_frames/Dancer_19.svg
+        assets/Dancer_frames/Dancer_20.svg
+        assets/Dancer_frames/Dancer_21.svg
+        assets/Dancer_frames/Dancer_22.svg
+        assets/Dancer_frames/Dancer_23.svg
+        assets/Dancer_frames/Dancer_24.svg
     assets/setup.svg
 )
 
 
 juce_add_plugin(ClockV3
     COMPANY_NAME "toolBoy"
-    PRODUCT_NAME "toolBoy Clock v3"
+    PRODUCT_NAME "Clock v3"
     BUNDLE_ID com.toolboy.clock_v3
     # Build as an effect (FX) so hosts classify it as an audio effect
     IS_SYNTH FALSE
@@ -51,6 +74,7 @@ juce_add_plugin(ClockV3
 
 target_sources(ClockV3
     PRIVATE
+        Source/DancerFramesCache.cpp
         Source/PluginProcessor.cpp
         Source/PluginEditor.cpp
         Source/PluginProcessor.h
@@ -116,12 +140,12 @@ if (APPLE)
     #   cmake --install <build-dir> --component <component-name> --prefix /Library
     install(TARGETS ClockV3
         BUNDLE DESTINATION "Audio/Plug-Ins/VST3"
-        COMPONENT "toolBoy Clock v3_vst3")
+        COMPONENT "Clock v3_vst3")
 
     # Install the AU component bundle into the standard Components location
     install(TARGETS ClockV3
         BUNDLE DESTINATION "Audio/Plug-Ins/Components"
-        COMPONENT "toolBoy Clock v3_au")
+        COMPONENT "Clock v3_au")
 endif()
 
 

@@ -17,13 +17,16 @@ class ClockSyncAudioProcessorEditor;
 
 struct UiThemeColours
 {
+    static juce::Colour fixedBaseColour() { return juce::Colour::fromRGB(0x26, 0x26, 0x26); }
+
     juce::Colour accentColour { juce::Colour::fromRGB(0xFF, 0x4E, 0x5B) };
-    juce::Colour baseColour   { juce::Colour::fromRGB(0x26, 0x26, 0x26) };
+    juce::Colour baseColour   { fixedBaseColour() };
     juce::Colour cyanColour   { juce::Colour::fromRGB(0x00, 0xD7, 0xFF) };
 
     juce::Colour accent() const { return accentColour; }
     juce::Colour base()   const { return baseColour; }
     juce::Colour cyan()   const { return cyanColour; }
+    juce::Colour fixedBase() const { return fixedBaseColour(); }
 
     void setAccent(juce::Colour c) { accentColour = c; }
     void setBase(juce::Colour c)   { baseColour = c; }
@@ -46,7 +49,7 @@ public:
         if (b.getToggleState() || isDown) fill = theme.cyan();
         else if (isHighlighted) fill = theme.accent().brighter(0.25f);
 
-        g.setColour(theme.base());
+        g.setColour(theme.fixedBase());
         g.fillRoundedRectangle(r.translated(2.0f, 2.0f), corner);
         g.setColour(fill);
         g.fillRoundedRectangle(r, corner);
@@ -54,7 +57,7 @@ public:
 
     void drawButtonText(juce::Graphics& g, juce::TextButton& b, bool, bool) override
     {
-        g.setColour(theme.base());
+        g.setColour(theme.fixedBase());
         g.setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)));
         g.drawFittedText(b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, 1);
     }
@@ -63,7 +66,7 @@ public:
     {
         juce::ignoreUnused(isMouseOverButton, isButtonDown);
         drawButtonBackground(g, b, juce::Colours::transparentBlack, isMouseOverButton, isButtonDown);
-        g.setColour(theme.base());
+        g.setColour(theme.fixedBase());
         g.setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)));
         g.drawFittedText(b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, 1);
     }
@@ -75,7 +78,7 @@ public:
 
     void drawPopupMenuBackground(juce::Graphics& g, int w, int h) override
     {
-        g.fillAll(theme.base());
+        g.fillAll(theme.fixedBase());
         g.setColour(theme.accent());
         g.drawRect(0, 0, w, h, 1);
     }
@@ -93,7 +96,7 @@ public:
 
         juce::Colour textCol;
         if (! isActive) textCol = theme.accent().withAlpha(0.5f);
-        else if (isHighlighted) textCol = theme.base();
+        else if (isHighlighted) textCol = theme.fixedBase();
         else if (isTicked) textCol = theme.cyan();
         else textCol = theme.accent();
 
@@ -106,7 +109,23 @@ public:
         g.setColour(textCol);
         g.setFont(getPopupMenuFont());
         auto r = area.reduced(6);
-        g.drawFittedText(text, r, juce::Justification::centredLeft, 1);
+        const bool isDeleteCurrentAction = (text == "delete current");
+
+        if (isDeleteCurrentAction)
+        {
+            auto textArea = r.withTrimmedRight(16);
+            g.drawFittedText(text, textArea, juce::Justification::centredLeft, 1);
+
+            auto xArea = r.removeFromRight(14);
+            g.setColour(isHighlighted ? theme.fixedBase().withAlpha(0.9f) : theme.cyan().withAlpha(0.9f));
+            g.setFont(juce::Font(juce::FontOptions("Arial", 11.0f, juce::Font::bold)));
+            g.drawFittedText("X", xArea, juce::Justification::centred, 1);
+        }
+        else
+        {
+            g.drawFittedText(text, r, juce::Justification::centredLeft, 1);
+        }
+
         if (shortcut.isNotEmpty())
         {
             g.setColour(textCol.withAlpha(0.8f));

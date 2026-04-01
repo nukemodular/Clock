@@ -87,7 +87,7 @@ public:
 
         // Draw combo background (no text) to avoid LookAndFeel text drawing
         auto bounds = getLocalBounds();
-        g.setColour(theme.base());
+        g.setColour(theme.fixedBase());
         g.fillRoundedRectangle(bounds.toFloat(), 3.0f);
         g.setColour(theme.accent());
         g.drawRoundedRectangle(bounds.toFloat().reduced(0.5f), 3.0f, 1.5f);
@@ -238,6 +238,32 @@ private:
     UiThemeColours& theme;
 };
 
+class NameComboBox : public FullWidthComboBox
+{
+public:
+    explicit NameComboBox(UiThemeColours& t) : FullWidthComboBox(t) {}
+
+    std::function<void()> onEditCurrentRequest;
+
+    void mouseDown(const juce::MouseEvent&) override
+    {
+        if (onEditCurrentRequest)
+            onEditCurrentRequest();
+    }
+
+    void mouseDoubleClick(const juce::MouseEvent&) override
+    {
+        if (onEditCurrentRequest)
+            onEditCurrentRequest();
+    }
+
+    void showPopup() override
+    {
+        if (onEditCurrentRequest)
+            onEditCurrentRequest();
+    }
+};
+
 // Reentrancy guard member added to FullWidthComboBox above; declare here to avoid
 // altering public API ordering in patches. (No further changes required.)
 
@@ -291,7 +317,7 @@ public:
         p.lineTo(w * 0.0f, 0.0f);
         p.lineTo(w * 1.0f, 0.0f);
         p.closeSubPath();
-        g.setColour(theme.base());
+        g.setColour(theme.fixedBase());
         g.fillPath(p);
         // Draw a smaller accent triangle inside the base triangle
         juce::Path p2;
@@ -453,7 +479,7 @@ public:
         auto cx = (float) (b.getX() + 5);
         auto cy = (float) b.getCentreY();
         g.setColour(juce::Colours::black.withAlpha(0.5f));
-        g.fillEllipse(cx - ledR - 1.5f, cy - ledR + 1.5f, ledR * 2.0f, ledR * 2.0f);
+        g.fillEllipse(cx - ledR - 1.0f, cy - ledR + 1.0f, ledR * 2.0f, ledR * 2.0f);
         auto ledColour = theme.cyan().withAlpha(0.33f).interpolatedWith(theme.cyan().withAlpha(0.99f), ledLevel);
         g.setColour(ledColour);
         g.fillEllipse(cx - ledR, cy - ledR, ledR * 2.0f, ledR * 2.0f);
@@ -471,9 +497,17 @@ private:
 class SimpleColorPicker : public juce::Component
 {
 public:
-    SimpleColorPicker()
+    explicit SimpleColorPicker(UiThemeColours& themeToUse, float uiScale = 1.0f) : theme(themeToUse)
     {
-        setSize(90, 120);
+        setScaleFactor(uiScale);
+    }
+
+    void setScaleFactor(float newScale)
+    {
+        scaleFactor = juce::jmax(0.5f, newScale);
+        setSize((int) std::round(96.0f * scaleFactor),
+                (int) std::round(110.0f * scaleFactor));
+        repaint();
     }
 
     void setCurrentColour(juce::Colour c)
@@ -499,7 +533,8 @@ public:
     
     void handleMouse(const juce::MouseEvent& e)
     {
-        int col = e.x / 30;
+        const int columnWidth = juce::jmax(1, getWidth() / 3);
+        const int col = juce::jlimit(0, 2, e.x / columnWidth);
         float normY = (float)e.y / (float)getHeight();
         normY = juce::jlimit(0.0f, 1.0f, normY);
         
@@ -513,67 +548,91 @@ public:
     
     void paint(juce::Graphics& g) override
     {
-        g.fillAll(juce::Colours::darkgrey); // Background
+        auto bounds = getLocalBounds().toFloat();
+        auto popupBase = theme.base();
+        g.setColour(popupBase);
+        g.fillRect(bounds);
+
+        const float marginX = 2.0f * scaleFactor;
+        const float marginY = 6.0f * scaleFactor;
+        const float columnGap = 4.0f * scaleFactor;
+        const float usableHeight = juce::jmax(1.0f, bounds.getHeight() - marginY * 2.0f);
+        const float columnWidth = (bounds.getWidth() - marginX * 2.0f - columnGap * 2.0f) / 3.0f;
+        const float markerHeight = 6.0f * scaleFactor;
+        const float markerCorner = 2.0f * scaleFactor;
+        const float markerStroke = juce::jmax(1.0f, scaleFactor);
+
+        const float hueX = marginX;
+        const float satX = hueX + columnWidth + columnGap;
+        const float briX = satX + columnWidth + columnGap;
         
         // Hue (Col 0)
         {
             juce::ColourGradient grad;
-            grad.point1 = { 15.0f, 0.0f };
-            grad.point2 = { 15.0f, (float)getHeight() };
+            grad.point1 = { hueX + columnWidth * 0.5f, marginY };
+            grad.point2 = { hueX + columnWidth * 0.5f, marginY + usableHeight };
             for(float i=0.0f; i<=1.0f; i+=0.1f) grad.addColour(i, juce::Colour::fromHSV(i, 1.0f, 1.0f, 1.0f));
             g.setGradientFill(grad);
-            g.fillRect(0, 0, 30, getHeight());
+            g.fillRect(hueX, marginY, columnWidth, usableHeight);
             
-            float y = currentHue * getHeight();
-            g.setColour(juce::Colours::black);
-            g.drawRect(0, (int)y-2, 30, 4, 2);
-            g.setColour(juce::Colours::white);
-            g.drawRect(0, (int)y-2, 30, 4, 1);
+            float y = marginY + currentHue * usableHeight;
+            g.setColour(theme.accent().brighter(0.55f));
+            g.drawRoundedRectangle(hueX + scaleFactor,
+                                   y - markerHeight * 0.5f,
+                                   columnWidth - 2.0f * scaleFactor,
+                                   markerHeight,
+                                   markerCorner,
+                                   markerStroke);
         }
         
         // Sat (Col 1)
         {
             juce::ColourGradient grad;
-            grad.point1 = { 45.0f, 0.0f };
-            grad.point2 = { 45.0f, (float)getHeight() };
+            grad.point1 = { satX + columnWidth * 0.5f, marginY };
+            grad.point2 = { satX + columnWidth * 0.5f, marginY + usableHeight };
             // Top: Pure Color (Sat 1), Bottom: White (Sat 0)
             grad.addColour(0.0f, juce::Colour::fromHSV(currentHue, 1.0f, 1.0f, 1.0f));
             grad.addColour(1.0f, juce::Colour::fromHSV(currentHue, 0.0f, 1.0f, 1.0f));
             g.setGradientFill(grad);
-            g.fillRect(30, 0, 30, getHeight());
+            g.fillRect(satX, marginY, columnWidth, usableHeight);
             
-            float y = (1.0f - currentSat) * getHeight();
-            g.setColour(juce::Colours::black);
-            g.drawRect(30, (int)y-2, 30, 4, 2);
-            g.setColour(juce::Colours::white);
-            g.drawRect(30, (int)y-2, 30, 4, 1);
+            float y = marginY + (1.0f - currentSat) * usableHeight;
+            g.setColour(theme.accent().brighter(0.35f));
+            g.drawRoundedRectangle(satX + scaleFactor,
+                                   y - markerHeight * 0.5f,
+                                   columnWidth - 2.0f * scaleFactor,
+                                   markerHeight,
+                                   markerCorner,
+                                   markerStroke);
         }
         
         // Bri (Col 2)
         {
             juce::ColourGradient grad;
-            grad.point1 = { 75.0f, 0.0f };
-            grad.point2 = { 75.0f, (float)getHeight() };
+            grad.point1 = { briX + columnWidth * 0.5f, marginY };
+            grad.point2 = { briX + columnWidth * 0.5f, marginY + usableHeight };
             // Top: Pure Color (Bri 1), Bottom: Black (Bri 0)
             grad.addColour(0.0f, juce::Colour::fromHSV(currentHue, currentSat, 1.0f, 1.0f));
             grad.addColour(1.0f, juce::Colours::black);
             g.setGradientFill(grad);
-            g.fillRect(60, 0, 30, getHeight());
+            g.fillRect(briX, marginY, columnWidth, usableHeight);
             
-            float y = (1.0f - currentBri) * getHeight();
-            g.setColour(juce::Colours::white);
-            g.drawRect(60, (int)y-2, 30, 4, 2);
-            g.setColour(juce::Colours::black);
-            g.drawRect(60, (int)y-2, 30, 4, 1);
+            float y = marginY + (1.0f - currentBri) * usableHeight;
+            g.setColour(theme.accent().brighter(0.25f));
+            g.drawRoundedRectangle(briX + scaleFactor,
+                                   y - markerHeight * 0.5f,
+                                   columnWidth - 2.0f * scaleFactor,
+                                   markerHeight,
+                                   markerCorner,
+                                   markerStroke);
         }
-        
-        g.setColour(juce::Colours::black);
-        g.drawRect(getLocalBounds(), 1);
     }
 
 private:
     juce::Colour currentColour;
     float currentHue = 0.0f, currentSat = 0.0f, currentBri = 1.0f;
+    float scaleFactor = 1.0f;
+    UiThemeColours& theme;
 
     void updateTarget()
     {

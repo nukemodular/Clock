@@ -1,74 +1,96 @@
-﻿﻿#include "UiAssets.h"
+#include "UiAssets.h"
 #include "BinaryData.h"
+
+#include <array>
 #include <mutex>
 
-namespace {
+namespace
+{
+    constexpr const char* kCanonicalViewBox = "0 0 520 520";
+
+    struct EmbeddedSvg
+    {
+        const char* data;
+        int size;
+    };
+
+    constexpr EmbeddedSvg makeSvg(const char* data, int size) noexcept
+    {
+        return { data, size };
+    }
+
+    void removeGuideCircles(juce::XmlElement& element)
+    {
+        for (auto* child = element.getFirstChildElement(); child != nullptr;)
+        {
+            auto* next = child->getNextElement();
+            removeGuideCircles(*child);
+
+            if (child->hasTagName("circle"))
+            {
+                const auto radius = child->getDoubleAttribute("r", -1.0);
+                if (radius >= 250.0)
+                    element.removeChildElement(child, true);
+            }
+
+            child = next;
+        }
+    }
+
     std::once_flag loadOnceFlag;
     std::vector<std::unique_ptr<juce::Drawable>> frames;
-    bool loaded = false;
-    const juce::Colour accentColour = juce::Colour(0xFF4E5B); // #FF4E5B
 
-    void scrubColours(juce::XmlElement& el)
-    {
-        if (el.hasTagName("path") || el.hasTagName("rect") || el.hasTagName("circle") || el.hasTagName("ellipse") || el.hasTagName("polygon") || el.hasTagName("polyline") || el.hasTagName("g"))
-        {
-            auto hex = accentColour.toDisplayString(false);
-            if (! hex.startsWithChar('#')) hex = "#" + hex.removeCharacters("#");
-            el.setAttribute("fill", hex);
-            el.setAttribute("stroke", hex);
-            el.removeAttribute("style"); // drop embedded styling to reduce parse overhead
-        }
-        forEachXmlChildElement(el, child) scrubColours(*child);
-    }
+    const std::array<EmbeddedSvg, 24> embeddedFrames = {
+        makeSvg(BinaryData::Dancer_1_svg, BinaryData::Dancer_1_svgSize),
+        makeSvg(BinaryData::Dancer_2_svg, BinaryData::Dancer_2_svgSize),
+        makeSvg(BinaryData::Dancer_3_svg, BinaryData::Dancer_3_svgSize),
+        makeSvg(BinaryData::Dancer_4_svg, BinaryData::Dancer_4_svgSize),
+        makeSvg(BinaryData::Dancer_5_svg, BinaryData::Dancer_5_svgSize),
+        makeSvg(BinaryData::Dancer_6_svg, BinaryData::Dancer_6_svgSize),
+        makeSvg(BinaryData::Dancer_7_svg, BinaryData::Dancer_7_svgSize),
+        makeSvg(BinaryData::Dancer_8_svg, BinaryData::Dancer_8_svgSize),
+        makeSvg(BinaryData::Dancer_9_svg, BinaryData::Dancer_9_svgSize),
+        makeSvg(BinaryData::Dancer_10_svg, BinaryData::Dancer_10_svgSize),
+        makeSvg(BinaryData::Dancer_11_svg, BinaryData::Dancer_11_svgSize),
+        makeSvg(BinaryData::Dancer_12_svg, BinaryData::Dancer_12_svgSize),
+        makeSvg(BinaryData::Dancer_13_svg, BinaryData::Dancer_13_svgSize),
+        makeSvg(BinaryData::Dancer_14_svg, BinaryData::Dancer_14_svgSize),
+        makeSvg(BinaryData::Dancer_15_svg, BinaryData::Dancer_15_svgSize),
+        makeSvg(BinaryData::Dancer_16_svg, BinaryData::Dancer_16_svgSize),
+        makeSvg(BinaryData::Dancer_17_svg, BinaryData::Dancer_17_svgSize),
+        makeSvg(BinaryData::Dancer_18_svg, BinaryData::Dancer_18_svgSize),
+        makeSvg(BinaryData::Dancer_19_svg, BinaryData::Dancer_19_svgSize),
+        makeSvg(BinaryData::Dancer_20_svg, BinaryData::Dancer_20_svgSize),
+        makeSvg(BinaryData::Dancer_21_svg, BinaryData::Dancer_21_svgSize),
+        makeSvg(BinaryData::Dancer_22_svg, BinaryData::Dancer_22_svgSize),
+        makeSvg(BinaryData::Dancer_23_svg, BinaryData::Dancer_23_svgSize),
+        makeSvg(BinaryData::Dancer_24_svg, BinaryData::Dancer_24_svgSize)
+    };
 }
 
 void DancerFramesCache::ensureLoaded()
 {
     std::call_once(loadOnceFlag, []
     {
-        const char* ptr = BinaryData::dancer_all_svg;
-        const size_t sz = BinaryData::dancer_all_svgSize;
-        if (ptr == nullptr || sz == 0) { loaded = true; return; }
-        juce::String svgText = juce::String::fromUTF8(ptr, (int) sz);
-        juce::XmlDocument doc(svgText);
-        std::unique_ptr<juce::XmlElement> root(doc.getDocumentElement());
-        if (! root) { loaded = true; return; }
-        scrubColours(*root); // pre-colour everything
+        frames.reserve(embeddedFrames.size());
 
-        // Gather layer groups
-        std::vector<juce::XmlElement*> layerGroups;
-        for (auto* child = root->getFirstChildElement(); child != nullptr; child = child->getNextElement())
+        for (const auto& resource : embeddedFrames)
         {
-            if (child->hasTagName("g"))
+            if (resource.data == nullptr || resource.size <= 0)
+                continue;
+
+            if (auto svgXml = juce::XmlDocument::parse(juce::String::fromUTF8(resource.data, resource.size)))
             {
-                auto id = child->getStringAttribute("id");
-                if (id.startsWithIgnoreCase("Layer"))
-                    layerGroups.push_back(child);
+                removeGuideCircles(*svgXml);
+                svgXml->setAttribute("viewBox", kCanonicalViewBox);
+                svgXml->setAttribute("width", "520");
+                svgXml->setAttribute("height", "520");
+                svgXml->setAttribute("preserveAspectRatio", "xMidYMid meet");
+
+                if (auto drawable = juce::Drawable::createFromSVG(*svgXml))
+                    frames.push_back(std::move(drawable));
             }
         }
-
-        if (layerGroups.empty())
-        {
-            // Fallback: single drawable from whole root
-            if (auto d = juce::Drawable::createFromSVG(*root))
-                frames.push_back(std::move(d));
-            loaded = true;
-            return;
-        }
-
-        frames.reserve(layerGroups.size());
-        for (auto* g : layerGroups)
-        {
-            juce::XmlElement svg("svg");
-            if (root->hasAttribute("viewBox")) svg.setAttribute("viewBox", root->getStringAttribute("viewBox"));
-            if (root->hasAttribute("width"))   svg.setAttribute("width", root->getStringAttribute("width"));
-            if (root->hasAttribute("height"))  svg.setAttribute("height", root->getStringAttribute("height"));
-            svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-            svg.addChildElement(new juce::XmlElement(*g));
-            if (auto d = juce::Drawable::createFromSVG(svg))
-                frames.push_back(std::move(d));
-        }
-        loaded = true;
     });
 }
 
@@ -81,6 +103,8 @@ int DancerFramesCache::getFrameCount()
 juce::Drawable* DancerFramesCache::getFrame(int index)
 {
     ensureLoaded();
-    if (index < 0 || index >= (int) frames.size()) return nullptr;
+    if (index < 0 || index >= (int) frames.size())
+        return nullptr;
+
     return frames[(size_t) index].get();
 }

@@ -18,15 +18,47 @@ class ClockEditorPaintLayer;
 
 class ColorPaletteToggle : public juce::Component
 {
+    class PopupCalloutLookAndFeel : public juce::LookAndFeel_V4
+    {
+    public:
+        explicit PopupCalloutLookAndFeel(UiThemeColours& t) : theme(t) {}
+
+        void setScaleFactor(float newScale) { scaleFactor = juce::jmax(0.5f, newScale); }
+
+        void drawCallOutBoxBackground(juce::CallOutBox&, juce::Graphics& g, const juce::Path& path, juce::Image&) override
+        {
+            g.setColour(theme.base().withAlpha(0.97f));
+            g.fillPath(path);
+        }
+
+        int getCallOutBoxBorderSize(const juce::CallOutBox&) override { return (int) std::round(8.0f * scaleFactor); }
+        float getCallOutBoxCornerSize(const juce::CallOutBox&) override { return 3.0f * scaleFactor; }
+
+    private:
+        UiThemeColours& theme;
+        float scaleFactor { 1.0f };
+    };
+
     UiThemeColours& theme;
     juce::Component::SafePointer<juce::CallOutBox> colorPickerBox;
+    PopupCalloutLookAndFeel popupLookAndFeel;
 
 public:
+    static constexpr int kDotSize = 15;
+    static constexpr int kDotGap = 4;
+    static constexpr int kActiveDotExpand = 2;
+
     std::function<void()> onColorChanged;
 
-    ColorPaletteToggle(UiThemeColours& t) : theme(t)
+    ColorPaletteToggle(UiThemeColours& t) : theme(t), popupLookAndFeel(t)
     {
         // No button setup needed
+    }
+
+    void setPopupScale(float newScale)
+    {
+        popupScale = juce::jmax(0.5f, newScale);
+        popupLookAndFeel.setScaleFactor(popupScale);
     }
 
     ~ColorPaletteToggle() override
@@ -37,37 +69,62 @@ public:
     
     void paint(juce::Graphics& g) override
     {
-        // Invisible background
-        // Draw 3 squares 10x10 horizontally: Accent, Cyan, Base
-        int sqSize = 10;
-        int gap = 2;
-        int totalW = 3 * sqSize + 2 * gap;
-        int startX = (getWidth() - totalW) / 2;
-        int y = (getHeight() - sqSize) / 2;
+        if (activeDotIndex >= 0 && colorPickerBox == nullptr)
+            activeDotIndex = -1;
+
+        const auto accentBounds = getDotPaintBounds(0).toFloat();
+        const auto cyanBounds = getDotPaintBounds(1).toFloat();
+        const auto baseBounds = getDotPaintBounds(2).toFloat();
 
         g.setColour(theme.accent());
-        g.fillRect(startX, y, sqSize, sqSize);
+        g.fillEllipse(accentBounds);
 
         g.setColour(theme.cyan());
-        g.fillRect(startX + sqSize + gap, y, sqSize, sqSize);
+        g.fillEllipse(cyanBounds);
 
         g.setColour(theme.base());
-        g.fillRect(startX + 2 * (sqSize + gap), y, sqSize, sqSize);
+        g.fillEllipse(baseBounds);
+    }
+
+    juce::Rectangle<int> getDotBounds(int dotIndex) const
+    {
+        const int step = kDotSize + kDotGap;
+        const int totalH = 3 * kDotSize + 2 * kDotGap;
+        const int leftX = (getWidth() - kDotSize - step) / 2;
+        const int rightX = leftX + step;
+        const int startY = (getHeight() - totalH) / 2;
+
+        switch (dotIndex)
+        {
+            case 0: return { leftX, startY + step, kDotSize, kDotSize }; // accent
+            case 1: return { rightX, startY, kDotSize, kDotSize }; // cyan
+            case 2: return { leftX, startY, kDotSize, kDotSize }; // base in old accent slot
+            default: break;
+        }
+
+        return { leftX, startY, kDotSize, kDotSize };
+    }
+
+    juce::Rectangle<int> getDotPaintBounds(int dotIndex) const
+    {
+        auto bounds = getDotBounds(dotIndex);
+
+        if (dotIndex == activeDotIndex)
+            bounds = bounds.expanded(kActiveDotExpand, kActiveDotExpand);
+
+        return bounds;
     }
 
     void mouseDown(const juce::MouseEvent& e) override
     {
-        int sqSize = 10;
-        int gap = 2;
-        int totalW = 3 * sqSize + 2 * gap;
-        int startX = (getWidth() - totalW) / 2;
-        int y = (getHeight() - sqSize) / 2;
-
-        if (e.y >= y && e.y < y + sqSize)
+        for (int dotIndex = 0; dotIndex < 3; ++dotIndex)
         {
+            if (! getDotBounds(dotIndex).contains(e.getPosition()))
+                continue;
+
             juce::Component::SafePointer<ColorPaletteToggle> safeThis (this);
 
-            if (e.x >= startX && e.x < startX + sqSize)
+            if (dotIndex == 0)
             {
                 if (e.mods.isShiftDown())
                 {
@@ -77,10 +134,10 @@ public:
                 }
                 else
                 {
-                    showColourPicker(theme.accent(), [safeThis](juce::Colour c){ if (safeThis) safeThis->theme.setAccent(c); });
+                    showColourPicker(theme.accent(), [safeThis](juce::Colour c){ if (safeThis) safeThis->theme.setAccent(c); }, 0);
                 }
             }
-            else if (e.x >= startX + sqSize + gap && e.x < startX + 2 * sqSize + gap)
+            else if (dotIndex == 1)
             {
                 if (e.mods.isShiftDown())
                 {
@@ -90,10 +147,10 @@ public:
                 }
                 else
                 {
-                    showColourPicker(theme.cyan(), [safeThis](juce::Colour c){ if (safeThis) safeThis->theme.setCyan(c); });
+                    showColourPicker(theme.cyan(), [safeThis](juce::Colour c){ if (safeThis) safeThis->theme.setCyan(c); }, 1);
                 }
             }
-            else if (e.x >= startX + 2 * (sqSize + gap) && e.x < startX + 3 * sqSize + 2 * gap)
+            else if (dotIndex == 2)
             {
                 if (e.mods.isShiftDown())
                 {
@@ -103,33 +160,78 @@ public:
                 }
                 else
                 {
-                    showColourPicker(theme.base(), [safeThis](juce::Colour c){ if (safeThis) safeThis->theme.setBase(c); });
+                    showColourPicker(theme.base(), [safeThis](juce::Colour c){ if (safeThis) safeThis->theme.setBase(c); }, 2);
                 }
             }
+
+            return;
         }
     }
 
 private:
-    void showColourPicker(juce::Colour currentColour, std::function<void(juce::Colour)> setter)
+    juce::Rectangle<int> makePopupTargetArea(int dotIndex) const
     {
+        return localAreaToGlobal(getDotBounds(dotIndex).expanded((int) std::round(3.0f * popupScale),
+                                                                 (int) std::round(2.0f * popupScale)));
+    }
+
+    void positionPopupBox(juce::CallOutBox& box, const juce::Rectangle<int>& targetArea, int dotIndex) const
+    {
+        auto popupBounds = box.getBounds();
+        const int popupGap = (int) std::round(-4.0f * popupScale);
+        const int screenGap = juce::jmax(2, (int) std::round(2.0f * popupScale));
+
+        if (dotIndex == 0)
+            popupBounds.setX(targetArea.getRight() + popupGap);
+        else
+            popupBounds.setX(targetArea.getX() - popupBounds.getWidth() - popupGap);
+
+        popupBounds.setY(targetArea.getCentreY() - popupBounds.getHeight() / 2);
+
+        if (auto* display = juce::Desktop::getInstance().getDisplays().getDisplayForRect(targetArea))
+            popupBounds = popupBounds.constrainedWithin(display->userArea.reduced(screenGap));
+
+        box.setBounds(popupBounds);
+    }
+
+    void showColourPicker(juce::Colour currentColour, std::function<void(juce::Colour)> setter, int dotIndex)
+    {
+        if (colorPickerBox)
+            colorPickerBox->dismiss();
+
+        activeDotIndex = dotIndex;
+        repaint();
+
         juce::Component::SafePointer<ColorPaletteToggle> safeThis (this);
-        auto* content = new SimpleColorPicker();
+        auto* content = new SimpleColorPicker(theme, popupScale);
         content->setCurrentColour(currentColour);
         content->onColorChanged = [setter, safeThis](juce::Colour c) {
             if (setter) setter(c);
             if (safeThis != nullptr)
             {
+                if (safeThis->colorPickerBox != nullptr)
+                {
+                    if (auto* picker = safeThis->colorPickerBox->getChildComponent(0))
+                        picker->repaint();
+                    safeThis->colorPickerBox->repaint();
+                }
+
                 if(safeThis->onColorChanged) safeThis->onColorChanged(); 
                 safeThis->repaint(); 
             }
         };
         
-        // Point to right edge to encourage placement to the right.
-        // Use nullptr parent so it's a desktop window (avoids clipping).
-        auto area = getScreenBounds();
-        auto target = area.removeFromRight(15);
-        colorPickerBox = &juce::CallOutBox::launchAsynchronously(std::unique_ptr<juce::Component>(content), target, nullptr);
+        auto targetArea = makePopupTargetArea(dotIndex);
+
+        auto& box = juce::CallOutBox::launchAsynchronously(std::unique_ptr<juce::Component>(content), targetArea, nullptr);
+        box.setLookAndFeel(&popupLookAndFeel);
+        box.setArrowSize(9.0f * popupScale);
+        positionPopupBox(box, targetArea, dotIndex);
+        colorPickerBox = &box;
     }
+
+    int activeDotIndex { -1 };
+    float popupScale { 1.0f };
 };
 
 class ClockSyncAudioProcessorEditor : public juce::AudioProcessorEditor, private juce::Timer
@@ -198,13 +300,15 @@ private:
     juce::TextButton legacyModernButton { "LEGACY" };
     juce::TextButton sppButton { "S.P.P. OFF" };
     // New: instrument name combo + NAME/MIDI toggle
-    FullWidthComboBox nameBox;
+    NameComboBox nameBox;
     juce::TextButton nameMidiSwitch { "NAME" };
     // Sync Latch toggle
     juce::TextButton syncLatchButton { "SYNC" };
 
     // Name editor helper
     void toggleNameEditorOrCommit();
+    void showInlineNameEditor(const juce::String& initialText, int editingId);
+    void updateInlineNameEditorBounds();
     // Small center-dot click toggle
     SmallDotToggle clickButton;
     // Pattern start fine-tune UI removed
@@ -241,6 +345,7 @@ private:
     juce::StringArray instrumentNames;
     // Inline entry editor
     std::unique_ptr<juce::TextEditor> nameEntryEditor;
+    int nameEntryEditingId { 0 };
 
     // Minimal help toggle: transparent background, only draws bold '?' text.
     HelpButton helpToggle;

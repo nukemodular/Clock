@@ -1,154 +1,94 @@
 #include "SvgDancerComponent.h"
-#include "BinaryData.h"
+
+#include "UiAssets.h"
+
+namespace
+{
+    constexpr float kDancerAnchorSize = 520.0f;
+}
 
 SvgDancerComponent::SvgDancerComponent()
 {
-    // Load SVG from BinaryData
-    auto svgXml = juce::XmlDocument::parse(juce::String::createStringFromData(BinaryData::dancer_fix_svg, BinaryData::dancer_fix_svgSize));
-    if (svgXml)
-    {
-        rootDrawable = juce::Drawable::createFromSVG(*svgXml);
-        parseLayers();
-    }
-}
-
-void SvgDancerComponent::parseLayers()
-{
-    if (auto* composite = dynamic_cast<juce::DrawableComposite*>(rootDrawable.get()))
-    {
-        // Iterate children to find layers
-        auto children = composite->getChildren();
-        
-        // Resize layers vector to accommodate potential IDs
-        // We assume IDs are layer0..layer23
-        layers.resize(24, nullptr);
-        
-        for (auto* child : children)
-        {
-             juce::String id = child->getComponentID();
-             if (id.startsWith("layer"))
-             {
-                 int index = id.substring(5).getIntValue();
-                 if (index >= 0 && index < 24)
-                 {
-                     if (auto* d = dynamic_cast<juce::Drawable*>(child))
-                     {
-                         layers[index] = d;
-                         d->setVisible(false); // Hide all initially
-                     }
-                 }
-             }
-        }
-    }
+    rebuildTintedFrames();
 }
 
 void SvgDancerComponent::setFrame(int frameIndex)
 {
-    if (frameIndex < 0) frameIndex = 0;
-    if (frameIndex >= layers.size()) frameIndex = (int)layers.size() - 1;
-    
-    if (currentFrame == frameIndex) return;
-    
+    const auto totalFrames = DancerFramesCache::getFrameCount();
+    if (totalFrames <= 0)
+        return;
+
+    frameIndex = juce::jlimit(0, totalFrames - 1, frameIndex);
+
+    if (currentFrame == frameIndex)
+        return;
+
     currentFrame = frameIndex;
+
     repaint();
 }
 
 void SvgDancerComponent::setTint(juce::Colour c)
 {
-    if (tintColour != c)
-    {
-        tintColour = c;
-        // Invalidate cache
-        for (auto& img : frameCache)
-            img = juce::Image();
-        repaint();
-    }
+    if (tintColour == c)
+        return;
+
+    tintColour = c;
+    rebuildTintedFrames();
+    repaint();
 }
 
 void SvgDancerComponent::resized()
 {
-    // Invalidate cache on resize
-    for (auto& img : frameCache)
-        img = juce::Image();
 }
 
 void SvgDancerComponent::paint(juce::Graphics& g)
 {
-    if (useCache)
+    const auto frameCount = DancerFramesCache::getFrameCount();
+    if (currentFrame < 0 || currentFrame >= frameCount)
+        return;
+
+    if ((int) tintedFrames.size() != frameCount)
+        rebuildTintedFrames();
+
+    if (currentFrame < 0 || currentFrame >= (int) tintedFrames.size())
+        return;
+
+    if (auto* drawable = tintedFrames[(size_t) currentFrame].get())
     {
-        auto img = getCachedFrame(currentFrame, getWidth(), getHeight());
-        if (img.isValid())
-            g.drawImage(img, getLocalBounds().toFloat());
-    }
-    else
-    {
-        // Direct drawing (fallback)
-        if (currentFrame >= 0 && currentFrame < layers.size())
-        {
-            if (auto* d = layers[currentFrame])
-            {
-                // Hide all, show one, draw root
-                for (auto* l : layers) if (l) l->setVisible(false);
-                d->setVisible(true);
-                
-                if (rootDrawable)
-                {
-                    auto bounds = getLocalBounds().toFloat();
-                    auto scaled = bounds.withSizeKeepingCentre(bounds.getWidth() * 0.85f, bounds.getHeight() * 0.85f);
-                    rootDrawable->drawWithin(g, scaled, juce::RectanglePlacement::centred, 1.0f);
-                }
-                    
-                d->setVisible(false);
-            }
-        }
+        auto scaled = getLocalBounds().toFloat().reduced(15.0f);
+
+        const auto sourceBounds = juce::Rectangle<float>(0.0f, 0.0f, kDancerAnchorSize, kDancerAnchorSize);
+        const auto transform = juce::RectanglePlacement(juce::RectanglePlacement::centred)
+                                   .getTransformToFit(sourceBounds, scaled);
+
+        drawable->draw(g, 1.0f, transform);
     }
 }
 
-juce::Image SvgDancerComponent::getCachedFrame(int index, int w, int h)
+void SvgDancerComponent::rebuildTintedFrames()
 {
-    if (index < 0 || index >= layers.size()) return {};
-    if (w <= 0 || h <= 0) return {};
-    
-    // Resize cache if needed
-    if (frameCache.size() != layers.size()) frameCache.resize(layers.size());
-    
-    auto& img = frameCache[index];
-    if (img.isNull() || img.getWidth() != w || img.getHeight() != h)
+    const auto frameCount = DancerFramesCache::getFrameCount();
+    tintedFrames.clear();
+    tintedFrames.resize((size_t) juce::jmax(0, frameCount));
+
+    const auto replacement = tintColour.isTransparent() ? juce::Colour::fromRGB(0xFF, 0x14, 0x00)
+                                                         : tintColour;
+
+    for (int index = 0; index < frameCount; ++index)
     {
-        // Rasterize
-        img = juce::Image(juce::Image::ARGB, w, h, true);
+        if (auto* original = DancerFramesCache::getFrame(index))
         {
-            juce::Graphics g(img);
-            
-            if (auto* d = layers[index])
+            auto copy = original->createCopy();
+            if (copy)
             {
-                // Hide all, show one, draw root
-                for (auto* l : layers) if (l) l->setVisible(false);
-                d->setVisible(true);
-                
-                if (rootDrawable)
-                {
-                    auto bounds = juce::Rectangle<float>(0, 0, (float)w, (float)h);
-                    auto scaled = bounds.withSizeKeepingCentre(bounds.getWidth() * 0.75f, bounds.getHeight() * 0.75f);
-                    rootDrawable->drawWithin(g, scaled, juce::RectanglePlacement::centred, 1.0f);
-                }
-                    
-                d->setVisible(false);
+                copy->replaceColour(juce::Colour::fromRGB(0xFF, 0x14, 0x00), replacement);
+                copy->replaceColour(juce::Colour::fromRGB(0xFF, 0x00, 0x06), replacement);
+                copy->replaceColour(juce::Colour::fromRGBA(0xFA, 0x22, 0x03, 0xFF), replacement);
+                copy->replaceColour(juce::Colour::fromRGBA(0x7C, 0x8B, 0xFF, 0x87), replacement.withAlpha(0.53f));
+                copy->replaceColour(juce::Colour::fromRGBA(0x75, 0xFF, 0xC5, 0xBF), replacement.withAlpha(0.75f));
+                tintedFrames[(size_t) index] = std::move(copy);
             }
         }
-        
-        // Apply tint if needed
-        if (!tintColour.isTransparent())
-        {
-            juce::Image::BitmapData bd(img, juce::Image::BitmapData::readWrite);
-            for (int y = 0; y < img.getHeight(); ++y)
-                for (int x = 0; x < img.getWidth(); ++x)
-                {
-                    auto col = bd.getPixelColour(x, y);
-                    if (col.getAlpha() > 0)
-                        bd.setPixelColour(x, y, tintColour.withAlpha(col.getFloatAlpha()));
-                }
-        }
     }
-    return img;
 }

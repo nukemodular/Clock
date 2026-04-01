@@ -8,7 +8,7 @@ void ThemeLNF::drawComboBox(juce::Graphics& g, int w, int h, bool isButtonDown, 
 {
     juce::ignoreUnused(isButtonDown, buttonX, buttonY, buttonW, buttonH);
     auto bounds = juce::Rectangle<int>(0, 0, w, h);
-    g.setColour(theme.base());
+    g.setColour(theme.fixedBase());
     g.fillRoundedRectangle(bounds.toFloat(), 3.0f);
     g.setColour(theme.accent());
     g.drawRoundedRectangle(bounds.toFloat().reduced(0.5f), 3.0f, 1.5f);

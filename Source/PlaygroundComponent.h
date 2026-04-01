@@ -78,6 +78,9 @@ private:
 class Ring16Component : public juce::Component, private juce::Timer
 {
 public:
+    // Quick toggle for experimentation (set to false to revert the new behaviour).
+    static constexpr bool kShowOffsetHoverInPatternEdit = true;
+
     Ring16Component(UiThemeColours& t) : theme(t)
     {
         setWantsKeyboardFocus(true);
@@ -191,21 +194,35 @@ public:
             // Draw outer reference ring faint with adjusted alpha.
             //   g.setColour(theme.accent().withAlpha(0.1f));
             //   g.drawEllipse(b.getCentreX()-outerR, b.getCentreY()-outerR, outerR*2, outerR*2, 1.0f);
-            // Selected offset wedge (radially reduced by 1px)
-            if (selected >= 0)
+            const int selIdx = selected;
+            const int chaseIdx = playheadRaw;
+
+            // Hover wedge (subtle) so OFFSET selection intent is obvious even in pattern edit mode.
+            if (kShowOffsetHoverInPatternEdit && hovered >= 0)
             {
-                int selIdx = selected;
-                const juce::Path &segHi = wedgePathsSelected[(size_t)selIdx];
+                const int hovIdx = hovered & 15;
+                if (hovIdx != selIdx && hovIdx != chaseIdx)
+                {
+                    const juce::Path& seg = wedgePaths[(size_t) hovIdx];
+                    g.setColour(theme.accent().darker(0.25f).withAlpha(0.25f));
+                    g.fillPath(seg);
+                }
+            }
+
+            // Selected offset wedge (radially reduced by 1px)
+            if (selIdx >= 0)
+            {
+                const juce::Path& segHi = wedgePathsSelected[(size_t) selIdx];
                 g.setColour(theme.cyan().withAlpha(0.55f));
                 g.fillPath(segHi);
                 g.setColour(theme.cyan().withAlpha(1.0f));
                 g.strokePath(segHi, juce::PathStrokeType(1.0f));
             }
+
             // Chase/playhead wedge (different) — draw full wedge so chase colour renders at full thickness
-            if (playheadRaw >= 0)
+            if (chaseIdx >= 0)
             {
-                int chaseIdx = playheadRaw;
-                const juce::Path &seg = wedgePaths[(size_t)chaseIdx];
+                const juce::Path& seg = wedgePaths[(size_t) chaseIdx];
                 g.setColour(theme.cyan().withAlpha(isPlaying ? 0.75f : 0.45f));
                 g.fillPath(seg);
             }
@@ -850,15 +867,15 @@ inline PlaygroundComponent::PlaygroundComponent(UiThemeColours& t) : theme(t)
     setSize(300, 240);
     // Allow this component to receive keyboard focus (for future shortcuts if needed).
     setWantsKeyboardFocus(true);
-    baseCircles.add({150.0f, 130.0f, 70.0f, juce::Colours::orangered});
-    baseCircles.add({244.0f, 85.0f, 35.0f, juce::Colours::goldenrod});
-    baseCircles.add({233.0f, 132.0f, 14.0f, juce::Colours::turquoise});
-    baseCircles.add({235.0f, 170.0f, 25.0f, juce::Colours::mediumpurple});
-    baseCircles.add({96.0f, 189.0f, 11.0f, juce::Colours::yellowgreen});
-    baseCircles.add({78.0f, 172.0f, 14.0f, juce::Colours::pink});
-    baseCircles.add({56.0f, 140.0f, 25.0f, juce::Colours::seagreen});
-    baseCircles.add({70.0f, 80.0f, 25.0f, juce::Colours::greenyellow});
-    baseCircles.add({201.0f, 64.0f, 14.0f, juce::Colours::blueviolet});
+    baseCircles.add({150.0f, 135.0f, 70.0f, juce::Colours::orangered});
+    baseCircles.add({244.0f, 90.0f, 35.0f, juce::Colours::goldenrod});
+    baseCircles.add({233.0f, 137.0f, 14.0f, juce::Colours::turquoise});
+    baseCircles.add({235.0f, 175.0f, 25.0f, juce::Colours::mediumpurple});
+    baseCircles.add({96.0f, 194.0f, 11.0f, juce::Colours::yellowgreen});
+    baseCircles.add({78.0f, 177.0f, 14.0f, juce::Colours::pink});
+    baseCircles.add({56.0f, 145.0f, 25.0f, juce::Colours::seagreen});
+    baseCircles.add({70.0f, 85.0f, 25.0f, juce::Colours::greenyellow});
+    baseCircles.add({201.0f, 69.0f, 14.0f, juce::Colours::blueviolet});
     circles = baseCircles;
     flashes.resize(circles.size());
     scheduledPulseAtMs.resize(circles.size());
@@ -880,7 +897,7 @@ inline PlaygroundComponent::PlaygroundComponent(UiThemeColours& t) : theme(t)
     ring->onInnerHover = [this](bool in)
     { if (patternEditMode) return; if (in){ hoverIndex=0; ringHoverSegment=-1; } else if (hoverIndex==0) hoverIndex=-1; repaint(); };
     ring->onClicked = [this](int logical)
-    { if (patternEditMode) return; ringSelectedSegment=logical; ring->setGlobalRestartLogical(logical); if (onResyncStepRequested) onResyncStepRequested(logical+1); repaint(); };
+    { ringSelectedSegment=logical; ring->setGlobalRestartLogical(logical); if (onResyncStepRequested) onResyncStepRequested(logical+1); repaint(); };
     // Ring playback state changes should NOT automatically toggle the Run parameter.
     // User interactions (clicking idx0) drive parameter changes; host transport should
     // only affect the engine/playhead without mutating UI button state.
@@ -976,13 +993,13 @@ inline PlaygroundComponent::PlaygroundComponent(UiThemeColours& t) : theme(t)
             }
         }
         repaint(); };
-    shufflePositions.add({1, 96.0f, 189.0f, 11.0f});
-    shufflePositions.add({2, 109.0f, 200.0f, 12.0f});
-    shufflePositions.add({3, 124.0f, 208.0f, 13.0f});
-    shufflePositions.add({4, 143.0f, 213.0f, 14.0f});
-    shufflePositions.add({5, 163.0f, 213.0f, 15.0f});
-    shufflePositions.add({6, 184.0f, 208.0f, 16.0f});
-    shufflePositions.add({7, 204.0f, 197.0f, 17.0f});
+    shufflePositions.add({1, 96.0f, 194.0f, 11.0f});
+    shufflePositions.add({2, 109.0f, 205.0f, 12.0f});
+    shufflePositions.add({3, 124.0f, 213.0f, 13.0f});
+    shufflePositions.add({4, 143.0f, 218.0f, 14.0f});
+    shufflePositions.add({5, 163.0f, 218.0f, 15.0f});
+    shufflePositions.add({6, 184.0f, 213.0f, 16.0f});
+    shufflePositions.add({7, 204.0f, 202.0f, 17.0f});
     selectedShuffle = 1;
     shuffleTextOffsets.add({0.3f, 0.1f});
     shuffleTextOffsets.add({0.6f, 0.2f});
@@ -1004,10 +1021,10 @@ inline PlaygroundComponent::PlaygroundComponent(UiThemeColours& t) : theme(t)
     popup6.setLabels(extra6Labels);
     popup6.setAngles(extra6StartAngleDeg, extra6EndAngleDeg);
     popup6.setCircleRadius(extra6R);
-    popup6.setExpansionRadius(extra6R - 6.0f);
+    popup6.setExpansionRadius(extra6R - 1.0f);
     popup6.setAnimDurationMs(extra6AnimDurationMs);
     popup6.setStaggerMs(extra6StaggerMs);
-    popup3.setLabels({"RND", "64", "32", "16", "8", "4", "2", "1", "OFF"});
+    popup3.setLabels({"64", "32", "16", "8", "4", "2", "1", "OFF"});
     popup3.setAngles(150.0f, -420.0f);
     popup3.setCircleRadius(11.0f);
     popup3.setExpansionRadius(15.0f);
@@ -2017,7 +2034,7 @@ inline void PlaygroundComponent::mouseDown(const juce::MouseEvent &e)
             if (clicked >= 0 && clicked < labs.size())
                 mainCircle3Label = labs[clicked];
             // Map popup3 selection to auto trigger scheduling.
-            // Indices: 0:RND 1:64 2:32 3:16 4:8 5:4 6:2 7:1 8:OFF
+            // Indices: 0:64 1:32 2:16 3:8 4:4 5:2 6:1 7:OFF
             // Reset progress counter on change so cyan progress respects the
             // new global bar count immediately.
             autoTriggerRandom = false;
@@ -2025,30 +2042,27 @@ inline void PlaygroundComponent::mouseDown(const juce::MouseEvent &e)
             switch (clicked)
             {
             case 0:
-                autoTriggerRandom = true;
-                break; // random each bar (probability)
-            case 1:
                 autoTriggerIntervalBars = 64;
                 break;
-            case 2:
+            case 1:
                 autoTriggerIntervalBars = 32;
                 break;
-            case 3:
+            case 2:
                 autoTriggerIntervalBars = 16;
                 break;
-            case 4:
+            case 3:
                 autoTriggerIntervalBars = 8;
                 break;
-            case 5:
+            case 4:
                 autoTriggerIntervalBars = 4;
                 break;
-            case 6:
+            case 5:
                 autoTriggerIntervalBars = 2;
                 break;
-            case 7:
+            case 6:
                 autoTriggerIntervalBars = 1;
                 break;
-            case 8:
+            case 7:
             default:
                 autoTriggerIntervalBars = 0;
                 break; // OFF

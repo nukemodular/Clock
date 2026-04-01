@@ -438,11 +438,11 @@ ClockSyncAudioProcessor::ClockSyncAudioProcessor()
       parameters(*this, nullptr, juce::Identifier("ClockSyncParams"), createParameterLayout())
 {
     // Initialize MIDI Remote defaults
-    midiRemoteStart.store(0);
-    midiRemoteStop.store(2);
-    midiRemoteTrigger.store(1);
-    midiRemoteResync.store(3);
-    midiRemoteGatedSync.store(4); // Default to E -2
+    midiRemoteStart.store(1);   // C#-2
+    midiRemoteStop.store(3);    // D#-2
+    midiRemoteTrigger.store(6); // F#-2
+    midiRemoteResync.store(8);  // G#-2
+    midiRemoteGatedSync.store(10); // A#-2
 
     // Initialise MIDI-remote NOTE/CC modes from persisted state (default NOTE)
     midiRemoteStartIsCC.store((bool) parameters.state.getProperty("midiRemoteStartIsCC", false), std::memory_order_relaxed);
@@ -502,6 +502,12 @@ void ClockSyncAudioProcessor::updateMidiRemoteInDevice()
 
 void ClockSyncAudioProcessor::handleRemoteMidiMessage(const juce::MidiMessage& msg)
 {
+    const auto publishRemoteTriggerVisual = [this]()
+    {
+        uiBlinkIdx1Step.store(juce::jlimit(1, 16, uiStep16.load(std::memory_order_relaxed)),
+                              std::memory_order_relaxed);
+    };
+
     const int gatedSyncMapping = midiRemoteGatedSync.load(std::memory_order_relaxed);
     const bool gatedSyncIsCC = midiRemoteGatedSyncIsCC.load(std::memory_order_relaxed);
     const bool gatedSyncActive = (gatedSyncMapping >= 0) && syncLatchEnabled.load(std::memory_order_relaxed);
@@ -563,6 +569,7 @@ void ClockSyncAudioProcessor::handleRemoteMidiMessage(const juce::MidiMessage& m
         }
         else if (! triggerIsCC && remoteTrigger >= 0 && note == remoteTrigger)
         {
+            publishRemoteTriggerVisual();
             requestTriggerOnce();
         }
         else if (! resyncIsCC && remoteResync >= 0 && note == remoteResync)
@@ -622,6 +629,7 @@ void ClockSyncAudioProcessor::handleRemoteMidiMessage(const juce::MidiMessage& m
                 }
                 else if (triggerIsCC && remoteTrigger >= 0 && cc == remoteTrigger)
                 {
+                    publishRemoteTriggerVisual();
                     requestTriggerOnce();
                 }
                 else if (resyncIsCC && remoteResync >= 0 && cc == remoteResync)
@@ -1089,7 +1097,16 @@ void ClockSyncAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         juce::MidiBuffer remoteIn;
         midiRemoteCollector.removeNextBlockOfMessages(remoteIn, buffer.getNumSamples());
         for (const auto metadata : remoteIn)
+        {
+            const auto message = metadata.getMessage();
+
+            // External remote devices should still pass their note traffic through
+            // to the plugin's MIDI output while remaining available as control input.
+            if (message.isNoteOnOrOff())
+                midi.addEvent(message, metadata.samplePosition);
+
             handleRemoteMidiMessage(metadata.getMessage());
+        }
     }
 
     juce::ScopedNoDenormals noDenormals;
@@ -1579,76 +1596,39 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                 // Only restart if the plugin is set to RUN. If Stopped, DAW start should not override.
                 if (runParamCached)
                 {
-                    // When starting exactly on a bar boundary, honour the user-selected
-                    // offset step by arming the normal pendingStart path. This ensures
-                    // the first emitted Start lands on the chosen wedge instead of
-                    // always forcing step 1 at transport start.
-                    int offsetStep = 1;
-                    if (auto* pi = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramResyncOffsetStep)))
-                        offsetStep = juce::jlimit(1, 16, pi->get());
+                    // On DAW restart (STOP -> START), we want a clean re-sync.
+                    // If the transport starts mid-bar, don't continue clocks from the previous phase;
+                    // instead, arm a pending start and wait for the NEXT bar boundary before emitting Start + clocks.
+                    // If the transport starts at a bar boundary, we still honour the user-selected OFFSET step.
                     const bool nearBarStart = (posInBar <= 1.0e-6);
-                    const bool delayToOffset = nearBarStart && offsetStep != 1;
+                    const bool startedMidBar = ! nearBarStart;
 
-                    if (delayToOffset)
-                    {
-                        pendingStart = true;
-                        runActive = false;
-                        uiIsRunning.store(false, std::memory_order_relaxed);
-                        uiPendingStart.store(true, std::memory_order_relaxed);
-                        uiNextRestartPending.store(true, std::memory_order_relaxed);
-                        // Suppress clocks/clicks until the offset Start is emitted.
-                        suppressUntilRestart = true;
-                        audioPulsesEnabled.store(false, std::memory_order_relaxed);
-                        hostStartSampleThisBlock = -1;
-                        firstBlock = false;
-                        uiHostStartPending.store(true, std::memory_order_relaxed);
+                    pendingStart = true;
+                    runActive = false;
+                    uiIsRunning.store(false, std::memory_order_relaxed);
+                    uiPendingStart.store(true, std::memory_order_relaxed);
+                    uiNextRestartPending.store(true, std::memory_order_relaxed);
+                    // Suppress clocks/clicks until the scheduled Start is emitted.
+                    suppressUntilRestart = true;
+                    audioPulsesEnabled.store(false, std::memory_order_relaxed);
+                    firstBlock = false;
+                    uiHostStartPending.store(true, std::memory_order_relaxed);
 
-                        // Reset internal pattern scheduling state so intervals realign with host bars
-                        lastPatternFiredBar = -1;
-                        nextRandomPatternTargetBar = -1;
-                        lastPatternRestartScheduledBar = -1;
-                        pendingPatternRestartTargetBar.store(-1, std::memory_order_relaxed);
-                        // Defer auto bar restarts until first pattern interval fires
-                        const int modeAtStart = patternBarsMode.load(std::memory_order_relaxed);
-                        deferBarRestartUntilPattern.store(modeAtStart > 0, std::memory_order_relaxed);
-                    }
-                    else
-                    {
-                        const bool atStart = (ppqStart < 1e-6);
-                        const auto startMsg = atStart ? juce::MidiMessage::midiStart() : juce::MidiMessage::midiContinue();
+                    // If we started mid-bar, force the pending start to wrap to the next bar (not the next offset occurrence in this bar).
+                    // If we started at a bar boundary, allow the offset step inside the current bar (including immediate when offset==1).
+                    forceNextBarStart = startedMidBar;
 
-                        // Legacy mode: send Stop before Start
-                        if (legacyModeEnabled.load(std::memory_order_relaxed))
-                        {
-                            const auto stopMsg = juce::MidiMessage::midiStop();
-                            midi.addEvent(stopMsg, 0);
-                            extClock.addEvent(stopMsg, 0);
-                        }
+                    // Reset internal pattern scheduling state so intervals realign with host bars
+                    lastPatternFiredBar = -1;
+                    nextRandomPatternTargetBar = -1;
+                    lastPatternRestartScheduledBar = -1;
+                    pendingPatternRestartTargetBar.store(-1, std::memory_order_relaxed);
+                    // Defer auto bar restarts until first pattern interval fires
+                    const int modeAtStart = patternBarsMode.load(std::memory_order_relaxed);
+                    deferBarRestartUntilPattern.store(modeAtStart > 0, std::memory_order_relaxed);
 
-                        // Coalesced start: host start always allowed; record bar/step for duplicate suppression.
-                        lastStartBar.store(computeCurrentBar(ppqStart, barLenQLocal), std::memory_order_relaxed);
-                        lastStartStep.store(1, std::memory_order_relaxed);
-                        midi.addEvent(startMsg, 0);
-                        haveHostStartMsg = true;
-                        hostStartMsg = startMsg;
-                        hostForcedAllowMidiOut = true;
-                        runActive = true;
-                        pendingStart = false;
-                        uiIsRunning.store(true, std::memory_order_relaxed);
-                        uiPendingStart.store(false, std::memory_order_relaxed);
-                        hostStartSampleThisBlock = 0;
-                        uiStep16.store(1, std::memory_order_relaxed);
-                        firstBlock = false;
-                        audioPulsesEnabled.store(true, std::memory_order_release);
-                        uiHostStartPending.store(true, std::memory_order_relaxed);
-                        // Reset internal pattern scheduling state so intervals realign with host bars
-                        lastPatternFiredBar = -1;
-                        nextRandomPatternTargetBar = -1;
-                        lastPatternRestartScheduledBar = -1;
-                        pendingPatternRestartTargetBar.store(-1, std::memory_order_relaxed);
-                        const int modeAtStart = patternBarsMode.load(std::memory_order_relaxed);
-                        deferBarRestartUntilPattern.store(modeAtStart > 0, std::memory_order_relaxed);
-                    }
+                    // If we started at an exact bar boundary but the OFFSET is not step-1, we still wait until that offset.
+                    // (No special-case needed here; handleBarAlignedChanges will schedule it.)
                 }
                 else
                 {
@@ -2342,6 +2322,11 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
         if (cur != lastOffsetStep)
         {
             lastOffsetStep = cur;
+            // Treat OFFSET changes as an explicit resync request. This is important
+            // when pattern interval mode is active, because `pendingBarRestart` can
+            // be deferred until the first pattern firing; the resync path is not.
+            notifyResyncOffsetChanged();
+
             if (triggerModeEnabled.load(std::memory_order_relaxed))
             {
                 pendingBarRestart.store(true, std::memory_order_relaxed);
@@ -2536,6 +2521,11 @@ void ClockSyncAudioProcessor::tryFirePattern(double ppqStart, double barLenQ, do
 {
     // In Sync Latch (GATE) mode, pattern firing is disabled.
     if (syncLatchEnabled.load(std::memory_order_relaxed))
+        return;
+
+    // When we are intentionally suppressing clocks/clicks until a scheduled restart boundary
+    // (e.g. DAW restart mid-bar), do not emit pattern-driven Starts mid-bar.
+    if (suppressUntilRestart)
         return;
 
     // Allow pattern-driven Starts to fire even when the internal `runActive` flag
@@ -2933,10 +2923,23 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
     {
         // Schedule at the next occurrence of the selected step within the bar (modulo behavior)
         double deltaQ = stepQWithinBar - posInBar;
-        if (deltaQ < -kBarEps)
-            deltaQ += barLenQ; // wrap into the next bar if passed
-        if (posInBar <= kBarEps && stepIndex0 == 0)
-            deltaQ = 0.0; // allow immediate restart at bar start when offset=1
+
+        // Some operations (e.g. DAW restart mid-bar, rate-change realign) must always wrap
+        // to the NEXT bar before applying the offset step. This prevents the clock from
+        // "continuing" mid-bar and gives external gear a clean re-sync point.
+        if (forceNextBarStart && (haveStart || haveRateChange))
+        {
+            deltaQ = (barLenQ - posInBar) + stepQWithinBar;
+            // Consume the one-shot force flag so subsequent scheduling returns to modulo behaviour.
+            forceNextBarStart = false;
+        }
+        else
+        {
+            if (deltaQ < -kBarEps)
+                deltaQ += barLenQ; // wrap into the next bar if passed
+            if (posInBar <= kBarEps && stepIndex0 == 0)
+                deltaQ = 0.0; // allow immediate restart at bar start when offset=1
+        }
 
         sampleOffset = fastRoundPositive(deltaQ * samplesPerQuarter);
         // Determine which bar this scheduled restart will fall into. If a pattern
@@ -3296,14 +3299,14 @@ void ClockSyncAudioProcessor::setStateInformation(const void* data, int sizeInBy
             externalDeviceId = vt.getProperty("externalDeviceId").toString();
 
             // Restore MIDI Remote settings
-            midiRemoteStart.store(vt.getProperty("midiRemoteStart", 0), std::memory_order_relaxed);
+            midiRemoteStart.store(vt.getProperty("midiRemoteStart", 1), std::memory_order_relaxed);
             midiRemoteStop.store(vt.getProperty("midiRemoteStop", 3), std::memory_order_relaxed);
-            midiRemoteTrigger.store(vt.getProperty("midiRemoteTrigger", 2), std::memory_order_relaxed);
+            midiRemoteTrigger.store(vt.getProperty("midiRemoteTrigger", 6), std::memory_order_relaxed);
             midiRemoteOffset.store(vt.getProperty("midiRemoteOffset", -1), std::memory_order_relaxed);
             midiRemoteShuffle.store(vt.getProperty("midiRemoteShuffle", -1), std::memory_order_relaxed);
             midiRemoteClockDiv.store(vt.getProperty("midiRemoteClockDiv", -1), std::memory_order_relaxed);
-            midiRemoteResync.store(vt.getProperty("midiRemoteResync", 4), std::memory_order_relaxed);
-            midiRemoteGatedSync.store(vt.getProperty("midiRemoteGatedSync", -1), std::memory_order_relaxed);
+            midiRemoteResync.store(vt.getProperty("midiRemoteResync", 8), std::memory_order_relaxed);
+            midiRemoteGatedSync.store(vt.getProperty("midiRemoteGatedSync", 10), std::memory_order_relaxed);
             midiRemoteAutoFill.store(vt.getProperty("midiRemoteAutoFill", -1), std::memory_order_relaxed);
 
             // Restore NOTE/CC mode for remotes that can be either
