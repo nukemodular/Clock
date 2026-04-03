@@ -106,9 +106,29 @@ public:
     bool consumeUiHostStartPending() { return uiHostStartPending.exchange(false, std::memory_order_acq_rel); }
     // Consume a pending idx1 blink step set by pattern triggers (returns 1..16, or 0 if none)
     int consumeUiIdx1BlinkStep() { return uiBlinkIdx1Step.exchange(0, std::memory_order_acq_rel); }
-    bool isLicensedUI() const { return toolboy_license::LicenseManager::isLicensed(licenseConfig_); }
+     bool isDemoBuildUI() const
+     {
+         #if CLOCKV3_DEMO
+          return true;
+         #else
+          return false;
+         #endif
+     }
+     int getDemoRemainingSecondsUI() const;
+     bool isDemoExpiredUI() const;
+     bool isLicensedUI() const
+     {
+         #if CLOCKV3_DEMO
+          return true;
+         #else
+          return toolboy_license::LicenseManager::isLicensed(licenseConfig_);
+         #endif
+     }
     juce::String getLicenseUserUI() const
     {
+         #if CLOCKV3_DEMO
+          return "DEMO";
+         #else
         juce::String licensedUser;
         juce::String storedHash;
         if (! toolboy_license::LicenseManager::loadLicense(licenseConfig_, licensedUser, storedHash))
@@ -117,6 +137,7 @@ public:
         return toolboy_license::LicenseManager::validateHardware(licenseConfig_, licensedUser, storedHash)
             ? licensedUser
             : juce::String();
+         #endif
     }
     bool saveLicenseUI(const juce::String& licensedUser, const juce::String& providerKey) const
     {
@@ -202,6 +223,10 @@ private:
         "toolboy_clock_v3_machine",
         "toolBoy"
     };
+    static constexpr int kDemoRuntimeSeconds = 30 * 60;
+    std::atomic<juce::uint32> demoStartTickMs { 0 };
+    std::atomic<bool> demoStopSent { false };
+    int computeDemoRemainingSeconds(juce::uint32 nowTickMs) const noexcept;
     std::atomic<int> pulseWidthMs { 1 }; // mirror for fast access, but value comes from APVTS
     juce::AudioParameterInt* pulseWidthParam = nullptr;
     

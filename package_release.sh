@@ -2,11 +2,13 @@
 set -e
 
 # Configuration
-APP_NAME="toolBoy Clock v3"
-FALLBACK_APP_NAME="Clock v3"
-DMG_NAME="toolBoy_Clock_v3_Installer.dmg"
-VOL_NAME="toolBoy Clock v3 Installer"
-BUILD_PRESET="release"
+APP_NAME="${APP_NAME:-toolBoy Clock v3}"
+FALLBACK_APP_NAME="${FALLBACK_APP_NAME:-Clock v3}"
+DMG_NAME="${DMG_NAME:-toolBoy_Clock_v3_Installer.dmg}"
+VOL_NAME="${VOL_NAME:-toolBoy Clock v3 Installer}"
+BUILD_PRESET="${BUILD_PRESET:-release}"
+ARTEFACTS_DIR="${ARTEFACTS_DIR:-build/release/ClockV3_artefacts/Release}"
+STAGING_DIR="${STAGING_DIR:-release_dmg_temp}"
 
 # Allow overriding via environment variables, and optionally via local id/ files.
 # (Do NOT commit private keys/secrets.)
@@ -30,19 +32,17 @@ if [ -f "$ID_DIR/notary_profile.txt" ] && [ "$NOTARY_PROFILE" = "$DEFAULT_NOTARY
     NOTARY_PROFILE="$(cat "$ID_DIR/notary_profile.txt")"
 fi
 
-STAGING_DIR="release_dmg_temp"
-
 find_bundle_dir() {
     local format_dir="$1"
     local suffix="$2"
 
-    if [ -d "build/release/ClockV3_artefacts/Release/${format_dir}/${APP_NAME}.${suffix}" ]; then
-        printf '%s' "build/release/ClockV3_artefacts/Release/${format_dir}/${APP_NAME}.${suffix}"
+    if [ -d "${ARTEFACTS_DIR}/${format_dir}/${APP_NAME}.${suffix}" ]; then
+        printf '%s' "${ARTEFACTS_DIR}/${format_dir}/${APP_NAME}.${suffix}"
         return 0
     fi
 
-    if [ -d "build/release/ClockV3_artefacts/Release/${format_dir}/${FALLBACK_APP_NAME}.${suffix}" ]; then
-        printf '%s' "build/release/ClockV3_artefacts/Release/${format_dir}/${FALLBACK_APP_NAME}.${suffix}"
+    if [ -d "${ARTEFACTS_DIR}/${format_dir}/${FALLBACK_APP_NAME}.${suffix}" ]; then
+        printf '%s' "${ARTEFACTS_DIR}/${format_dir}/${FALLBACK_APP_NAME}.${suffix}"
         return 0
     fi
 
@@ -112,11 +112,11 @@ ln -s "/Library/Audio/Plug-Ins" "$STAGING_DIR/Plug-Ins"
 ln -s "/Library/Audio/Plug-Ins/Components" "$STAGING_DIR/Components"
 ln -s "/Library/Audio/Plug-Ins/VST3" "$STAGING_DIR/VST3"
 
-cat > "$STAGING_DIR/INSTALL.txt" <<'EOF'
-toolBoy Clock v3 install
+cat > "$STAGING_DIR/INSTALL.txt" <<EOF
+${APP_NAME} install
 
-1. Drag toolBoy Clock v3.component onto the Components link.
-2. Drag toolBoy Clock v3.vst3 onto the VST3 link.
+1. Drag ${APP_NAME}.component onto the Components link.
+2. Drag ${APP_NAME}.vst3 onto the VST3 link.
 3. Or open the Plug-Ins link and copy the bundles manually.
 
 Formats included:

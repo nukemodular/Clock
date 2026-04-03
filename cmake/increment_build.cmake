@@ -1,6 +1,8 @@
 # Increment build number and write generated header
 # Paths
-set(BUILD_NUM_FILE "${CMAKE_SOURCE_DIR}/build_number.txt")
+if(NOT DEFINED BUILD_NUM_FILE OR BUILD_NUM_FILE STREQUAL "")
+  set(BUILD_NUM_FILE "${CMAKE_SOURCE_DIR}/build_number.txt")
+endif()
 set(OUT_DIR "${CMAKE_BINARY_DIR}/generated")
 set(OUT_HEADER "${OUT_DIR}/build_info.h")
 

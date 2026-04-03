@@ -1715,6 +1715,32 @@ void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
 {
     // Scalable overlay painting is handled by uiRoot layers.
 
+   #if CLOCKV3_DEMO
+    if (processor.isDemoExpiredUI())
+    {
+        auto bounds = getLocalBounds().reduced((int) std::round(16.0 * uiScale),
+                                               (int) std::round(36.0 * uiScale));
+        g.setColour(processor.theme.fixedBase().withAlpha(0.9f));
+        g.fillRoundedRectangle(bounds.toFloat(), 10.0f * (float) uiScale);
+        g.setColour(processor.theme.cyan().withAlpha(0.85f));
+        g.drawRoundedRectangle(bounds.toFloat(), 10.0f * (float) uiScale, 1.5f * (float) uiScale);
+
+        auto headline = bounds.removeFromTop((int) std::round(42.0 * uiScale));
+        auto detail = bounds.reduced((int) std::round(12.0 * uiScale), (int) std::round(8.0 * uiScale));
+
+        g.setColour(processor.theme.cyan());
+        g.setFont(juce::Font(juce::FontOptions("Arial", 15.0f * (float) uiScale, juce::Font::bold)));
+        g.drawFittedText("DEMO EXPIRED", headline, juce::Justification::centred, 1);
+
+        g.setColour(processor.theme.cyan().withAlpha(0.72f));
+        g.setFont(juce::Font(juce::FontOptions("Arial", 10.0f * (float) uiScale, juce::Font::plain)));
+        g.drawFittedText("This demo runs for 30 minutes.\nOpen the full version for unrestricted runtime.",
+                         detail,
+                         juce::Justification::centred,
+                         2);
+    }
+   #endif
+
     // Debug stack (left side): show last clicked stored step, logical mapping, host bar and scheduled targets
     // {
     //     const int leftX = 6;
@@ -1936,7 +1962,12 @@ void ClockSyncAudioProcessorEditor::resized()
     {
         // Provide area matching previous manual drawing region (right segment of header minus margins)
         const int headerH = 30;
-        const int w = 50; // width for text + LED
+        const int w =
+           #if CLOCKV3_DEMO
+            64;
+           #else
+            50;
+           #endif
         statusBar->setBounds(kBaseW - w - 9, 0, w, headerH);
     }
 
@@ -2701,10 +2732,17 @@ void ClockSyncAudioProcessorEditor::timerCallback()
     // Update status bar text + LED level each timer tick if changed
     if (statusBar)
     {
+        juce::String st;
+
+       #if CLOCKV3_DEMO
+        const int remainingSeconds = processor.getDemoRemainingSecondsUI();
+        const int minutes = remainingSeconds / 60;
+        const int seconds = remainingSeconds % 60;
+        st = juce::String::formatted("%02d:%02d", minutes, seconds);
+       #else
         const bool isRunning = processor.getUiIsRunning();
         const bool isArmed = processor.getUiPendingStart();
         const bool hasNext = processor.getUiNextRestartPending();
-        juce::String st;
         if (hasNext)
         {
             if (processor.syncLatchEnabled.load(std::memory_order_relaxed))
@@ -2715,6 +2753,8 @@ void ClockSyncAudioProcessorEditor::timerCallback()
         else if (isRunning) st = "LOCK";
         else if (isArmed) st = "ARM'D";
         else st = idleModeButton.getToggleState() ? "IDLE" : "STOP";
+       #endif
+
         statusBar->setStatusText(st);
         statusBar->setLedLevel(ledLevel);
     }

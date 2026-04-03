@@ -25,6 +25,17 @@
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_OSX_ARCHITECTURES": "arm64;x86_64"
       }
+    },
+    {
+      "name": "release-demo",
+      "displayName": "release-demo",
+      "generator": "Unix Makefiles",
+      "binaryDir": "build/release_demo",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_OSX_ARCHITECTURES": "arm64;x86_64",
+        "CLOCKV3_DEMO_BUILD": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -35,6 +46,10 @@
     {
       "name": "release",
       "configurePreset": "release"
+    },
+    {
+      "name": "release-demo",
+      "configurePreset": "release-demo"
     }
   ]
 }

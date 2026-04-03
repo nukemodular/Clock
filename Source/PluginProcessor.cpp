@@ -822,6 +822,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout ClockSyncAudioProcessor::cre
 void ClockSyncAudioProcessor::prepareToPlay(double sr, int /*samplesPerBlock*/)
 {
     currentSampleRate = sr > 0.0 ? sr : 44100.0;
+    demoStartTickMs.store(juce::Time::getMillisecondCounter(), std::memory_order_relaxed);
+    demoStopSent.store(false, std::memory_order_relaxed);
     midiRemoteCollector.reset(currentSampleRate);
     lastWasPlaying = false;
     lastTickIndex = std::numeric_limits<long long>::min();
@@ -973,6 +975,42 @@ int ClockSyncAudioProcessor::getClockResolution() const
         case 3: return 6;
         default: return 24;
     }
+}
+
+int ClockSyncAudioProcessor::computeDemoRemainingSeconds(juce::uint32 nowTickMs) const noexcept
+{
+   #if CLOCKV3_DEMO
+    const auto startTickMs = demoStartTickMs.load(std::memory_order_relaxed);
+    if (startTickMs == 0)
+        return kDemoRuntimeSeconds;
+
+    const juce::uint32 elapsedMs = nowTickMs >= startTickMs
+        ? (nowTickMs - startTickMs)
+        : (std::numeric_limits<juce::uint32>::max() - startTickMs + nowTickMs + 1u);
+
+    return juce::jmax(0, kDemoRuntimeSeconds - (int) (elapsedMs / 1000u));
+   #else
+    juce::ignoreUnused(nowTickMs);
+    return 0;
+   #endif
+}
+
+int ClockSyncAudioProcessor::getDemoRemainingSecondsUI() const
+{
+   #if CLOCKV3_DEMO
+    return computeDemoRemainingSeconds(juce::Time::getMillisecondCounter());
+   #else
+    return 0;
+   #endif
+}
+
+bool ClockSyncAudioProcessor::isDemoExpiredUI() const
+{
+   #if CLOCKV3_DEMO
+    return getDemoRemainingSecondsUI() <= 0;
+   #else
+    return false;
+   #endif
 }
 
 void ClockSyncAudioProcessor::updateDerivedParams()
@@ -1299,6 +1337,57 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
 
     // Centralized external MIDI buffer: collect all external messages here and send once at function end.
     juce::MidiBuffer extClock;
+
+    const auto flushExternalClock = [&]()
+    {
+        if (extClock.getNumEvents() <= 0)
+            return;
+
+       #if JUCE_MAC
+        if (localCoreOut)
+        {
+            localCoreOut->sendBlock(extClock, currentSampleRate);
+        }
+        else if (localOut)
+        {
+            localOut->sendBlockOfMessages(extClock, juce::Time::getMillisecondCounterHiRes(), currentSampleRate);
+        }
+       #else
+        if (localOut)
+            localOut->sendBlockOfMessages(extClock, juce::Time::getMillisecondCounterHiRes(), currentSampleRate);
+       #endif
+    };
+
+   #if CLOCKV3_DEMO
+    if (computeDemoRemainingSeconds(juce::Time::getMillisecondCounter()) <= 0)
+    {
+        clickEnv = 0.0f;
+        clickHoldRemainingSamples = 0;
+        runActive = false;
+        pendingStart = false;
+        pendingBarRestart.store(false, std::memory_order_relaxed);
+        pendingPatternRestartTargetBar.store(-1, std::memory_order_relaxed);
+        resyncPending.store(false, std::memory_order_relaxed);
+        resyncTargetBar.store(-1, std::memory_order_relaxed);
+        resyncTargetStep.store(-1, std::memory_order_relaxed);
+        uiIsRunning.store(false, std::memory_order_relaxed);
+        uiPendingStart.store(false, std::memory_order_relaxed);
+        uiNextRestartPending.store(false, std::memory_order_relaxed);
+        audioPulsesEnabled.store(false, std::memory_order_relaxed);
+        suppressUntilRestart = false;
+
+        if (! demoStopSent.exchange(true, std::memory_order_acq_rel))
+        {
+            const auto stopMsg = juce::MidiMessage::midiStop();
+            midi.addEvent(stopMsg, 0);
+            extClock.addEvent(stopMsg, 0);
+        }
+
+        flushExternalClock();
+        lastWasPlaying = pos.isPlaying;
+        return;
+    }
+   #endif
 
     // Rising edge immediate pattern scheduling: when user activates first step (mask from 0->non-zero)
     // and interval mode is active, prepare current bar and attempt in-block emission so they hear
@@ -2293,24 +2382,7 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
     // collapses an entire audio block's worth of MIDI Clock into a burst.
     // Switching screens/apps (foreground changes) or brief CPU spikes can
     // otherwise trigger that path and knock external devices out of sync.
-    if (extClock.getNumEvents() > 0)
-    {
-       #if JUCE_MAC
-        if (localCoreOut)
-        {
-            localCoreOut->sendBlock(extClock, currentSampleRate);
-        }
-        else if (localOut)
-        {
-            // Timed sending preserves the intended spacing inside the block.
-            // Note: this relies on a timer thread, so may drift if the host/app is backgrounded.
-            localOut->sendBlockOfMessages(extClock, juce::Time::getMillisecondCounterHiRes(), currentSampleRate);
-        }
-       #else
-        if (localOut)
-            localOut->sendBlockOfMessages(extClock, juce::Time::getMillisecondCounterHiRes(), currentSampleRate);
-       #endif
-    }
+    flushExternalClock();
 
     // Per-tick clicks are written directly into the audio buffer in the scheduling loops above.
 
