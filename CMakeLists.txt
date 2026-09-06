@@ -50,13 +50,16 @@ juce_add_binary_data(DancerFrames
         assets/Dancer_frames/Dancer_22.svg
         assets/Dancer_frames/Dancer_23.svg
         assets/Dancer_frames/Dancer_24.svg
+    assets/help.svg
     assets/setup.svg
+    assets/toolboy_clock.svg
+    assets/shadow.png
 )
 
 
 set(CLOCKV3_TARGET_NAME "ClockV3")
 set(CLOCKV3_PRODUCT_NAME "Clock v3")
-set(CLOCKV3_BUNDLE_ID "com.toolboy.clock_v3")
+set(CLOCKV3_BUNDLE_ID "com.toolboy.clock")
 set(CLOCKV3_PLUGIN_CODE "CLKS")
 set(CLOCKV3_COMPONENT_PREFIX "Clock v3")
 set(CLOCKV3_BUILD_NUMBER_FILE "${CMAKE_SOURCE_DIR}/build_number.txt")
@@ -64,7 +67,7 @@ set(CLOCKV3_BUILD_NUMBER_FILE "${CMAKE_SOURCE_DIR}/build_number.txt")
 if (CLOCKV3_DEMO_BUILD)
     set(CLOCKV3_TARGET_NAME "ClockV3Demo")
     set(CLOCKV3_PRODUCT_NAME "Clock v3 Demo")
-    set(CLOCKV3_BUNDLE_ID "com.toolboy.clock_v3_demo")
+    set(CLOCKV3_BUNDLE_ID "com.toolboy.clock")
     set(CLOCKV3_PLUGIN_CODE "CLKD")
     set(CLOCKV3_COMPONENT_PREFIX "Clock v3 Demo")
     set(CLOCKV3_BUILD_NUMBER_FILE "${CMAKE_SOURCE_DIR}/build_number_demo.txt")
@@ -72,12 +75,6 @@ endif()
 
 set(CLOCKV3_COMMON_SOURCES
     Source/DancerFramesCache.cpp
-    Source/GumroadLicenseValidator.cpp
-    Source/GumroadLicenseValidator.h
-    Source/LicenseDialog.cpp
-    Source/LicenseDialog.h
-    Source/LicenseManager.cpp
-    Source/LicenseManager.h
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
     Source/PluginProcessor.h
@@ -86,6 +83,7 @@ set(CLOCKV3_COMMON_SOURCES
     Source/UiTheme.h
     Source/SvgDancerComponent.cpp
     Source/SvgDancerComponent.h
+    Source/PlaygroundComponent.cpp
 )
 
 juce_add_plugin(${CLOCKV3_TARGET_NAME}
@@ -97,16 +95,28 @@ juce_add_plugin(${CLOCKV3_TARGET_NAME}
     # Typically effects don't need MIDI; enable if you require MIDI control
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT TRUE
+    NEEDS_WINDOWS_MIDI_SERVICES TRUE
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD TRUE
-    PLUGIN_MANUFACTURER_CODE PLPR
+    PLUGIN_MANUFACTURER_CODE TOOL
     PLUGIN_CODE ${CLOCKV3_PLUGIN_CODE}
     FORMATS VST3 AU
     # Plugin categories: use Fx for effect plugins
     VST3_CATEGORIES "Toolbox;Fx;Utilities;Clock"
 )
 
+
+if (NOT CLOCKV3_DEMO_BUILD)
+    list(APPEND CLOCKV3_COMMON_SOURCES
+        Source/GumroadLicenseValidator.cpp
+        Source/GumroadLicenseValidator.h
+        Source/LicenseDialog.cpp
+        Source/LicenseDialog.h
+        Source/LicenseManager.cpp
+        Source/LicenseManager.h
+    )
+endif()
 
 target_sources(${CLOCKV3_TARGET_NAME} PRIVATE ${CLOCKV3_COMMON_SOURCES})
 
@@ -125,7 +135,7 @@ target_link_libraries(${CLOCKV3_TARGET_NAME}
         juce::juce_dsp
         juce::juce_gui_extra
         juce::juce_animation
-        juce::juce_cryptography
+        $<$<NOT:$<BOOL:${CLOCKV3_DEMO_BUILD}>>:juce::juce_cryptography>
         juce::juce_core
     DancerFrames
 )
@@ -158,8 +168,8 @@ if (APPLE)
     # Set macOS bundle properties if needed
     set_target_properties(${CLOCKV3_TARGET_NAME} PROPERTIES
         MACOSX_BUNDLE TRUE
-        XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "Developer ID Application: Dominik Bohn (3J6FW877T8)"  # Replace with your actual code signing identity
-        XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "3J6FW877T8"  # Replace with your actual development team ID
+        XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "Developer ID Application: Dominik Bohn (3J6FW877T8)"
+        XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "3J6FW877T8"
         XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "${CLOCKV3_BUNDLE_ID}"
     )
 
@@ -173,6 +183,125 @@ if (APPLE)
     install(TARGETS ${CLOCKV3_TARGET_NAME}
         BUNDLE DESTINATION "Audio/Plug-Ins/Components"
         COMPONENT "${CLOCKV3_COMPONENT_PREFIX}_au")
+
+    # JUCE target names
+    set(VST3_TARGET "${CLOCKV3_TARGET_NAME}_VST3")
+    set(AU_TARGET   "${CLOCKV3_TARGET_NAME}_AU")
+    set(USER_PLUGIN_FOLDER "$ENV{HOME}/Library/Audio/Plug-Ins")
+    set(ENTITLEMENTS_PATH "${CMAKE_CURRENT_SOURCE_DIR}/plugin.entitlements")
+
+    set(APPLE_SIGNING_IDENTITY "Developer ID Application: Dominik Bohn (3J6FW877T8)")
+    set(APPLE_INSTALLER_IDENTITY "Developer ID Installer: Dominik Bohn (3J6FW877T8)")
+    set(APPLE_NOTARY_PROFILE "toolboy-audio.com")
+
+    # 1. Local copy and codesigning for VST3
+    add_custom_command(TARGET ${VST3_TARGET} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${USER_PLUGIN_FOLDER}/VST3"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "$<TARGET_BUNDLE_DIR:${VST3_TARGET}>" "${USER_PLUGIN_FOLDER}/VST3/${CLOCKV3_PRODUCT_NAME}.vst3"
+        COMMAND codesign --force --deep --options runtime --timestamp 
+                         --entitlements "${ENTITLEMENTS_PATH}" 
+                         --sign "${APPLE_SIGNING_IDENTITY}" 
+                         "${USER_PLUGIN_FOLDER}/VST3/${CLOCKV3_PRODUCT_NAME}.vst3"
+        COMMENT "Kopiere und signiere VST3 mit Hardened Runtime im Zielordner"
+        VERBATIM
+    )
+
+    # 2. Local copy and codesigning for AU (Components)
+    add_custom_command(TARGET ${AU_TARGET} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${USER_PLUGIN_FOLDER}/Components"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "$<TARGET_BUNDLE_DIR:${AU_TARGET}>" "${USER_PLUGIN_FOLDER}/Components/${CLOCKV3_PRODUCT_NAME}.component"
+        COMMAND codesign --force --deep --options runtime --timestamp 
+                         --entitlements "${ENTITLEMENTS_PATH}" 
+                         --sign "${APPLE_SIGNING_IDENTITY}" 
+                         "${USER_PLUGIN_FOLDER}/Components/${CLOCKV3_PRODUCT_NAME}.component"
+        COMMENT "Kopiere und signiere AU mit Hardened Runtime im Zielordner"
+        VERBATIM
+    )
+
+    # =============================================================================
+    # AUTOMATISCHE INSTALLER-ERSTELLUNG & NOTARISIERUNG (.PKG)
+    # =============================================================================
+    set(PKG_STAGE_DIR "${CMAKE_CURRENT_BINARY_DIR}/PKG_Stage")
+    set(PKG_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/Final_Installer")
+    set(COMPONENT_PKG_DIR "${CMAKE_CURRENT_BINARY_DIR}/PKG_Component")
+    set(COMPONENT_PKG "${COMPONENT_PKG_DIR}/${CLOCKV3_PRODUCT_NAME}_Component.pkg")
+    set(UNSIGNED_PKG "${PKG_OUTPUT_DIR}/${CLOCKV3_PRODUCT_NAME}_Unsigned.pkg")
+    set(FINAL_PKG "${PKG_OUTPUT_DIR}/${CLOCKV3_PRODUCT_NAME} Installer.pkg")
+
+    # Installer Resources & Distribution
+    set(INSTALLER_RES_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/installer_resources")
+    set(INSTALLER_RES_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/installer_resources")
+    set(DISTRIBUTION_XML "${INSTALLER_RES_BUILD_DIR}/distribution.xml")
+
+    add_custom_target(Notarize
+        # 1. Bereinigen und Ordnerstrukturen für den Installer spiegeln
+        COMMAND ${CMAKE_COMMAND} -E rm -r -f "${PKG_STAGE_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E rm -r -f "${COMPONENT_PKG_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${PKG_STAGE_DIR}/Library/Audio/Plug-Ins/VST3"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${PKG_STAGE_DIR}/Library/Audio/Plug-Ins/Components"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${COMPONENT_PKG_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${PKG_OUTPUT_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${INSTALLER_RES_BUILD_DIR}"
+
+        # 2. Installer-Ressourcen vorbereiten (Grafiken kopieren & XML/HTML konfigurieren)
+        COMMAND ${CMAKE_COMMAND} -E copy "${INSTALLER_RES_SOURCE_DIR}/background.png" "${INSTALLER_RES_BUILD_DIR}/background.png"
+        COMMAND ${CMAKE_COMMAND} -E copy "${INSTALLER_RES_SOURCE_DIR}/background-darkAqua.png" "${INSTALLER_RES_BUILD_DIR}/background-darkAqua.png"
+        COMMAND ${CMAKE_COMMAND}
+                -DSRC_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+                -DBIN_DIR=${CMAKE_CURRENT_BINARY_DIR}
+                -DTB_PRODUCT_NAME="${CLOCKV3_PRODUCT_NAME}"
+                -DPROJECT_VERSION=${PROJECT_VERSION}
+                -DTB_BUNDLE_ID=${CLOCKV3_BUNDLE_ID}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/scripts/configure_installer_res.cmake
+
+        # 3. Die frisch gebauten und codesignierten Plugins in die Installer-Staging-Area kopieren
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${USER_PLUGIN_FOLDER}/VST3/${CLOCKV3_PRODUCT_NAME}.vst3" "${PKG_STAGE_DIR}/Library/Audio/Plug-Ins/VST3/${CLOCKV3_PRODUCT_NAME}.vst3"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${USER_PLUGIN_FOLDER}/Components/${CLOCKV3_PRODUCT_NAME}.component" "${PKG_STAGE_DIR}/Library/Audio/Plug-Ins/Components/${CLOCKV3_PRODUCT_NAME}.component"
+        COMMAND codesign --force --deep --options runtime --timestamp --entitlements "${ENTITLEMENTS_PATH}" --sign "${APPLE_SIGNING_IDENTITY}" "${PKG_STAGE_DIR}/Library/Audio/Plug-Ins/VST3/${CLOCKV3_PRODUCT_NAME}.vst3"
+        COMMAND codesign --force --deep --options runtime --timestamp --entitlements "${ENTITLEMENTS_PATH}" --sign "${APPLE_SIGNING_IDENTITY}" "${PKG_STAGE_DIR}/Library/Audio/Plug-Ins/Components/${CLOCKV3_PRODUCT_NAME}.component"
+
+        # 4. Das Component-Paket erstellen (.pkg)
+        COMMAND pkgbuild --root "${PKG_STAGE_DIR}"
+                         --identifier "${CLOCKV3_BUNDLE_ID}.pkg"
+                         --version "${PROJECT_VERSION}"
+                         --install-location "/"
+                         "${COMPONENT_PKG}"
+
+        # 5. Das finale gestaltete Installer-Paket mit Grafiken und Welcome-Page bauen
+        COMMAND productbuild --distribution "${DISTRIBUTION_XML}"
+                             --resources "${INSTALLER_RES_BUILD_DIR}"
+                             --package-path "${COMPONENT_PKG_DIR}"
+                             "${UNSIGNED_PKG}"
+
+        # 6. Das Installer-Paket mit Apple-Installer-Zertifikat signieren
+        COMMAND productsign --sign "${APPLE_INSTALLER_IDENTITY}"
+                            --timestamp
+                            "${UNSIGNED_PKG}"
+                            "${FINAL_PKG}"
+        
+        # Temporäres unsigniertes Paket löschen
+        COMMAND ${CMAKE_COMMAND} -E rm -f "${UNSIGNED_PKG}"
+
+        # 7. Das fertige, voll-signierte Installer-Paket zur Notarisierung an Apple senden
+        COMMAND xcrun notarytool submit "${FINAL_PKG}" 
+                --keychain-profile "${APPLE_NOTARY_PROFILE}"
+                --wait
+
+        # 8. Jetzt heftet der Stapler das Ticket fehlerfrei an das signierte .pkg an!
+        COMMAND xcrun stapler staple "${FINAL_PKG}"
+        
+        # 9. Kopiere finalen Installer in das Projekt-Hauptverzeichnis und dist/
+        COMMAND ${CMAKE_COMMAND} -E copy "${FINAL_PKG}" "${CMAKE_CURRENT_SOURCE_DIR}/${CLOCKV3_PRODUCT_NAME} Installer.pkg"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_SOURCE_DIR}/dist"
+        COMMAND ${CMAKE_COMMAND} -E copy "${FINAL_PKG}" "${CMAKE_CURRENT_SOURCE_DIR}/dist/${CLOCKV3_PRODUCT_NAME} Installer.pkg"
+
+        COMMENT "Erstelle personalisiertes Installer-Paket, signiere es und notarisiere das finale .pkg..."
+        VERBATIM
+    )
+    
+    # Abhängigkeiten definieren
+    add_dependencies(Notarize ${VST3_TARGET} ${AU_TARGET})
 endif()
+
 
 

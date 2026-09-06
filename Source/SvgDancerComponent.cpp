@@ -40,6 +40,39 @@ void SvgDancerComponent::setTint(juce::Colour c)
 
 void SvgDancerComponent::resized()
 {
+    rebuildRasterCache();
+}
+
+void SvgDancerComponent::rebuildRasterCache()
+{
+    const auto frameCount = DancerFramesCache::getFrameCount();
+    cachedFrameImages.clear();
+    cachedFrameImages.resize((size_t) juce::jmax(0, frameCount));
+
+    const auto bounds = getLocalBounds();
+    if (bounds.isEmpty())
+        return;
+
+    // Render at 2x logical resolution for crisp Retina display
+    constexpr float scaleFactor = 2.0f;
+    const int imgW = juce::jmax(1, juce::roundToInt((float) bounds.getWidth() * scaleFactor));
+    const int imgH = juce::jmax(1, juce::roundToInt((float) bounds.getHeight() * scaleFactor));
+
+    auto scaled = juce::Rectangle<float>(0.0f, 0.0f, (float) imgW, (float) imgH).reduced(15.0f * scaleFactor);
+    const auto sourceBounds = juce::Rectangle<float>(0.0f, 0.0f, kDancerAnchorSize, kDancerAnchorSize);
+    const auto transform = juce::RectanglePlacement(juce::RectanglePlacement::centred)
+                               .getTransformToFit(sourceBounds, scaled);
+
+    for (int index = 0; index < frameCount; ++index)
+    {
+        if (index < (int) tintedFrames.size() && tintedFrames[(size_t) index] != nullptr)
+        {
+            juce::Image img(juce::Image::ARGB, imgW, imgH, true);
+            juce::Graphics imgG(img);
+            tintedFrames[(size_t) index]->draw(imgG, 1.0f, transform);
+            cachedFrameImages[(size_t) index] = std::move(img);
+        }
+    }
 }
 
 void SvgDancerComponent::paint(juce::Graphics& g)
@@ -51,18 +84,32 @@ void SvgDancerComponent::paint(juce::Graphics& g)
     if ((int) tintedFrames.size() != frameCount)
         rebuildTintedFrames();
 
-    if (currentFrame < 0 || currentFrame >= (int) tintedFrames.size())
-        return;
-
-    if (auto* drawable = tintedFrames[(size_t) currentFrame].get())
+    if ((int) cachedFrameImages.size() != frameCount ||
+        (currentFrame < (int) cachedFrameImages.size() && cachedFrameImages[(size_t) currentFrame].isNull()))
     {
-        auto scaled = getLocalBounds().toFloat().reduced(15.0f);
+        rebuildRasterCache();
+    }
 
-        const auto sourceBounds = juce::Rectangle<float>(0.0f, 0.0f, kDancerAnchorSize, kDancerAnchorSize);
-        const auto transform = juce::RectanglePlacement(juce::RectanglePlacement::centred)
-                                   .getTransformToFit(sourceBounds, scaled);
+    if (currentFrame >= 0 && currentFrame < (int) cachedFrameImages.size())
+    {
+        const auto& img = cachedFrameImages[(size_t) currentFrame];
+        if (img.isValid())
+        {
+            g.drawImage(img, getLocalBounds().toFloat(), juce::RectanglePlacement::stretchToFit);
+            return;
+        }
+    }
 
-        drawable->draw(g, 1.0f, transform);
+    if (currentFrame >= 0 && currentFrame < (int) tintedFrames.size())
+    {
+        if (auto* drawable = tintedFrames[(size_t) currentFrame].get())
+        {
+            auto scaled = getLocalBounds().toFloat().reduced(15.0f);
+            const auto sourceBounds = juce::Rectangle<float>(0.0f, 0.0f, kDancerAnchorSize, kDancerAnchorSize);
+            const auto transform = juce::RectanglePlacement(juce::RectanglePlacement::centred)
+                                       .getTransformToFit(sourceBounds, scaled);
+            drawable->draw(g, 1.0f, transform);
+        }
     }
 }
 
@@ -91,4 +138,5 @@ void SvgDancerComponent::rebuildTintedFrames()
             }
         }
     }
+    rebuildRasterCache();
 }

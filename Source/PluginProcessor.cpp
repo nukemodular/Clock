@@ -16,6 +16,119 @@ namespace {
     constexpr double kSixteenthQ = 0.25;      // 1/16th in quarter-notes
     constexpr double kBarEps     = 1.0e-6;    // bar-start epsilon
 
+   #if CLOCKV3_DEMO
+    // Progressive demo timeout tiers (in seconds):
+    //   1st launch: 30 min, 2nd: 20 min, 3rd: 10 min, 4th+: 5 min
+    // Resets to tier 0 after 1 hour of inactivity (measured from last launch).
+    // State is persisted to disk and shared via a process-wide static so
+    // multiple plugin instances in one DAW share the same countdown.
+    static constexpr int kDemoTierSeconds[] = { 30 * 60, 20 * 60, 10 * 60, 5 * 60 };
+    static constexpr int kNumDemoTiers = 4;
+    static constexpr juce::int64 kDemoResetCooldownMs = 60LL * 60 * 1000; // 1 hour
+
+    struct DemoSessionState
+    {
+        std::atomic<juce::uint32> startTickMs { 0 };
+        std::atomic<int> runtimeSeconds { kDemoTierSeconds[0] };
+        std::atomic<int> launchCount { 0 };          // tier index used this session
+        std::atomic<juce::int64> lastLaunchMs { 0 };  // timestamp when session started
+        std::atomic<bool> initialised { false };
+    };
+
+    static DemoSessionState& getDemoSession() noexcept
+    {
+        static DemoSessionState state;
+        return state;
+    }
+
+    static juce::File getDemoStateFile()
+    {
+        auto dir = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+                       .getChildFile("toolBoy");
+        dir.createDirectory();
+        return dir.getChildFile("clock_v3_demo_state");
+    }
+
+    static void initDemoSession() noexcept
+    {
+        auto& session = getDemoSession();
+        if (session.initialised.exchange(true, std::memory_order_acq_rel))
+            return; // already initialised by another instance in this process
+
+        int launchCount = 0;
+        juce::int64 lastLaunchMs = 0;
+
+        auto stateFile = getDemoStateFile();
+        if (stateFile.existsAsFile())
+        {
+            auto lines = juce::StringArray::fromLines(stateFile.loadFileAsString());
+            if (lines.size() >= 2)
+            {
+                launchCount = lines[0].getIntValue();
+                lastLaunchMs = lines[1].getLargeIntValue();
+            }
+        }
+
+        // Reset tier if the user has waited at least 1 hour since the last launch
+        const juce::int64 nowMs = juce::Time::currentTimeMillis();
+        if (lastLaunchMs > 0 && (nowMs - lastLaunchMs) >= kDemoResetCooldownMs)
+            launchCount = 0;
+
+        const int tierIndex = juce::jlimit(0, kNumDemoTiers - 1, launchCount);
+        session.runtimeSeconds.store(kDemoTierSeconds[tierIndex], std::memory_order_relaxed);
+        session.launchCount.store(launchCount, std::memory_order_relaxed);
+        session.lastLaunchMs.store(nowMs, std::memory_order_relaxed);
+        session.startTickMs.store(juce::Time::getMillisecondCounter(), std::memory_order_release);
+
+        // Persist incremented launch count + current timestamp
+        stateFile.replaceWithText(juce::String(launchCount + 1) + "\n"
+                                + juce::String(nowMs) + "\n");
+    }
+
+    std::atomic<juce::uint32>& getDemoSessionStartTickMs() noexcept
+    {
+        return getDemoSession().startTickMs;
+    }
+
+    juce::uint32 ensureDemoSessionStartTickMs() noexcept
+    {
+        initDemoSession();
+        return getDemoSession().startTickMs.load(std::memory_order_acquire);
+    }
+
+    int getDemoSessionRuntimeSeconds() noexcept
+    {
+        return getDemoSession().runtimeSeconds.load(std::memory_order_relaxed);
+    }
+
+    int getDemoSessionLaunchCount() noexcept
+    {
+        return getDemoSession().launchCount.load(std::memory_order_relaxed);
+    }
+
+    // Returns the runtime (in minutes) for the *next* session after this one.
+    int getNextDemoRuntimeMinutes() noexcept
+    {
+        const int nextTier = juce::jlimit(0, kNumDemoTiers - 1,
+                                          getDemoSessionLaunchCount() + 1);
+        return kDemoTierSeconds[nextTier] / 60;
+    }
+
+    // Returns seconds remaining until the 1-hour cooldown resets the tier to 30 min.
+    // Returns -1 if not yet at the final tier (launchCount < kNumDemoTiers - 1).
+    int getDemoCooldownRemainingSeconds() noexcept
+    {
+        auto& session = getDemoSession();
+        const int launches = session.launchCount.load(std::memory_order_relaxed);
+        if (launches < kNumDemoTiers - 1) return -1; // not at final tier yet
+        const juce::int64 launchMs = session.lastLaunchMs.load(std::memory_order_relaxed);
+        if (launchMs <= 0) return -1;
+        const juce::int64 elapsed = juce::Time::currentTimeMillis() - launchMs;
+        const juce::int64 remaining = kDemoResetCooldownMs - elapsed;
+        return remaining > 0 ? (int)(remaining / 1000) : 0;
+    }
+   #endif
+
     // Fast rounding for known non-negative values (avoids std::llround overhead)
     inline int fastRoundPositive(double x) { return (int) (x + 0.5); }
 
@@ -85,6 +198,49 @@ namespace {
             posInBar = 0.0;
         return barStartPPQ + posInBar;
     }
+
+    inline long long computeTickIndexFromPPQ(double absolutePPQ, int resolution, double shiftQ)
+    {
+        if (resolution <= 0)
+            return 0;
+
+        if (shiftQ <= 1e-12)
+            return (long long) std::floor(absolutePPQ * (double) resolution);
+
+        const double pairLenQ = 0.5;
+        const long long pulsesPerPair = (long long) std::llround(pairLenQ * (double) resolution);
+        const int pulsesPer16th = (int) (pulsesPerPair / 2);
+        if (pulsesPerPair <= 0 || pulsesPer16th <= 0)
+            return (long long) std::floor(absolutePPQ * (double) resolution);
+
+        const double firstLen = 0.25 + shiftQ;
+        const double secondLen = 0.25 - shiftQ;
+        const double spacingFirst = firstLen / (double) pulsesPer16th;
+        const double spacingSecond = secondLen / (double) pulsesPer16th;
+        const double eps = 1.0e-9;
+
+        long long pairIndex = (long long) std::floor(absolutePPQ / pairLenQ);
+        double posInPair = absolutePPQ - ((double) pairIndex * pairLenQ);
+        if (posInPair < 0.0)
+        {
+            --pairIndex;
+            posInPair += pairLenQ;
+        }
+
+        int tickInPair = 0;
+        if (posInPair < firstLen - eps)
+        {
+            tickInPair = juce::jlimit(0, pulsesPer16th - 1,
+                                      (int) std::floor((posInPair / spacingFirst) + eps));
+        }
+        else
+        {
+            tickInPair = pulsesPer16th + juce::jlimit(0, pulsesPer16th - 1,
+                                      (int) std::floor(((posInPair - firstLen) / juce::jmax(spacingSecond, eps)) + eps));
+        }
+
+        return pairIndex * pulsesPerPair + (long long) tickInPair;
+    }
 }
 
 #if JUCE_MAC
@@ -92,13 +248,40 @@ struct ClockSyncAudioProcessor::TimestampedCoreMidiOut final
 {
         ~TimestampedCoreMidiOut()
         {
+            if (endpoint != 0 && isVirtual)
+                MIDIEndpointDispose(endpoint);
             if (port != 0)
                 MIDIPortDispose(port);
             if (client != 0)
                 MIDIClientDispose(client);
         }
 
-        static std::shared_ptr<TimestampedCoreMidiOut> open (const juce::String& deviceIdentifier)
+        static std::shared_ptr<TimestampedCoreMidiOut> createVirtual (const juce::String& name)
+        {
+            MIDIClientRef client = 0;
+            if (MIDIClientCreate(CFSTR("toolBoyClockCoreMIDI"), nullptr, nullptr, &client) != noErr || client == 0)
+                return {};
+
+            MIDIEndpointRef endpoint = 0;
+            auto cfName = name.toCFString();
+            if (MIDISourceCreate(client, cfName, &endpoint) != noErr || endpoint == 0)
+            {
+                if (cfName != nullptr) CFRelease(cfName);
+                MIDIClientDispose(client);
+                return {};
+            }
+            if (cfName != nullptr) CFRelease(cfName);
+
+            auto out = std::make_shared<TimestampedCoreMidiOut>();
+            out->client = client;
+            out->port = 0;
+            out->endpoint = endpoint;
+            out->isVirtual = true;
+            return out;
+        }
+
+        static std::shared_ptr<TimestampedCoreMidiOut> open (const juce::String& deviceIdentifier,
+                                                             const juce::String& preferredDeviceName)
         {
             if (deviceIdentifier.isEmpty())
                 return {};
@@ -196,11 +379,12 @@ struct ClockSyncAudioProcessor::TimestampedCoreMidiOut final
                 return result;
             };
 
-            auto getConnectedEndpointIdentifier = [&] (MIDIEndpointRef endpoint) -> juce::String
+            auto getConnectedEndpointInfo = [&] (MIDIEndpointRef endpoint) -> std::pair<juce::String, juce::String>
             {
                 if (endpoint == 0)
                     return {};
 
+                juce::String outName;
                 juce::String outIdentifier;
 
                 CFDataRef connections = nullptr;
@@ -236,6 +420,13 @@ struct ClockSyncAudioProcessor::TimestampedCoreMidiOut final
 
                                 if (! deviceInfo.second.isEmpty())
                                 {
+                                    if (deviceInfo.first.isNotEmpty())
+                                    {
+                                        if (outName.isNotEmpty())
+                                            outName += ", ";
+                                        outName += deviceInfo.first;
+                                    }
+
                                     if (outIdentifier.isNotEmpty())
                                         outIdentifier += ", ";
                                     outIdentifier += deviceInfo.second;
@@ -245,10 +436,16 @@ struct ClockSyncAudioProcessor::TimestampedCoreMidiOut final
                     }
                 }
 
-                if (outIdentifier.isEmpty())
-                    outIdentifier = getEndpointInfo (endpoint, false).second;
+                if (outName.isEmpty() || outIdentifier.isEmpty())
+                {
+                    const auto endpointInfo = getEndpointInfo (endpoint, false);
+                    if (outName.isEmpty())
+                        outName = endpointInfo.first;
+                    if (outIdentifier.isEmpty())
+                        outIdentifier = endpointInfo.second;
+                }
 
-                return outIdentifier;
+                return { outName, outIdentifier };
             };
 
             auto extractSignedUniqueIds = [] (const juce::String& s) -> std::vector<SInt32>
@@ -325,8 +522,27 @@ struct ClockSyncAudioProcessor::TimestampedCoreMidiOut final
 
                     // This matches JUCE's getConnectedEndpointInfo().identifier, which is what
                     // MidiOutput::getAvailableDevices() returns on macOS.
-                    const auto epId = getConnectedEndpointIdentifier (ep);
-                    if (epId.isNotEmpty() && epId.trim() == trimmed)
+                    const auto epInfo = getConnectedEndpointInfo (ep);
+                    if (epInfo.second.isNotEmpty() && epInfo.second.trim() == trimmed)
+                    {
+                        found = ep;
+                        break;
+                    }
+                }
+            }
+
+            const auto trimmedName = preferredDeviceName.trim();
+            if (found == 0 && trimmedName.isNotEmpty())
+            {
+                const ItemCount n = MIDIGetNumberOfDestinations();
+                for (ItemCount i = 0; i < n; ++i)
+                {
+                    const MIDIEndpointRef ep = MIDIGetDestination (i);
+                    if (ep == 0)
+                        continue;
+
+                    const auto epInfo = getConnectedEndpointInfo (ep);
+                    if (epInfo.first.isNotEmpty() && epInfo.first.trim().equalsIgnoreCase (trimmedName))
                     {
                         found = ep;
                         break;
@@ -357,7 +573,7 @@ struct ClockSyncAudioProcessor::TimestampedCoreMidiOut final
 
         void sendBlock (const juce::MidiBuffer& buffer, double sampleRate) noexcept
         {
-            if (port == 0 || endpoint == 0)
+            if ((port == 0 && ! isVirtual) || endpoint == 0)
                 return;
             if (! (sampleRate > 0.0))
                 return;
@@ -378,7 +594,12 @@ struct ClockSyncAudioProcessor::TimestampedCoreMidiOut final
             auto flush = [&]() noexcept
             {
                 if (list->numPackets > 0)
-                    MIDISend(port, endpoint, list);
+                {
+                    if (isVirtual)
+                        MIDIReceived(endpoint, list);
+                    else
+                        MIDISend(port, endpoint, list);
+                }
                 pkt = MIDIPacketListInit(list);
             };
 
@@ -411,6 +632,7 @@ struct ClockSyncAudioProcessor::TimestampedCoreMidiOut final
         MIDIClientRef client { 0 };
         MIDIPortRef port { 0 };
         MIDIEndpointRef endpoint { 0 };
+        bool isVirtual { false };
 
         std::array<uint8_t, 65536> packetStorage {};
 };
@@ -462,13 +684,48 @@ ClockSyncAudioProcessor::ClockSyncAudioProcessor()
     // Seed internal random generator
     random.setSeedRandomly();
 
+    // Cache typed parameter pointers to eliminate runtime string queries
+    clockRateParamObj     = dynamic_cast<juce::AudioParameterChoice*>(parameters.getParameter(paramClockRateIndex));
+    runParamObj           = dynamic_cast<juce::AudioParameterBool*>(parameters.getParameter(paramRun));
+    resyncOffsetParamObj  = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramResyncOffsetStep));
+    shuffleStepParamObj   = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramShuffleStep));
+    shuffleLinearParamObj = dynamic_cast<juce::AudioParameterFloat*>(parameters.getParameter(paramShuffleLinear));
+    patternBarsParamObj   = dynamic_cast<juce::AudioParameterChoice*>(parameters.getParameter(paramPatternBars));
+    patternStepsParamObj  = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramPatternSteps));
+
+   #if ! CLOCKV3_DEMO
+    isLicensedCached.store(toolboy_license::LicenseManager::isLicensed(licenseConfig_), std::memory_order_release);
+   #endif
+
     // Register listener for UI updates
     parameters.state.addListener(this);
 }
 
 ClockSyncAudioProcessor::~ClockSyncAudioProcessor()
 {
+    cancelPendingUpdate();
     parameters.state.removeListener(this);
+    activeMidiOut.store(nullptr, std::memory_order_release);
+   #if JUCE_MAC
+    activeCoreMidiOut.store(nullptr, std::memory_order_release);
+   #endif
+}
+
+void ClockSyncAudioProcessor::handleAsyncUpdate()
+{
+    while (paramQueueReadIdx.load(std::memory_order_relaxed) != paramQueueWriteIdx.load(std::memory_order_acquire))
+    {
+        const size_t currentRead = paramQueueReadIdx.load(std::memory_order_relaxed);
+        auto change = paramQueue[currentRead];
+        paramQueueReadIdx.store((currentRead + 1) % kParamQueueSize, std::memory_order_release);
+
+        if (change.param != nullptr)
+        {
+            change.param->beginChangeGesture();
+            change.param->setValueNotifyingHost(change.value);
+            change.param->endChangeGesture();
+        }
+    }
 }
 
 void ClockSyncAudioProcessor::updateMidiRemoteInDevice()
@@ -557,15 +814,19 @@ void ClockSyncAudioProcessor::handleRemoteMidiMessage(const juce::MidiMessage& m
 
         if (! startIsCC && remoteStart >= 0 && note == remoteStart)
         {
-            if (auto* p = parameters.getParameter(paramRun))
-                if (p->getValue() < 0.5f)
-                    p->setValueNotifyingHost(1.0f);
+            if (runParam && runParam->load(std::memory_order_relaxed) < 0.5f)
+            {
+                runParam->store(1.0f, std::memory_order_relaxed);
+                enqueueParamChange(runParamObj, 1.0f);
+            }
         }
         else if (! stopIsCC && remoteStop >= 0 && note == remoteStop)
         {
-            if (auto* p = parameters.getParameter(paramRun))
-                if (p->getValue() > 0.5f)
-                    p->setValueNotifyingHost(0.0f);
+            if (runParam && runParam->load(std::memory_order_relaxed) > 0.5f)
+            {
+                runParam->store(0.0f, std::memory_order_relaxed);
+                enqueueParamChange(runParamObj, 0.0f);
+            }
         }
         else if (! triggerIsCC && remoteTrigger >= 0 && note == remoteTrigger)
         {
@@ -602,30 +863,38 @@ void ClockSyncAudioProcessor::handleRemoteMidiMessage(const juce::MidiMessage& m
             {
                 if (val > 63)
                 {
-                    if (auto* p = parameters.getParameter(paramRun))
-                        if (p->getValue() < 0.5f)
-                            p->setValueNotifyingHost(1.0f);
+                    if (runParam && runParam->load(std::memory_order_relaxed) < 0.5f)
+                    {
+                        runParam->store(1.0f, std::memory_order_relaxed);
+                        enqueueParamChange(runParamObj, 1.0f);
+                    }
                 }
                 else if (val < 64)
                 {
-                    if (auto* p = parameters.getParameter(paramRun))
-                        if (p->getValue() > 0.5f)
-                            p->setValueNotifyingHost(0.0f);
+                    if (runParam && runParam->load(std::memory_order_relaxed) > 0.5f)
+                    {
+                        runParam->store(0.0f, std::memory_order_relaxed);
+                        enqueueParamChange(runParamObj, 0.0f);
+                    }
                 }
             }
             else if (val > 0)
             {
                 if (startIsCC && remoteStart >= 0 && cc == remoteStart)
                 {
-                    if (auto* p = parameters.getParameter(paramRun))
-                        if (p->getValue() < 0.5f)
-                            p->setValueNotifyingHost(1.0f);
+                    if (runParam && runParam->load(std::memory_order_relaxed) < 0.5f)
+                    {
+                        runParam->store(1.0f, std::memory_order_relaxed);
+                        enqueueParamChange(runParamObj, 1.0f);
+                    }
                 }
                 else if (stopIsCC && remoteStop >= 0 && cc == remoteStop)
                 {
-                    if (auto* p = parameters.getParameter(paramRun))
-                        if (p->getValue() > 0.5f)
-                            p->setValueNotifyingHost(0.0f);
+                    if (runParam && runParam->load(std::memory_order_relaxed) > 0.5f)
+                    {
+                        runParam->store(0.0f, std::memory_order_relaxed);
+                        enqueueParamChange(runParamObj, 0.0f);
+                    }
                 }
                 else if (triggerIsCC && remoteTrigger >= 0 && cc == remoteTrigger)
                 {
@@ -647,34 +916,29 @@ void ClockSyncAudioProcessor::handleRemoteMidiMessage(const juce::MidiMessage& m
         if (remoteOffset >= 0 && cc == remoteOffset)
         {
             int step = juce::jmap(val, 0, 127, 1, 16);
-            if (auto* p = parameters.getParameter(paramResyncOffsetStep))
-                p->setValueNotifyingHost((float) (step - 1) / 15.0f);
+            enqueueParamChange(resyncOffsetParamObj, (float) (step - 1) / 15.0f);
         }
         else if (remoteShuffle >= 0 && cc == remoteShuffle)
         {
             if (isLinearShuffleEnabled())
             {
-                if (auto* p = parameters.getParameter(paramShuffleLinear))
-                    p->setValueNotifyingHost((float) val / 127.0f);
+                enqueueParamChange(shuffleLinearParamObj, (float) val / 127.0f);
             }
             else
             {
                 int step = juce::jmap(val, 0, 127, 1, 7);
-                if (auto* p = parameters.getParameter(paramShuffleStep))
-                    p->setValueNotifyingHost((float) (step - 1) / 6.0f);
+                enqueueParamChange(shuffleStepParamObj, (float) (step - 1) / 6.0f);
             }
         }
         else if (remoteClockDiv >= 0 && cc == remoteClockDiv)
         {
             int idx = juce::jmap(val, 0, 127, 0, 3);
-            if (auto* p = parameters.getParameter(paramClockRateIndex))
-                p->setValueNotifyingHost((float) idx / 3.0f);
+            enqueueParamChange(clockRateParamObj, (float) idx / 3.0f);
         }
         else if (remoteAutoFill >= 0 && cc == remoteAutoFill)
         {
             int idx = juce::jmap(val, 0, 127, 0, 8);
-            if (auto* p = parameters.getParameter(paramPatternBars))
-                p->setValueNotifyingHost((float) idx / 8.0f);
+            enqueueParamChange(patternBarsParamObj, (float) idx / 8.0f);
         }
     }
 }
@@ -704,8 +968,8 @@ bool ClockSyncAudioProcessor::isLinearShuffleEnabled() const
 
 float ClockSyncAudioProcessor::getLinearShuffleValue() const
 {
-    if (auto* p = parameters.getParameter(paramShuffleLinear))
-        return juce::jlimit(0.0f, 1.0f, p->getValue());
+    if (shuffleLinearParamObj != nullptr)
+        return juce::jlimit(0.0f, 1.0f, shuffleLinearParamObj->get());
     return 0.0f;
 }
 
@@ -822,13 +1086,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout ClockSyncAudioProcessor::cre
 void ClockSyncAudioProcessor::prepareToPlay(double sr, int /*samplesPerBlock*/)
 {
     currentSampleRate = sr > 0.0 ? sr : 44100.0;
-    demoStartTickMs.store(juce::Time::getMillisecondCounter(), std::memory_order_relaxed);
+    #if CLOCKV3_DEMO
+     ensureDemoSessionStartTickMs();
+    #endif
     demoStopSent.store(false, std::memory_order_relaxed);
     midiRemoteCollector.reset(currentSampleRate);
     lastWasPlaying = false;
     lastTickIndex = std::numeric_limits<long long>::min();
     pendingRateIndex = -1;
     currentRateIndex = 1; // 1/16 => normal speed (24)
+    uiActiveRateIndex.store(1, std::memory_order_relaxed);
     // Default: armed but not running; will emit Start at scheduled offset step (or bar start)
     pendingStart = true;
     runActive = false;
@@ -878,6 +1145,15 @@ void ClockSyncAudioProcessor::prepareToPlay(double sr, int /*samplesPerBlock*/)
     if (pulseWidthParam)
         pulseWidthMs.store(pulseWidthParam->get(), std::memory_order_relaxed);
 
+    // Cache typed parameter pointers to eliminate runtime string queries
+    clockRateParamObj     = dynamic_cast<juce::AudioParameterChoice*>(parameters.getParameter(paramClockRateIndex));
+    runParamObj           = dynamic_cast<juce::AudioParameterBool*>(parameters.getParameter(paramRun));
+    resyncOffsetParamObj  = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramResyncOffsetStep));
+    shuffleStepParamObj   = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramShuffleStep));
+    shuffleLinearParamObj = dynamic_cast<juce::AudioParameterFloat*>(parameters.getParameter(paramShuffleLinear));
+    patternBarsParamObj   = dynamic_cast<juce::AudioParameterChoice*>(parameters.getParameter(paramPatternBars));
+    patternStepsParamObj  = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramPatternSteps));
+
     // Cache raw parameter pointers
     runParam = parameters.getRawParameterValue(paramRun);
     clockWhileStoppedParam = parameters.getRawParameterValue(paramClockWhileStopped);
@@ -886,10 +1162,10 @@ void ClockSyncAudioProcessor::prepareToPlay(double sr, int /*samplesPerBlock*/)
 
     suppressUntilRestart = false;
     firstBlock = true;
-    if (auto* pi = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramResyncOffsetStep)))
-        lastOffsetStep = juce::jlimit(1, 16, pi->get());
-    if (auto* si = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramShuffleStep)))
-        currentShuffleStep = juce::jlimit(1, 7, si->get());
+    if (resyncOffsetParamObj != nullptr)
+        lastOffsetStep = juce::jlimit(1, 16, resyncOffsetParamObj->get());
+    if (shuffleStepParamObj != nullptr)
+        currentShuffleStep = juce::jlimit(1, 7, shuffleStepParamObj->get());
     pendingShuffleStep = -1;
     applyShuffleAtPPQ = -1.0;
     // Initialise linear shuffle cached value from parameter
@@ -902,11 +1178,18 @@ void ClockSyncAudioProcessor::prepareToPlay(double sr, int /*samplesPerBlock*/)
     // Reset persistent accumulators on prepare (sample-rate change / reinitialise)
     resetAccumulators();
 
-    // Pre-allocate pattern vector to avoid allocation in audio thread
-    pendingPatternPPQ.reserve(64);
+    // Reset pattern array (zero heap allocations)
+    pendingPatternCount = 0;
+    pendingPatternPPQ.fill(0.0);
 }
 
-void ClockSyncAudioProcessor::releaseResources() {}
+void ClockSyncAudioProcessor::releaseResources()
+{
+    activeMidiOut.store(nullptr, std::memory_order_release);
+   #if JUCE_MAC
+    activeCoreMidiOut.store(nullptr, std::memory_order_release);
+   #endif
+}
 
 bool ClockSyncAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
 {
@@ -980,15 +1263,13 @@ int ClockSyncAudioProcessor::getClockResolution() const
 int ClockSyncAudioProcessor::computeDemoRemainingSeconds(juce::uint32 nowTickMs) const noexcept
 {
    #if CLOCKV3_DEMO
-    const auto startTickMs = demoStartTickMs.load(std::memory_order_relaxed);
-    if (startTickMs == 0)
-        return kDemoRuntimeSeconds;
+    const auto startTickMs = ensureDemoSessionStartTickMs();
 
     const juce::uint32 elapsedMs = nowTickMs >= startTickMs
         ? (nowTickMs - startTickMs)
         : (std::numeric_limits<juce::uint32>::max() - startTickMs + nowTickMs + 1u);
 
-    return juce::jmax(0, kDemoRuntimeSeconds - (int) (elapsedMs / 1000u));
+    return juce::jmax(0, getDemoSessionRuntimeSeconds() - (int) (elapsedMs / 1000u));
    #else
     juce::ignoreUnused(nowTickMs);
     return 0;
@@ -1001,6 +1282,33 @@ int ClockSyncAudioProcessor::getDemoRemainingSecondsUI() const
     return computeDemoRemainingSeconds(juce::Time::getMillisecondCounter());
    #else
     return 0;
+   #endif
+}
+
+int ClockSyncAudioProcessor::getDemoRuntimeMinutesUI() const
+{
+   #if CLOCKV3_DEMO
+    return getDemoSessionRuntimeSeconds() / 60;
+   #else
+    return 0;
+   #endif
+}
+
+int ClockSyncAudioProcessor::getNextDemoRuntimeMinutesUI() const
+{
+   #if CLOCKV3_DEMO
+    return getNextDemoRuntimeMinutes();
+   #else
+    return 0;
+   #endif
+}
+
+int ClockSyncAudioProcessor::getDemoCooldownRemainingSecondsUI() const
+{
+   #if CLOCKV3_DEMO
+    return getDemoCooldownRemainingSeconds();
+   #else
+    return -1;
    #endif
 }
 
@@ -1066,43 +1374,73 @@ void ClockSyncAudioProcessor::updateExternalOut()
     // remains stable even when the host/app is backgrounded.
     std::shared_ptr<TimestampedCoreMidiOut> newCore;
     if (externalDeviceId.isNotEmpty())
-        newCore = TimestampedCoreMidiOut::open(externalDeviceId);
+    {
+        newCore = TimestampedCoreMidiOut::open(externalDeviceId, externalDeviceName);
+    }
 
     {
         juce::ScopedLock sl(midiOutLock);
+        activeCoreMidiOut.store(newCore.get(), std::memory_order_release);
         externalCoreMidiOut = newCore;
+        activeMidiOut.store(nullptr, std::memory_order_release);
         externalMidiOut.reset();
     }
    #else
-    // Other platforms: fall back to JUCE MidiOutput
+    // Windows and other platforms:
+    // With JUCE 9 and Windows MIDI Services enabled (NEEDS_WINDOWS_MIDI_SERVICES),
+    // createNewDevice creates a native Windows MIDI Services virtual endpoint
+    // providing Universal MIDI Packet (UMP) transport and multi-client access.
     std::shared_ptr<juce::MidiOutput> newOut;
     if (externalDeviceId.isNotEmpty())
     {
-        auto uniqueOut = juce::MidiOutput::openDevice(externalDeviceId);
-        if (uniqueOut)
+        if (externalDeviceId == "__VIRTUAL_PORT__")
         {
-            newOut = std::shared_ptr<juce::MidiOutput>(uniqueOut.release());
-            newOut->startBackgroundThread();
+            auto uniqueOut = juce::MidiOutput::createNewDevice("Clock v3 Virtual Out");
+            if (uniqueOut)
+            {
+                newOut = std::shared_ptr<juce::MidiOutput>(uniqueOut.release());
+                newOut->startBackgroundThread();
+            }
+        }
+        else
+        {
+            auto uniqueOut = juce::MidiOutput::openDevice(externalDeviceId);
+            if (uniqueOut)
+            {
+                newOut = std::shared_ptr<juce::MidiOutput>(uniqueOut.release());
+                newOut->startBackgroundThread();
+            }
         }
     }
 
     {
         juce::ScopedLock sl(midiOutLock);
+        activeMidiOut.store(newOut.get(), std::memory_order_release);
         externalMidiOut = newOut;
     }
    #endif
 }
 
-void ClockSyncAudioProcessor::setExternalDeviceId(const juce::String& id)
+void ClockSyncAudioProcessor::setExternalDevice(const juce::String& id, const juce::String& name)
 {
-    if (externalDeviceId == id)
+    const auto trimmedId = id.trim();
+    const auto trimmedName = name.trim();
+
+    if (externalDeviceId == trimmedId && externalDeviceName == trimmedName)
         return;
 
-    externalDeviceId = id;
+    externalDeviceId = trimmedId;
+    externalDeviceName = trimmedId.isNotEmpty() ? trimmedName : juce::String{};
     // Persist into the state tree for recall
     parameters.state.setProperty("externalDeviceId", externalDeviceId, nullptr);
+    parameters.state.setProperty("externalDeviceName", externalDeviceName, nullptr);
     // Reopen according to new device selection
     updateExternalOut();
+}
+
+void ClockSyncAudioProcessor::setExternalDeviceId(const juce::String& id)
+{
+    setExternalDevice(id, {});
 }
 
 //==============================================================================
@@ -1273,28 +1611,15 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
     // in prepareToPlay(). Critical flags like audioPulsesEnabled use acquire/release
     // semantics where necessary to synchronise with state changes.
 
-    // Acquire local reference to external MIDI output.
-    // IMPORTANT: never block the audio thread here. If the message thread is
-    // swapping the device (or state load is updating), skip external output
-    // for this block rather than risking an audio-thread stall.
-    std::shared_ptr<juce::MidiOutput> localOut;
+    // Acquire local raw pointer to active external MIDI output without locks or shared_ptr ref-counting.
+    juce::MidiOutput* localOut = activeMidiOut.load(std::memory_order_acquire);
    #if JUCE_MAC
-    std::shared_ptr<TimestampedCoreMidiOut> localCoreOut;
+    TimestampedCoreMidiOut* localCoreOut = activeCoreMidiOut.load(std::memory_order_acquire);
    #endif
-    {
-        juce::ScopedTryLock sl(midiOutLock);
-        if (sl.isLocked())
-        {
-            localOut = externalMidiOut;
-           #if JUCE_MAC
-            localCoreOut = externalCoreMidiOut;
-           #endif
-        }
-    }
 
-    const bool haveExternalOut = (bool) localOut
+    const bool haveExternalOut = (localOut != nullptr)
        #if JUCE_MAC
-        || (bool) localCoreOut
+        || (localCoreOut != nullptr)
        #endif
         ;
 
@@ -1344,16 +1669,16 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
             return;
 
        #if JUCE_MAC
-        if (localCoreOut)
+        if (localCoreOut != nullptr)
         {
             localCoreOut->sendBlock(extClock, currentSampleRate);
         }
-        else if (localOut)
+        else if (localOut != nullptr)
         {
             localOut->sendBlockOfMessages(extClock, juce::Time::getMillisecondCounterHiRes(), currentSampleRate);
         }
        #else
-        if (localOut)
+        if (localOut != nullptr)
             localOut->sendBlockOfMessages(extClock, juce::Time::getMillisecondCounterHiRes(), currentSampleRate);
        #endif
     };
@@ -1416,10 +1741,9 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
     // Only gate click (audio pulse) output by clickEnabled and runActive (Run button ON) with Start gating
 
 
-    auto* choiceParam = dynamic_cast<juce::AudioParameterChoice*>(parameters.getParameter(paramClockRateIndex));
-    if (choiceParam)
+    if (clockRateParamObj != nullptr)
     {
-        const int desired = choiceParam->getIndex();
+        const int desired = clockRateParamObj->getIndex();
         if (desired != currentRateIndex && pendingRateIndex != desired)
         {
             pendingRateIndex = desired;
@@ -1606,9 +1930,7 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
             uiNextRestartPending.store(true, std::memory_order_relaxed);
 
             // Compute current bar and step to schedule a resync target.
-            int offsetStep = 1;
-            if (auto* pi = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramResyncOffsetStep)))
-                offsetStep = juce::jlimit(1, 16, pi->get());
+            const int offsetStep = resyncOffsetParamObj ? juce::jlimit(1, 16, resyncOffsetParamObj->get()) : 1;
             const double barLenQNow = (pos.timeSigNumerator > 0 && pos.timeSigDenominator > 0)
                 ? (4.0 * (double) pos.timeSigNumerator / (double) pos.timeSigDenominator)
                 : 4.0;
@@ -1626,9 +1948,7 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
     {
         if (triggerModeEnabled.load(std::memory_order_relaxed))
         {
-            int offsetStep = 1;
-            if (auto* pi = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramResyncOffsetStep)))
-                offsetStep = juce::jlimit(1, 16, pi->get());
+            const int offsetStep = resyncOffsetParamObj ? juce::jlimit(1, 16, resyncOffsetParamObj->get()) : 1;
             
             const double barLenQNow = (pos.timeSigNumerator > 0 && pos.timeSigDenominator > 0)
                 ? (4.0 * (double) pos.timeSigNumerator / (double) pos.timeSigDenominator)
@@ -1801,9 +2121,9 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
 
         // Handle pending shuffle (swing) parameter change: schedule at next unswung 1/8 (0.5 QN) boundary.
         // This preserves clock continuity: we switch swing only at 8th boundaries which are always "straight".
-        if (auto* sh = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramShuffleStep)))
+        if (shuffleStepParamObj != nullptr)
         {
-            const int desiredShuffle = juce::jlimit(1, 7, sh->get());
+            const int desiredShuffle = juce::jlimit(1, 7, shuffleStepParamObj->get());
             if (desiredShuffle != currentShuffleStep && pendingShuffleStep != desiredShuffle)
             {
                 pendingShuffleStep = desiredShuffle;
@@ -1903,55 +2223,86 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                     long long barForStart = computeCurrentBar(nextBoundaryQ, barLenQ);
                     // Use active shiftQ (linear or quantized) to derive logical step consistently
                     int stepForStart = computeLogicalStepFromPPQ(nextBoundaryQ, barLenQ, shiftQActive);
-                    // Duplicate suppression: skip if same bar+step already emitted
-                    // or if a near-simultaneous Start was already emitted this block.
-                    if (! isDuplicateStart(barForStart, stepForStart, nextGridOffset))
+
+                    // Read offset step early to decide whether to defer Start to resync path.
+                    const int offsetStep = resyncOffsetParamObj ? juce::jlimit(1, 16, resyncOffsetParamObj->get()) : 1;
+
+                    // When trigger mode is active, offset != step 1, AND the engine is not
+                    // yet running (first/clean start), defer the Start to the resync path so
+                    // external devices receive it at the offset step rather than immediately.
+                    // When the engine IS already running (retrigger via idx1), always fire
+                    // the immediate Start so the retrigger works regardless of offset step.
+                    const bool deferToResync = triggerModeEnabled.load(std::memory_order_relaxed)
+                                            && !syncLatchEnabled.load(std::memory_order_relaxed)
+                                            && offsetStep != 1
+                                            && !runActive;
+
+                    if (! deferToResync)
                     {
-                        // Legacy mode: send Stop before Start for manual triggers too
-                        if (legacyModeEnabled.load(std::memory_order_relaxed))
+                        // Duplicate suppression: skip if same bar+step already emitted
+                        // or if a near-simultaneous Start was already emitted this block.
+                        if (! isDuplicateStart(barForStart, stepForStart, nextGridOffset))
                         {
-                            const auto stopMsg = juce::MidiMessage::midiStop();
-                            addBoth(midi, extClock, stopMsg, nextGridOffset);
+                            // Legacy mode: send Stop before Start for manual triggers too
+                            if (legacyModeEnabled.load(std::memory_order_relaxed))
+                            {
+                                const auto stopMsg = juce::MidiMessage::midiStop();
+                                addBoth(midi, extClock, stopMsg, nextGridOffset);
+                            }
+
+                            addBoth(midi, extClock, startMsg, nextGridOffset);
+                            startSampleForRunSignal = nextGridOffset;
+                            lastStartBar.store(barForStart, std::memory_order_relaxed);
+                            lastStartStep.store(stepForStart, std::memory_order_relaxed);
                         }
-
-                        addBoth(midi, extClock, startMsg, nextGridOffset);
-                        startSampleForRunSignal = nextGridOffset;
-                        lastStartBar.store(barForStart, std::memory_order_relaxed);
-                        lastStartStep.store(stepForStart, std::memory_order_relaxed);
-
-                    }
                         // record that we emitted a Start from a manual trigger at this sample
                         lastPatternStartSampleInBlock = nextGridOffset;
+                    }
+
                     // triggerArmed diagnostic message removed per user request
                     // Consume arm
                     triggerArmedForNextSixteenth.store(false, std::memory_order_relaxed);
-                    // Manual trigger should clear a stopped state: mark engine running
-                    runActive = true;
-                    pendingStart = false;
-                    uiIsRunning.store(true, std::memory_order_relaxed);
-                    uiPendingStart.store(false, std::memory_order_relaxed);
-                    // Enable audio pulses on manual trigger (Gate Note On)
-                    audioPulsesEnabled.store(true, std::memory_order_relaxed);
 
-                    // FIX: Ensure clocks flow immediately
-                    suppressUntilRestart = false;
-
-                    // Schedule resync if idx8 (gate) is enabled, per workflow.md rule 1
-                    if (triggerModeEnabled.load(std::memory_order_relaxed))
+                    if (deferToResync)
                     {
-                        // FIX: In Sync Latch (Gate) mode, do NOT schedule a bar restart.
-                        // We just started immediately.
-                        if (! syncLatchEnabled.load(std::memory_order_relaxed))
+                        // No immediate Start; schedule resync at the offset step only.
+                        pendingBarRestart.store(true, std::memory_order_relaxed);
+                        uiNextRestartPending.store(true, std::memory_order_relaxed);
+                        int currentStep = stepForStart;
+                        attemptScheduleResync(barForStart, currentStep, offsetStep, false);
+
+                        if (! runActive)
                         {
-                            // Schedule bar restart as before
-                            pendingBarRestart.store(true, std::memory_order_relaxed);
-                            uiNextRestartPending.store(true, std::memory_order_relaxed);
-                            // Also schedule resync flag (mono, shortest precedence)
-                            int offsetStep = 1;
-                            if (auto* pi = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramResyncOffsetStep)))
-                                offsetStep = juce::jlimit(1,16, pi->get());
-                            int currentStep = stepForStart;
-                            attemptScheduleResync(barForStart, currentStep, offsetStep, false);
+                            // Engine wasn't running: arm pending start and suppress clocks until resync fires
+                            pendingStart = true;
+                            uiPendingStart.store(true, std::memory_order_relaxed);
+                            suppressUntilRestart = true;
+                        }
+                        // If engine was already running, clocks continue flowing; only the resync Start fires
+                    }
+                    else
+                    {
+                        // Manual trigger should clear a stopped state: mark engine running
+                        runActive = true;
+                        pendingStart = false;
+                        uiIsRunning.store(true, std::memory_order_relaxed);
+                        uiPendingStart.store(false, std::memory_order_relaxed);
+                        // Enable audio pulses on manual trigger (Gate Note On)
+                        audioPulsesEnabled.store(true, std::memory_order_relaxed);
+
+                        // FIX: Ensure clocks flow immediately
+                        suppressUntilRestart = false;
+
+                        // Schedule resync if idx8 (gate) is enabled, per workflow.md rule 1
+                        if (triggerModeEnabled.load(std::memory_order_relaxed))
+                        {
+                            if (! syncLatchEnabled.load(std::memory_order_relaxed))
+                            {
+                                pendingBarRestart.store(true, std::memory_order_relaxed);
+                                uiNextRestartPending.store(true, std::memory_order_relaxed);
+                                int currentStep = stepForStart;
+                                attemptScheduleResync(barForStart, currentStep, offsetStep, false);
+                            }
                         }
                     }
                     // Allow clock at same frame (no suppression)
@@ -1967,6 +2318,7 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
         gapStart = barWindow.gapStart;
         gapEnd = barWindow.gapEnd;
         startSampleAtBoundary = barWindow.startSample;
+        const double boundaryPPQExact = barWindow.boundaryPPQ;
         // Second idempotent pass: suppress duplicate diagnostics unless new pattern targets appeared.
         tryFirePattern(ppqStart, barLenQ, lastBar, numSamples, midi, extClock, true, /*preview=*/false);
 
@@ -2184,8 +2536,10 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
         if (boundaryInBlock)
         {
             // Reset tick baseline to the boundary in "after" resolution so first tick lands exactly 1/res after Start
-            const double boundaryPPQ = ppqStart + (double) startSampleAtBoundary * ppqPerSample;
-            const long long baseIdx = tickAt(boundaryPPQ, resolutionAfter);
+            const double boundaryPPQ = (boundaryPPQExact >= 0.0)
+                ? boundaryPPQExact
+                : (ppqStart + (double) startSampleAtBoundary * ppqPerSample);
+            const long long baseIdx = computeTickIndexFromPPQ(boundaryPPQ, resolutionAfter, shiftQAfter);
             if (suppressClockAtBoundaryOnce)
             {
                 // Skip the clock at the exact Start frame; next tick will be at baseIdx + 1
@@ -2388,9 +2742,9 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
 
     lastWasPlaying = isPlaying;
     // Offset step change: schedule restart at the next occurrence of the selected step (modulo bar)
-    if (auto* pi = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramResyncOffsetStep)))
+    if (resyncOffsetParamObj != nullptr)
     {
-        const int cur = juce::jlimit(1, 16, pi->get());
+        const int cur = juce::jlimit(1, 16, resyncOffsetParamObj->get());
         if (cur != lastOffsetStep)
         {
             lastOffsetStep = cur;
@@ -2412,9 +2766,9 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
 // ---- Pattern helpers ----
 void ClockSyncAudioProcessor::updatePatternParams()
 {
-    if (auto* pb = dynamic_cast<juce::AudioParameterChoice*>(parameters.getParameter(paramPatternBars)))
+    if (patternBarsParamObj != nullptr)
     {
-        int newMode = pb->getIndex();
+        int newMode = patternBarsParamObj->getIndex();
         int oldMode = patternBarsMode.load(std::memory_order_relaxed);
         if (newMode != oldMode)
         {
@@ -2427,17 +2781,17 @@ void ClockSyncAudioProcessor::updatePatternParams()
                 // Changing interval should clear any pending pattern scheduling so
                 // the new interval takes effect immediately (avoid firing on the
                 // previously computed bar for the old interval).
-                pendingPatternPPQ.clear();
+                pendingPatternCount = 0;
                 pendingPatternRestartTargetBar.store(-1, std::memory_order_relaxed);
                 lastPatternFiredBar = -1;
                 nextRandomPatternTargetBar = -1;
 
         }
     }
-    if (auto* ps = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramPatternSteps)))
+    if (patternStepsParamObj != nullptr)
     {
         const uint16_t oldMask = patternStepsMask.load(std::memory_order_relaxed);
-        const uint16_t newMask = (uint16_t) juce::jlimit(0, 65535, ps->get());
+        const uint16_t newMask = (uint16_t) juce::jlimit(0, 65535, patternStepsParamObj->get());
         if (oldMask == 0 && newMask != 0)
             patternMaskJustActivated.store(true, std::memory_order_relaxed);
         patternStepsMask.store(newMask, std::memory_order_relaxed);
@@ -2461,7 +2815,7 @@ int ClockSyncAudioProcessor::getPatternBarIntervalFromMode(int mode) const
 
 void ClockSyncAudioProcessor::preparePatternForBar(double barStartPPQ, double barLenQ)
 {
-    pendingPatternPPQ.clear();
+    pendingPatternCount = 0;
     const uint16_t mask = patternStepsMask.load(std::memory_order_relaxed);
     if (mask != 0) {
         // Visual interaction originally applied a +4 step rotation (see PatternRing::hitTest).
@@ -2471,7 +2825,6 @@ void ClockSyncAudioProcessor::preparePatternForBar(double barStartPPQ, double ba
         // 1..16 visual numbering while storage uses rotated bit indices.
         constexpr int visualRotation = 4; // match UI rotation
         const double shiftQ = getCurrentShiftQ(barLenQ); // quantized or linear depending on ui.linearShuffleMode
-        juce::Array<int> activeLogicalSteps;
         for (int logicalIndex = 0; logicalIndex < 16; ++logicalIndex)
         {
             const int storedIndex = (logicalIndex + visualRotation) & 15; // how it's stored in the mask
@@ -2494,28 +2847,22 @@ void ClockSyncAudioProcessor::preparePatternForBar(double barStartPPQ, double ba
             double scheduledPPQ = barStartPPQ + stepPosQ;
             if (std::fabs(stepPosQ) < 1e-9)
                 scheduledPPQ = barStartPPQ;
-            pendingPatternPPQ.push_back(scheduledPPQ);
-            activeLogicalSteps.add(triggerLogical   + 1); // store 1..16 for diagnostics
-
+            if (pendingPatternCount < 16)
+                pendingPatternPPQ[(size_t) pendingPatternCount++] = scheduledPPQ;
         }
-
-
     }
-    std::sort(pendingPatternPPQ.begin(), pendingPatternPPQ.end());
-
-   
+    std::sort(pendingPatternPPQ.begin(), pendingPatternPPQ.begin() + pendingPatternCount);
 }
 
 void ClockSyncAudioProcessor::rescheduleRemainingPatternTargets(double barStartPPQ, double barLenQ, double fromPPQ)
 {
-    if (pendingPatternPPQ.empty())
+    if (pendingPatternCount == 0)
         return;
-    // Recompute full set using current shiftQ, then keep only targets >= fromPPQ
-    std::vector<double> recomputed;
     const uint16_t mask = patternStepsMask.load(std::memory_order_relaxed);
-    if (mask == 0) { pendingPatternPPQ.clear(); return; }
+    if (mask == 0) { pendingPatternCount = 0; return; }
     constexpr int visualRotation = 4;
     const double shiftQ = getCurrentShiftQ(barLenQ);
+    int newCount = 0;
     for (int logicalIndex = 0; logicalIndex < 16; ++logicalIndex)
     {
         const int storedIndex = (logicalIndex + visualRotation) & 15;
@@ -2534,11 +2881,11 @@ void ClockSyncAudioProcessor::rescheduleRemainingPatternTargets(double barStartP
         }
         double scheduledPPQ = barStartPPQ + stepPosQ;
         if (std::fabs(stepPosQ) < 1e-9) scheduledPPQ = barStartPPQ;
-        if (scheduledPPQ >= fromPPQ - 1e-9)
-            recomputed.push_back(scheduledPPQ);
+        if (scheduledPPQ >= fromPPQ - 1e-9 && newCount < 16)
+            pendingPatternPPQ[(size_t) newCount++] = scheduledPPQ;
     }
-    std::sort(recomputed.begin(), recomputed.end());
-    pendingPatternPPQ.swap(recomputed);
+    std::sort(pendingPatternPPQ.begin(), pendingPatternPPQ.begin() + newCount);
+    pendingPatternCount = newCount;
 }
 
 // Attempt to schedule (or replace) resync target according to precedence rules.
@@ -2741,15 +3088,16 @@ void ClockSyncAudioProcessor::tryFirePattern(double ppqStart, double barLenQ, do
     // Clear mode-change suppression flag after evaluating all candidate bars in this block.
     if (patternModeJustChanged.load(std::memory_order_relaxed))
         patternModeJustChanged.store(false, std::memory_order_relaxed);
-    if (pendingPatternPPQ.empty()) return;
+    if (pendingPatternCount == 0) return;
     // Emit Start messages for pattern PPQ times that fall within this block; remove them after emission.
     auto clockResolution = getClockResolution(); // not strictly needed
-    std::vector<double> remaining;
-    remaining.reserve(pendingPatternPPQ.size());
+    std::array<double, 16> remaining {};
+    int remainingCount = 0;
     int firedCount = 0;
     long long lastBarEmitted = std::numeric_limits<long long>::min();
-    for (double targetPPQ : pendingPatternPPQ)
+    for (int pi = 0; pi < pendingPatternCount; ++pi)
     {
+        const double targetPPQ = pendingPatternPPQ[(size_t) pi];
         if (targetPPQ < ppqStart - 1e-9)
         {
 
@@ -2758,13 +3106,18 @@ void ClockSyncAudioProcessor::tryFirePattern(double ppqStart, double barLenQ, do
         if (targetPPQ > blockEndPPQ + 1e-9)
         {
 
-            { remaining.push_back(targetPPQ); continue; }
+            if (remainingCount < 16) remaining[(size_t) remainingCount++] = targetPPQ;
+            continue;
         }
         // Note: pendingPatternPPQ entries are already stored including any ms fine-tune
         // at prepare time. Use the stored targetPPQ directly as the emit point.
         double deltaQ = targetPPQ - ppqStart;
         int sampleOffset = fastRoundPositive(deltaQ * samplesPerQuarter);
-        if (sampleOffset < 0 || sampleOffset >= numSamples) { remaining.push_back(targetPPQ); continue; }
+        if (sampleOffset < 0 || sampleOffset >= numSamples)
+        {
+            if (remainingCount < 16) remaining[(size_t) remainingCount++] = targetPPQ;
+            continue;
+        }
         const auto startMsg = juce::MidiMessage::midiStart();
         // If the bar-restart path already emitted/consumed a Start at this sample,
         // avoid sending a duplicate and consume the pending indicators so UI/state
@@ -2899,9 +3252,7 @@ void ClockSyncAudioProcessor::tryFirePattern(double ppqStart, double barLenQ, do
         const bool gate = triggerModeEnabled.load(std::memory_order_relaxed);
         if (!loopMode && gate)
         {
-            int offsetStep = 1;
-            if (auto* pi = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramResyncOffsetStep)))
-                offsetStep = juce::jlimit(1,16, pi->get());
+            const int offsetStep = resyncOffsetParamObj ? juce::jlimit(1, 16, resyncOffsetParamObj->get()) : 1;
             // Prefer the exact last emitted step when available to avoid
             // off-by-one scheduling caused by UI/storage index conversions.
             int lastEmitted = lastStartStep.load(std::memory_order_relaxed);
@@ -2918,7 +3269,9 @@ void ClockSyncAudioProcessor::tryFirePattern(double ppqStart, double barLenQ, do
         }
     }
 
-    pendingPatternPPQ.swap(remaining);
+    for (int i = 0; i < remainingCount; ++i)
+        pendingPatternPPQ[(size_t) i] = remaining[(size_t) i];
+    pendingPatternCount = remainingCount;
 }
 
 ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlignedChanges(const juce::AudioPlayHead::CurrentPositionInfo& pos,
@@ -2959,11 +3312,7 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
 
     // Compute the next occurrence of the selected step (1..16) at or after 'now'.
     // If the selected step lies ahead in the current bar, use it; otherwise target the same step in the next bar.
-    int offsetStep = 1;
-    if (auto* pi = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramResyncOffsetStep)))
-        offsetStep = juce::jlimit(1, 16, pi->get());
-    else if (auto* p = parameters.getParameter(paramResyncOffsetStep))
-        offsetStep = juce::jlimit(1, 16, (int) juce::roundToInt(p->getValue() * 15.0f + 1.0f));
+    const int offsetStep = resyncOffsetParamObj ? juce::jlimit(1, 16, resyncOffsetParamObj->get()) : 1;
     const int stepIndex0 = offsetStep - 1; // 0..15
     // Swing-aware mapping: if shuffle active (>1) and 4/4, recompute target boundary using shifted second 16th lengths.
     // Use master grid to compute target step position so all scheduling
@@ -3014,6 +3363,7 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
         }
 
         sampleOffset = fastRoundPositive(deltaQ * samplesPerQuarter);
+        window.boundaryPPQ = ppqStart + deltaQ;
         // Determine which bar this scheduled restart will fall into. If a pattern
         // previously requested a deferred restart for that bar, mark the deferred
         // match so the restart is applied (and consume the deferred request).
@@ -3059,6 +3409,7 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
                 if (candidateOffset >= 0 && candidateOffset <= numSamples - 1)
                 {
                     sampleOffset = candidateOffset;
+                    window.boundaryPPQ = targetPPQ;
                     resyncMatches = true;
                     resyncStepForStart = targetStep;
                 }
@@ -3243,6 +3594,7 @@ AfterBarRestartEmit:
         if (haveRateChange)
         {
             currentRateIndex = pendingRateIndex;
+            uiActiveRateIndex.store(currentRateIndex, std::memory_order_relaxed);
             pendingRateIndex = -1;
             // changing resolution invalidates prior fractional carries -> reset
             resetAccumulators();
@@ -3299,10 +3651,18 @@ juce::AudioProcessorEditor* ClockSyncAudioProcessor::createEditor()
 //==============================================================================
 void ClockSyncAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
+   #if CLOCKV3_DEMO
+    // Demo build: do not persist settings into project state
+    return;
+   #endif
     auto state = parameters.copyState();
     // Persist the selected external device id
     if (externalDeviceId.isNotEmpty())
+    {
         state.setProperty("externalDeviceId", externalDeviceId, nullptr);
+        if (externalDeviceName.isNotEmpty())
+            state.setProperty("externalDeviceName", externalDeviceName, nullptr);
+    }
 
     // Persist MIDI Remote settings
     state.setProperty("midiRemoteStart", midiRemoteStart.load(), nullptr);
@@ -3361,6 +3721,11 @@ void ClockSyncAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 
 void ClockSyncAudioProcessor::setStateInformation(const void* data, int sizeInBytes)
 {
+   #if CLOCKV3_DEMO
+    // Demo build: do not restore saved settings from project state
+    juce::ignoreUnused(data, sizeInBytes);
+    return;
+   #endif
     if (auto xml = getXmlFromBinary(data, sizeInBytes))
     {
         if (xml->hasTagName(parameters.state.getType()))
@@ -3369,6 +3734,7 @@ void ClockSyncAudioProcessor::setStateInformation(const void* data, int sizeInBy
             parameters.replaceState(vt);
             // Restore external device id if present
             externalDeviceId = vt.getProperty("externalDeviceId").toString();
+            externalDeviceName = vt.getProperty("externalDeviceName").toString();
 
             // Restore MIDI Remote settings
             midiRemoteStart.store(vt.getProperty("midiRemoteStart", 1), std::memory_order_relaxed);
@@ -3418,7 +3784,7 @@ juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 
 int ClockSyncAudioProcessor::getPendingPatternCount() const
 {
-    return (int) pendingPatternPPQ.size();
+    return pendingPatternCount;
 }
 
 int ClockSyncAudioProcessor::getPendingShuffleStep() const

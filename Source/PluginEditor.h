@@ -10,12 +10,13 @@
 #include "Pattern.h"
 
 #include "PlaygroundComponent.h"
-#include "UiComponents.h"
 #include "HitRouting.h" // unified hit-test
 #include "SvgDancerComponent.h"
 
 class ClockEditorPaintLayer;
+#if ! CLOCKV3_DEMO
 namespace toolboy_license { class LicenseDialog; }
+#endif
 
 class ColorPaletteToggle : public juce::Component
 {
@@ -191,7 +192,7 @@ private:
         popupBounds.setY(targetArea.getCentreY() - popupBounds.getHeight() / 2);
 
         if (auto* display = juce::Desktop::getInstance().getDisplays().getDisplayForRect(targetArea))
-            popupBounds = popupBounds.constrainedWithin(display->userArea.reduced(screenGap));
+            popupBounds = popupBounds.constrainedWithin(display->userBounds.toNearestInt().reduced(screenGap));
 
         box.setBounds(popupBounds);
     }
@@ -263,6 +264,8 @@ private:
 
     // Root container that is uniformly scaled to fit the host-provided editor size.
     juce::Component uiRoot;
+    // Custom bottom-right resize triangle (direct child of editor, not uiRoot)
+    std::unique_ptr<juce::Component> cornerResizer;
     double uiScale { 1.0 };
     juce::Point<int> uiOffset { 0, 0 };
 
@@ -349,9 +352,15 @@ private:
     std::unique_ptr<juce::TextEditor> nameEntryEditor;
     int nameEntryEditingId { 0 };
 
-    // Minimal help toggle: transparent background, only draws bold '?' text.
+    // SVG help toggle button
     HelpButton helpToggle;
+    std::unique_ptr<juce::Drawable> helpDrawable;
+    std::unique_ptr<juce::Drawable> helpOffDrawable;
+    std::unique_ptr<juce::Drawable> helpOnDrawable;
+    void updateHelpButtonImages();
     ColorPaletteToggle colorPaletteToggle;
+    juce::TextButton demoExpiredButton { "NOOO...DON'T STOP!!" };
+    juce::TextButton demoLabelButton { "DEMO" }; // clickable DEMO label (bottom-right, opens Gumroad)
     // Bottom-right setup corner button (SVG icon)
     std::unique_ptr<juce::DrawableButton> setupCornerButton;
     std::unique_ptr<juce::Drawable> setupCornerDrawable; // keep SVG drawable alive
@@ -369,7 +378,9 @@ private:
     // Canvas overlay toggled by setup.svg (independent of header submenu)
     bool setupOverlayVisible { false };
     std::unique_ptr<juce::Component> setupOverlayComp; // consumes mouse inside overlay bounds
+#if ! CLOCKV3_DEMO
     std::unique_ptr<toolboy_license::LicenseDialog> licenseDialog;
+#endif
     // std::unique_ptr<juce::DrawableButton> setupOverlayClose; // Removed as per request
 
     // Handle Escape to close overlay when visible
@@ -494,6 +505,10 @@ private:
     unsigned long long dancerLastDrawnClockCounter { 0 }; // last clock counter used for frame selection
     int dancerFrameOffset { 0 };              // frame offset in frames; increments by 3 on triggers
     static constexpr int kDancerRefW = 355;  // reference design width
+
+    // --- Toolboy Clock Logo (shown during submenu) ---
+    std::unique_ptr<juce::Drawable> logoDrawable;
+    float logoAlpha { 0.0f }; // 0 = hidden, 1 = fully visible
     static constexpr int kDancerRefH = 500;  // reference design height
     // Option: divisor for clock pulses per frame advance (1 => every pulse; 24 => quarter-note cycle)
     int dancerPulseCyclePPQ { 24 };          // use 24 PPQ quarter-note cycle mapping
@@ -514,5 +529,9 @@ private:
     HitContext buildHitContext() const;
     InteractionMode getInteractionMode() const;
     HitResult routeHit(const juce::MouseEvent& e, bool isHover);
-    
+
+    // Cached drop shadow images to avoid continuous CPU Gaussian blurs during animation
+    juce::Image headerShadowImage;
+    juce::Image submenuShadowImage;
+    void initDropShadows();
 };

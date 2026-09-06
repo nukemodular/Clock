@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "BinaryData.h"
 #include "UiTheme.h"
 
 // Header-only modular expanding/collapsing circular popup menu.
@@ -171,23 +172,8 @@ public:
         const bool fullCircle = std::fabs (spanRad - juce::MathConstants<float>::twoPi) < 0.001f;
         const float denom = fullCircle ? (float) values.size() : (values.size() > 1 ? (float)(values.size() - 1) : 1.0f);
 
-        // PNG-only shadow (SVG blur unsupported). Lazy load once.
-        static juce::Image shadowPng;
-        static bool shadowLoaded = false;
-        if (! shadowLoaded)
-        {
-            shadowLoaded = true;
-            juce::File assetsDir = juce::File::getSpecialLocation(juce::File::currentApplicationFile).getParentDirectory().getChildFile("assets");
-            juce::File pngFile = assetsDir.getChildFile("shadow.png");
-            if (! pngFile.existsAsFile())
-                pngFile = juce::File ("/Users/studio/Documents/PlugProcess/clock_plugin/assets/shadow.png");
-            if (pngFile.existsAsFile())
-            {
-                juce::FileInputStream fis (pngFile);
-                if (fis.openedOk())
-                    shadowPng = juce::PNGImageFormat().decodeImage (fis);
-            }
-        }
+        // PNG shadow loaded directly from embedded BinaryData (no disk I/O or hardcoded paths)
+        static const juce::Image shadowPng = juce::ImageCache::getFromMemory (BinaryData::shadow_png, BinaryData::shadow_pngSize);
 
         for (int i = 0; i < values.size(); ++i)
         {

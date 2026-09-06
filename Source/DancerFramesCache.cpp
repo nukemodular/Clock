@@ -19,18 +19,43 @@ namespace
         return { data, size };
     }
 
-    void removeGuideCircles(juce::XmlElement& element)
+    void ensureVisibleAndRemoveGuideCircles(juce::XmlElement& element)
     {
         for (auto* child = element.getFirstChildElement(); child != nullptr;)
         {
             auto* next = child->getNextElement();
-            removeGuideCircles(*child);
+            ensureVisibleAndRemoveGuideCircles(*child);
 
             if (child->hasTagName("circle"))
             {
                 const auto radius = child->getDoubleAttribute("r", -1.0);
                 if (radius >= 250.0)
+                {
                     element.removeChildElement(child, true);
+                    child = next;
+                    continue;
+                }
+            }
+
+            if (child->hasAttribute("style"))
+            {
+                auto style = child->getStringAttribute("style");
+                if (style.containsIgnoreCase("visibility") || style.containsIgnoreCase("display"))
+                {
+                    style = style.replace("visibility: hidden;", "")
+                                 .replace("visibility:hidden;", "")
+                                 .replace("visibility: hidden", "")
+                                 .replace("visibility:hidden", "")
+                                 .replace("display: none;", "")
+                                 .replace("display:none;", "")
+                                 .replace("display: none", "")
+                                 .replace("display:none", "");
+                    child->setAttribute("style", style);
+                }
+            }
+            if (child->hasAttribute("visibility"))
+            {
+                child->removeAttribute("visibility");
             }
 
             child = next;
@@ -81,13 +106,13 @@ void DancerFramesCache::ensureLoaded()
 
             if (auto svgXml = juce::XmlDocument::parse(juce::String::fromUTF8(resource.data, resource.size)))
             {
-                removeGuideCircles(*svgXml);
+                ensureVisibleAndRemoveGuideCircles(*svgXml);
                 svgXml->setAttribute("viewBox", kCanonicalViewBox);
                 svgXml->setAttribute("width", "520");
                 svgXml->setAttribute("height", "520");
                 svgXml->setAttribute("preserveAspectRatio", "xMidYMid meet");
 
-                if (auto drawable = juce::Drawable::createFromSVG(*svgXml))
+                if (auto drawable = juce::Drawable::createFromSVGString(svgXml->toString()))
                     frames.push_back(std::move(drawable));
             }
         }

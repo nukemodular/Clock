@@ -4,10 +4,12 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_dsp/juce_dsp.h>
+#if ! CLOCKV3_DEMO
 #include "LicenseManager.h"
+#endif
 #include "UiTheme.h"
 
-class ClockSyncAudioProcessor : public juce::AudioProcessor, public juce::ValueTree::Listener
+class ClockSyncAudioProcessor : public juce::AudioProcessor, public juce::ValueTree::Listener, private juce::AsyncUpdater
 {
 public:
     //==============================================================================
@@ -70,6 +72,7 @@ public:
 
     // UI helpers
     unsigned long long getUiClockCounter() const { return uiClockCounter.load(std::memory_order_relaxed); }
+    int getUiActiveRateIndex() const { return uiActiveRateIndex.load(std::memory_order_relaxed); }
     int getUiStep16() const { return uiStep16.load(std::memory_order_relaxed); }
     bool getUiIsRunning() const { return uiIsRunning.load(std::memory_order_relaxed); }
     bool getUiPendingStart() const { return uiPendingStart.load(std::memory_order_relaxed); }
@@ -115,13 +118,16 @@ public:
          #endif
      }
      int getDemoRemainingSecondsUI() const;
+     int getDemoRuntimeMinutesUI() const;
+     int getNextDemoRuntimeMinutesUI() const;
+     int getDemoCooldownRemainingSecondsUI() const;
      bool isDemoExpiredUI() const;
      bool isLicensedUI() const
      {
          #if CLOCKV3_DEMO
           return true;
          #else
-          return toolboy_license::LicenseManager::isLicensed(licenseConfig_);
+          return isLicensedCached.load(std::memory_order_relaxed);
          #endif
      }
     juce::String getLicenseUserUI() const
@@ -139,10 +145,15 @@ public:
             : juce::String();
          #endif
     }
-    bool saveLicenseUI(const juce::String& licensedUser, const juce::String& providerKey) const
+#if ! CLOCKV3_DEMO
+    bool saveLicenseUI(const juce::String& licensedUser, const juce::String& providerKey)
     {
-        return toolboy_license::LicenseManager::saveLicense(licenseConfig_, licensedUser, providerKey);
+        const bool ok = toolboy_license::LicenseManager::saveLicense(licenseConfig_, licensedUser, providerKey);
+        if (ok)
+            isLicensedCached.store(true, std::memory_order_release);
+        return ok;
     }
+#endif
 
     // Legacy mode: when enabled we emit a MIDI Stop a few ticks before each scheduled Start
     // (trigger restart, bar restart, rate change) and gate MIDI clock pulses between the Stop
@@ -150,6 +161,7 @@ public:
     void setLegacyMode(bool legacy) { legacyModeEnabled.store(legacy, std::memory_order_relaxed); }
 
     // External MIDI device selection API (used by editor)
+    void setExternalDevice(const juce::String& id, const juce::String& name = {});
     void setExternalDeviceId(const juce::String& id);
     juce::String getExternalDeviceId() const { return externalDeviceId; }
 
@@ -216,6 +228,7 @@ private:
 #if JUCE_MAC
     struct TimestampedCoreMidiOut;
 #endif
+#if ! CLOCKV3_DEMO
     const toolboy_license::LicenseManager::Config licenseConfig_ {
         "toolBoy/Clock v3",
         "clock_v3.lic",
@@ -223,8 +236,8 @@ private:
         "toolboy_clock_v3_machine",
         "toolBoy"
     };
+#endif
     static constexpr int kDemoRuntimeSeconds = 30 * 60;
-    std::atomic<juce::uint32> demoStartTickMs { 0 };
     std::atomic<bool> demoStopSent { false };
     int computeDemoRemainingSeconds(juce::uint32 nowTickMs) const noexcept;
     std::atomic<int> pulseWidthMs { 1 }; // mirror for fast access, but value comes from APVTS
@@ -235,6 +248,39 @@ private:
     std::atomic<float>* clockWhileStoppedParam = nullptr;
     std::atomic<float>* clickPulseParam = nullptr;
     std::atomic<float>* clickRateParam = nullptr;
+
+    // Cached typed parameter pointers to eliminate runtime map queries and dynamic_casts
+    juce::AudioParameterChoice* clockRateParamObj = nullptr;
+    juce::AudioParameterBool*   runParamObj = nullptr;
+    juce::AudioParameterInt*    resyncOffsetParamObj = nullptr;
+    juce::AudioParameterInt*    shuffleStepParamObj = nullptr;
+    juce::AudioParameterFloat*  shuffleLinearParamObj = nullptr;
+    juce::AudioParameterChoice* patternBarsParamObj = nullptr;
+    juce::AudioParameterInt*    patternStepsParamObj = nullptr;
+
+    // Lock-free queue for parameter changes originating on the audio thread
+    struct PendingParamChange {
+        juce::AudioProcessorParameter* param { nullptr };
+        float value { 0.0f };
+    };
+    static constexpr size_t kParamQueueSize = 32;
+    std::array<PendingParamChange, kParamQueueSize> paramQueue {};
+    std::atomic<size_t> paramQueueReadIdx { 0 };
+    std::atomic<size_t> paramQueueWriteIdx { 0 };
+
+    void enqueueParamChange(juce::AudioProcessorParameter* param, float value) noexcept
+    {
+        if (param == nullptr) return;
+        const size_t currentWrite = paramQueueWriteIdx.load(std::memory_order_relaxed);
+        const size_t nextWrite = (currentWrite + 1) % kParamQueueSize;
+        if (nextWrite != paramQueueReadIdx.load(std::memory_order_acquire))
+        {
+            paramQueue[currentWrite] = { param, value };
+            paramQueueWriteIdx.store(nextWrite, std::memory_order_release);
+            triggerAsyncUpdate();
+        }
+    }
+    void handleAsyncUpdate() override;
 
     //==============================================================================
     juce::AudioProcessorValueTreeState parameters;
@@ -296,16 +342,21 @@ private:
 
     // External MIDI output (device only)
     std::shared_ptr<juce::MidiOutput> externalMidiOut;
+    std::atomic<juce::MidiOutput*> activeMidiOut { nullptr };
     juce::CriticalSection midiOutLock;
     juce::String externalDeviceId;   // identifier of selected external MIDI device
+    juce::String externalDeviceName; // display name of selected external MIDI device
     void updateExternalOut();
 
 #if JUCE_MAC
     std::shared_ptr<TimestampedCoreMidiOut> externalCoreMidiOut;
+    std::atomic<TimestampedCoreMidiOut*> activeCoreMidiOut { nullptr };
 #endif
+    std::atomic<bool> isLicensedCached { false };
     
     // Lightweight UI signal: incremented on each emitted MIDI clock
     std::atomic<unsigned long long> uiClockCounter { 0 };
+    std::atomic<int> uiActiveRateIndex { 1 }; // mirrors currentRateIndex for UI dancer timing
     std::atomic<int> uiStep16 { 1 }; // 1..16 current step in bar
     std::atomic<bool> uiIsRunning { true };
     std::atomic<bool> uiPendingStart { false };
@@ -358,7 +409,8 @@ private:
     long long lastPatternFiredBar { -1 }; // last bar number pattern fired
     long long nextRandomPatternTargetBar { -1 }; // target bar for random firing
     long long lastPatternRestartScheduledBar { -1 }; // bar number where a trigger-mode restart was scheduled from pattern
-    std::vector<double> pendingPatternPPQ; // PPQ positions inside current bar to emit Start events for active steps
+    std::array<double, 16> pendingPatternPPQ {}; // PPQ positions inside current bar to emit Start events for active steps
+    int pendingPatternCount { 0 };
     // When a pattern requests a restart while the pattern is playing we defer the
     // actual bar+offset restart until the pattern finishes; this atomic stores
     // the bar number where the restart should be applied. -1 means none.
@@ -404,7 +456,14 @@ private:
     // Increased default tolerance to cover small timing differences between
     // pattern-driven and bar-restart scheduling paths (helps avoid double-triggers).
     bool isDuplicateStart(long long barForStart, int stepForStart, int sampleOffset, int toleranceSamples = 64) const;
-    struct BarRestartWindow { int gapStart{-1}; int gapEnd{-1}; int startSample{-1}; bool hasBoundary() const { return startSample >= 0; } };
+    struct BarRestartWindow
+    {
+        int gapStart { -1 };
+        int gapEnd { -1 };
+        int startSample { -1 };
+        double boundaryPPQ { -1.0 };
+        bool hasBoundary() const { return startSample >= 0; }
+    };
     BarRestartWindow handleBarAlignedChanges(const juce::AudioPlayHead::CurrentPositionInfo& pos,
                                              int numSamples,
                                              juce::MidiBuffer& midi,

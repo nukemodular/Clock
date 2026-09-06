@@ -6,8 +6,10 @@
 /LayoutPlayground_artefacts/
 /ClockV3_artefacts/
 
-# macOS disk images
+# macOS disk images and installer packages
 *.dmg
+*.pkg
+dist/
 
 # Local signing/notarization helper files (keep out of git)
 /id/

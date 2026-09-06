@@ -1,15 +1,11 @@
+#pragma once
+
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_core/juce_core.h>
 #include <array>
 
 // Forward declaration for editor highlight logic
 class ClockSyncAudioProcessorEditor;
-// UiTheme.h
-#pragma once
-
-#include <juce_gui_basics/juce_gui_basics.h>
-#include <juce_core/juce_core.h>
-#include <array>
 
 // Consolidated UI theme and layout constants.
 // Merges LookAndFeels.h and UiLayoutConstants.h into a single include to

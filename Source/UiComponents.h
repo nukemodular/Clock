@@ -54,34 +54,42 @@ public:
     {
         const auto middleEllipsize = [](const juce::String& s, const juce::Font& font, int maxWidth) -> juce::String
         {
-            const auto stringWidthPx = [&font](const juce::String& str) -> int
-            {
-                juce::GlyphArrangement ga;
-                ga.addLineOfText(font, str, 0.0f, 0.0f);
-                return (int) std::ceil(ga.getBoundingBox(0, -1, true).getWidth());
-            };
-
             if (maxWidth <= 0)
                 return {};
 
-            if (stringWidthPx(s) <= maxWidth)
+            if (juce::GlyphArrangement::getStringWidthInt(font, s) <= maxWidth)
                 return s;
 
             const juce::String dots("...");
-            if (stringWidthPx(dots) >= maxWidth)
+            if (juce::GlyphArrangement::getStringWidthInt(font, dots) >= maxWidth)
                 return dots;
 
             const int len = s.length();
-            for (int keep = len; keep > 0; --keep)
+            int low = 1, high = len, bestKeep = 0;
+            while (low <= high)
             {
-                const int prefix = (keep + 1) / 2;
-                const int suffix = keep / 2;
+                const int mid = (low + high) / 2;
+                const int prefix = (mid + 1) / 2;
+                const int suffix = mid / 2;
                 const int suffixStart = juce::jmax(0, len - suffix);
                 const juce::String cand = s.substring(0, prefix) + dots + s.substring(suffixStart);
-                if (stringWidthPx(cand) <= maxWidth)
-                    return cand;
+                if (juce::GlyphArrangement::getStringWidthInt(font, cand) <= maxWidth)
+                {
+                    bestKeep = mid;
+                    low = mid + 1;
+                }
+                else
+                {
+                    high = mid - 1;
+                }
             }
-
+            if (bestKeep > 0)
+            {
+                const int prefix = (bestKeep + 1) / 2;
+                const int suffix = bestKeep / 2;
+                const int suffixStart = juce::jmax(0, len - suffix);
+                return s.substring(0, prefix) + dots + s.substring(suffixStart);
+            }
             return dots;
         };
 
@@ -91,29 +99,6 @@ public:
         g.fillRoundedRectangle(bounds.toFloat(), 3.0f);
         g.setColour(theme.accent());
         g.drawRoundedRectangle(bounds.toFloat().reduced(0.5f), 3.0f, 1.5f);
-        // Ensure any internal editor/label children are positioned to cover
-        // this combo's area so in-place name editing appears exactly where
-        // the combo sits (not below it). Also propagate the combo's text
-        // colour into the editor for consistent theming.
-        for (auto* c : getChildren())
-        {
-            if (auto* te = dynamic_cast<juce::TextEditor*>(c))
-            {
-                te->setBounds(getLocalBounds().reduced(6, 0));
-                te->setColour(juce::TextEditor::backgroundColourId, juce::Colours::transparentBlack);
-                te->setColour(juce::TextEditor::textColourId, findColour(overlayTextColourId));
-            }
-            else if (auto* lb = dynamic_cast<juce::Label*>(c))
-            {
-                lb->setBounds(getLocalBounds().reduced(6, 0));
-                lb->setJustificationType(juce::Justification::centred);
-                lb->setColour(juce::Label::textColourId, findColour(overlayTextColourId));
-                // We draw the combo text ourselves in paint(); hide the internal
-                // label child so it doesn't also draw and produce doubled text.
-                lb->setVisible(false);
-                lb->toBack();
-            }
-        }
         // If an inline editor exists and is visible (either parented to
         // this combo or to the same parent and overlapping), skip drawing
         // the combo's placeholder/selected text to avoid visual overlap.
@@ -287,17 +272,11 @@ private:
     UiThemeColours& theme;
 };
 
-// ---------------- HelpButton -----------------
-class HelpButton : public juce::TextButton {
+// ---------------- HelpButton (SVG icon) -----------------
+class HelpButton : public juce::DrawableButton {
 public:
-    HelpButton(UiThemeColours& t) : juce::TextButton("?"), theme(t) {}
-    void paintButton(juce::Graphics& g, bool, bool) override {
-        juce::Colour col = getToggleState() ? theme.cyan() : theme.cyan().withAlpha(0.5f);
-        g.setColour(col);
-        g.setFont(juce::Font(juce::FontOptions("Arial", 18.0f, juce::Font::bold)));
-        g.drawFittedText(getButtonText(), getLocalBounds(), juce::Justification::centred, 1);
-    }
-private:
+    HelpButton(UiThemeColours& t)
+        : juce::DrawableButton("help", juce::DrawableButton::ImageFitted), theme(t) {}
     UiThemeColours& theme;
 };
 

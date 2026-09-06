@@ -5,8 +5,10 @@
 #include <utility>
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
+#if ! CLOCKV3_DEMO
 #include "GumroadLicenseValidator.h"
 #include "LicenseDialog.h"
+#endif
 #include "build_info.h"
 #include "BinaryData.h"
 #include "UiTheme.h"
@@ -20,7 +22,71 @@
 namespace
 {
     const auto kFixedHeaderBaseColour = UiThemeColours::fixedBaseColour();
+#if ! CLOCKV3_DEMO
     constexpr auto kGumroadProductId = "eaWDZgauhj9vCNxpyiBoIQ==";
+    constexpr auto kGumroadProductId2 = "0bSQ_rAd_try0jmbizh4vA==";
+#endif
+
+    // Custom bottom-right resize triangle handle
+    class CornerResizer : public juce::Component
+    {
+    public:
+        CornerResizer(juce::ComponentBoundsConstrainer* constraint)
+            : constrainer(constraint) {}
+
+        void paint(juce::Graphics& g) override
+        {
+            const float w = (float) getWidth();
+            const float h = (float) getHeight();
+            juce::Path tri;
+            tri.addTriangle(w, 0.0f, w, h, 0.0f, h);
+            const float alpha = isMouseOver() ? 0.35f : 0.15f;
+            g.setColour(juce::Colour(0xFFFF4E5B).withAlpha(alpha));
+            g.fillPath(tri);
+        }
+
+        void mouseEnter(const juce::MouseEvent&) override { repaint(); }
+        void mouseExit(const juce::MouseEvent&) override  { repaint(); }
+
+        void mouseDown(const juce::MouseEvent&) override
+        {
+            if (auto* parent = getParentComponent())
+            {
+                originalBounds = parent->getBounds();
+                if (constrainer)
+                    constrainer->resizeStart();
+            }
+        }
+
+        void mouseDrag(const juce::MouseEvent& e) override
+        {
+            if (auto* parent = getParentComponent())
+            {
+                auto delta = e.getDistanceFromDragStart();
+                auto dragOffset = e.getOffsetFromDragStart();
+                auto newBounds = originalBounds.withRight(originalBounds.getRight() + dragOffset.x)
+                                               .withBottom(originalBounds.getBottom() + dragOffset.y);
+                if (constrainer)
+                {
+                    constrainer->setBoundsForComponent(parent, newBounds, false, false, true, true);
+                }
+                else
+                {
+                    parent->setBounds(newBounds);
+                }
+            }
+        }
+
+        void mouseUp(const juce::MouseEvent&) override
+        {
+            if (constrainer)
+                constrainer->resizeEnd();
+        }
+
+    private:
+        juce::ComponentBoundsConstrainer* constrainer = nullptr;
+        juce::Rectangle<int> originalBounds;
+    };
 
     // Simple rectangular button
     class SimpleRectButton : public juce::Button
@@ -152,12 +218,20 @@ namespace
                       std::atomic<bool>* typeIsCcFlag = nullptr)
             : value(valueRef), layoutMode(mode), theme(t), lnf(t), decBtn("-", t), incBtn("+", t), fixedType(type), typeIsCc(typeIsCcFlag)
         {
+            // Let clicks pass through the row itself so overlapping sibling rows
+            // (from the opposite column) don't swallow clicks meant for child
+            // components like the NOTE/CC toggle.
+            setInterceptsMouseClicks(false, true);
+
             label.setText(labelText, juce::dontSendNotification);
             label.setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)));
             label.setColour(juce::Label::textColourId, theme.cyan());
             label.setJustificationType(juce::Justification::centredRight);
             // Avoid "squashed" text when space is tight: don't allow horizontal scaling.
             label.setMinimumHorizontalScale(1.0f);
+            // Display-only label: let clicks pass through so overlapping rows
+            // from the opposite column don't block sibling toggle buttons.
+            label.setInterceptsMouseClicks(false, false);
             addAndMakeVisible(label);
 
             if (typeIsCc != nullptr && (fixedType == Note || fixedType == CC))
@@ -425,7 +499,9 @@ namespace
             g.setColour(theme.cyan().withAlpha(0.72f));
             g.setFont(juce::Font(juce::FontOptions("Arial", 10.0f, juce::Font::plain)));
             const auto licensedUser = processor.getLicenseUserUI().trim();
-            const auto licenseLine = licensedUser.isNotEmpty()
+            const auto licenseLine = licensedUser == "DEMO"
+                                        ? juce::String("This is a time limited DEMO")
+                                        : licensedUser.isNotEmpty()
                                         ? ("licensed to " + licensedUser)
                                         : juce::String("licensed to customer@email.com");
             g.drawFittedText(licenseLine,
@@ -813,8 +889,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
       clickButton(p.theme), idleClockToggle(p.theme), helpToggle(p.theme),
     colorPaletteToggle(p.theme)
 {
-    // Scalable editor: allow resizing but keep a fixed aspect ratio (no stretching).
-    // Keep scaling, but remove the bottom-right corner resizer graphic.
+    // Scalable editor: allow resizing with custom corner triangle.
     setResizable(true, false);
     setResizeLimits((int) std::round((double) kBaseW * kMinScaleFactor),
                     (int) std::round((double) kBaseH * kMinScaleFactor),
@@ -832,6 +907,11 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     addAndMakeVisible(uiRoot);
     uiRoot.setInterceptsMouseClicks(false, true);
     uiRoot.setBounds(0, 0, kBaseW, kBaseH);
+
+    // Custom resize triangle (direct child of editor, stays above uiRoot)
+    cornerResizer = std::make_unique<CornerResizer>(getConstrainer());
+    addAndMakeVisible(*cornerResizer);
+    cornerResizer->setAlwaysOnTop(true);
 
     // Scalable paint layers (inside uiRoot)
     backdropLayer  = std::make_unique<ClockEditorPaintLayer>(*this, ClockEditorPaintLayer::Kind::Backdrop);
@@ -912,13 +992,20 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         playgroundComp->setInterceptsMouseClicks(!patternEditMode, !patternEditMode);
     }
 
-    // Help toggle ("?") - restore visibility and behaviour so users can enable/disable tooltips.
+    // Help toggle (SVG icon) - restore visibility and behaviour so users can enable/disable tooltips.
     // Wire directly to the playground's hover text API rather than a separate applyTooltips helper.
+    helpDrawable = juce::Drawable::createFromImageData(BinaryData::help_svg, BinaryData::help_svgSize);
+    updateHelpButtonImages();
+    helpToggle.setColour(juce::DrawableButton::backgroundColourId, juce::Colours::transparentBlack);
+    helpToggle.setColour(juce::DrawableButton::backgroundOnColourId, juce::Colours::transparentBlack);
+    helpToggle.setOpaque(false);
+    helpToggle.setWantsKeyboardFocus(false);
     addAndMakeVisible(helpToggle);
     addAndMakeVisible(colorPaletteToggle);
     colorPaletteToggle.onColorChanged = [this] { 
         sendLookAndFeelChange(); 
         updateSetupButtonImages();
+        updateHelpButtonImages();
         if (svgDancer) svgDancer->setTint(processor.theme.accent().withAlpha(1.0f));
         
         // Update manual colors
@@ -940,10 +1027,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     processor.onThemeChanged = colorPaletteToggle.onColorChanged;
 
     helpToggle.setClickingTogglesState(true);
-    helpToggle.setColour(juce::TextButton::textColourOffId, processor.theme.cyan().darker(0.45f));
-    helpToggle.setColour(juce::TextButton::textColourOnId, processor.theme.cyan());
-    helpToggle.setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
-    helpToggle.setColour(juce::TextButton::buttonOnColourId, juce::Colours::transparentBlack);
+    helpToggle.setEdgeIndent(3);
     // Initialize toggle from playground state if available
     if (playgroundComp)
         helpToggle.setToggleState(playgroundComp->getHoverTextEnabled(), juce::dontSendNotification);
@@ -952,6 +1036,46 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         if (playgroundComp) playgroundComp->setHoverTextEnabled(on);
         repaint(0, 217, getWidth(), 22);
     };
+
+   #if CLOCKV3_DEMO
+    uiRoot.addAndMakeVisible(demoExpiredButton);
+    demoExpiredButton.setButtonText("NOOO...DON'T STOP!!");
+    demoExpiredButton.setColour(juce::TextButton::buttonColourId, processor.theme.cyan().withAlpha(0.15f));
+    demoExpiredButton.setColour(juce::TextButton::buttonOnColourId, processor.theme.cyan());
+    demoExpiredButton.setColour(juce::TextButton::textColourOffId, processor.theme.cyan());
+    demoExpiredButton.setColour(juce::TextButton::textColourOnId, processor.theme.fixedBase());
+    demoExpiredButton.setColour(juce::ComboBox::outlineColourId, processor.theme.cyan().withAlpha(0.6f));
+    demoExpiredButton.setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    demoExpiredButton.onStateChange = [this] {
+        if (demoExpiredButton.isOver())
+        {
+            demoExpiredButton.setColour(juce::TextButton::buttonColourId, processor.theme.cyan());
+            demoExpiredButton.setColour(juce::TextButton::textColourOffId, processor.theme.fixedBase());
+        }
+        else
+        {
+            demoExpiredButton.setColour(juce::TextButton::buttonColourId, processor.theme.cyan().withAlpha(0.15f));
+            demoExpiredButton.setColour(juce::TextButton::textColourOffId, processor.theme.cyan());
+        }
+    };
+    demoExpiredButton.onClick = [] {
+        juce::URL("https://nukemodular.gumroad.com/l/lmdzwr").launchInDefaultBrowser();
+    };
+    demoExpiredButton.setVisible(processor.isDemoExpiredUI());
+
+    // Clickable DEMO label (replaces painted build number)
+    addAndMakeVisible(demoLabelButton);
+    demoLabelButton.setButtonText("DEMO");
+    demoLabelButton.setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+    demoLabelButton.setColour(juce::TextButton::buttonOnColourId, juce::Colours::transparentBlack);
+    demoLabelButton.setColour(juce::ComboBox::outlineColourId, processor.theme.accent().darker(0.33f).withAlpha(0.25f));
+    demoLabelButton.setColour(juce::TextButton::textColourOffId, processor.theme.accent().darker(0.33f).withAlpha(0.5f));
+    demoLabelButton.setColour(juce::TextButton::textColourOnId, processor.theme.accent().darker(0.33f).withAlpha(0.7f));
+    demoLabelButton.setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    demoLabelButton.onClick = [] {
+        juce::URL("https://nukemodular.gumroad.com/l/lmdzwr").launchInDefaultBrowser();
+    };
+   #endif
 
     // Restore selected instrument index if present in state
     {
@@ -969,6 +1093,14 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     addAndMakeVisible(svgDancer.get());
     svgDancer->setTint(processor.theme.accent().withAlpha(1.0f));
     svgDancer->toBack(); // Ensure it's behind other controls
+
+    // Toolboy Clock logo (shown during submenu, behind ring)
+    if (auto svg = juce::Drawable::createFromImageData(BinaryData::toolboy_clock_svg,
+                                                        BinaryData::toolboy_clock_svgSize))
+    {
+        svg->replaceColour(juce::Colours::black, processor.theme.accent());
+        logoDrawable = std::move(svg);
+    }
 
     // Status bar (LED + status string) – painted above playground
     statusBar = std::make_unique<StatusBarComponent>(processor.theme);
@@ -1415,6 +1547,9 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
             if (playgroundComp) { playgroundComp->setExternalHoverBlocked(active); if (!active) playgroundComp->clearForcedHoverIndex(); }
             // Arrow visibility depends on header toggle: hide arrowDown when headerSwitchToggle is OFF
             if (arrowDown) arrowDown->setVisible(active && (!headerSwitchToggle || headerSwitchToggle->getToggleState()));
+            // Crossfade dancer out / logo in during submenu open
+            logoAlpha = setupSubmenuProgress;
+            if (svgDancer) svgDancer->setAlpha(1.0f - setupSubmenuProgress);
             repaint();
         }).build());
     vblankUpdater = std::make_unique<juce::VBlankAnimatorUpdater>(this);
@@ -1477,22 +1612,45 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
 
     refreshDeviceList();
 
-    // When the user selects an item from the device combo, map selection id -> device identifier
-    // Selection id mapping: 1 => no device selected (placeholder), 2.. => midiOutputs[selId-2]
+   #if JUCE_WINDOWS
+    // Windows: 1 => none, 2 => virtual port (Windows MIDI Services), 3.. => midiOutputs[selId-3]
     deviceBox.onChange = [this]() {
         const int selId = deviceBox.getSelectedId();
         if (selId <= 1)
         {
-            processor.setExternalDeviceId({});
+            processor.setExternalDevice({}, {});
         }
-        else if (selId - 2 >= 0 && selId - 2 < (int) midiOutputs.size())
+        else if (selId == 2)
         {
-            processor.setExternalDeviceId(midiOutputs[(size_t) (selId - 2)].identifier);
+            processor.setExternalDevice("__VIRTUAL_PORT__", "Clock v3 Virtual Out");
+        }
+        else if (selId - 3 >= 0 && selId - 3 < (int) midiOutputs.size())
+        {
+            const auto& device = midiOutputs[(size_t) (selId - 3)];
+            processor.setExternalDevice(device.identifier, device.name);
         }
         // Schedule a resync when a MIDI port is selected
         if (playgroundComp && playgroundComp->onResyncStepRequested)
             playgroundComp->onResyncStepRequested(1); // step 1 = bar start
     };
+   #else
+    // macOS: 1 => none, 2.. => midiOutputs[selId-2] (CoreMIDI multi-client ports)
+    deviceBox.onChange = [this]() {
+        const int selId = deviceBox.getSelectedId();
+        if (selId <= 1)
+        {
+            processor.setExternalDevice({}, {});
+        }
+        else if (selId - 2 >= 0 && selId - 2 < (int) midiOutputs.size())
+        {
+            const auto& device = midiOutputs[(size_t) (selId - 2)];
+            processor.setExternalDevice(device.identifier, device.name);
+        }
+        // Schedule a resync when a MIDI port is selected
+        if (playgroundComp && playgroundComp->onResyncStepRequested)
+            playgroundComp->onResyncStepRequested(1); // step 1 = bar start
+    };
+   #endif
 
     // Backdrop animators (decorative circles)
     for (size_t i = 0; i < backdropAnimators.size(); ++i)
@@ -1517,7 +1675,6 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         setupCornerButton = std::make_unique<juce::DrawableButton>("setupCorner", juce::DrawableButton::ImageFitted);
         addAndMakeVisible(*setupCornerButton);
         setupCornerButton->setInterceptsMouseClicks(true, true);
-        setupCornerButton->setAlwaysOnTop(true);
 
         auto loadSvgDrawable = []() -> std::unique_ptr<juce::Drawable>
         {
@@ -1562,7 +1719,6 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
                     setupOverlayComp = std::make_unique<MidiRemoteSetupComponent>(processor, remoteMidiInputs);
                     setupOverlayComp->setInterceptsMouseClicks(true, true); // consume clicks
                     uiRoot.addAndMakeVisible(*setupOverlayComp);
-                    setupOverlayComp->setAlwaysOnTop(true);
                 }
                 // Position overlay comp to match visual overlay rect
                 const int overlayW = 295;
@@ -1573,17 +1729,28 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
                 const int y = headerH + (canvasH - overlayH) / 2;
                 setupOverlayComp->setBounds(x, y, overlayW, overlayH);
                 setupOverlayComp->toFront(true);
-                if (setupCornerButton) setupCornerButton->toFront(true);
+                // Keep gear button above overlay so user can click to close
+                if (setupCornerButton)
+                {
+                    setupCornerButton->setAlwaysOnTop(true);
+                    setupCornerButton->toFront(true);
+                }
             }
             else
             {
                 setupOverlayComp.reset();
+                // Put gear back behind submenu/header layers
+                if (setupCornerButton)
+                {
+                    setupCornerButton->setAlwaysOnTop(false);
+                    if (overlayBgLayer)
+                        setupCornerButton->toBehind(overlayBgLayer.get());
+                }
             }
             repaint();
         };
     }
     // Setup corner button placement handled in resized(); visibility centralized.
-    if (setupCornerButton) setupCornerButton->toFront(true);
 
     // Reparent our UI children into uiRoot (keep the resizer corner component as a direct child).
     {
@@ -1596,6 +1763,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         {
             if (c == nullptr) continue;
             if (c == &uiRoot) continue;
+            if (c == cornerResizer.get()) continue;
             if (dynamic_cast<juce::ResizableCornerComponent*>(c) != nullptr) continue;
             if (dynamic_cast<juce::ResizableBorderComponent*>(c) != nullptr) continue;
             uiRoot.addAndMakeVisible(*c);
@@ -1638,16 +1806,18 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         nameBox.toFront(true);
         nameMidiSwitch.toFront(true);
         setupButton.toFront(true);
+        if (setupCornerButton) setupCornerButton->toBehind(overlayBgLayer.get());
         if (statusBar) statusBar->toFront(true);
         if (headerSwitchToggle) headerSwitchToggle->toFront(true);
-        if (setupCornerButton) setupCornerButton->toFront(true);
     }
 
     // Centralize initial visibility and layout.
+    initDropShadows();
     updateHeaderVisibility();
     resized();
     setVisible(true);
 
+#if ! CLOCKV3_DEMO
     if (! processor.isLicensedUI())
     {
         toolboy_license::LicenseDialog::Config dialogConfig;
@@ -1658,7 +1828,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         dialogConfig.accentColour = processor.theme.accent();
 
         toolboy_license::GumroadLicenseValidator::Config validatorConfig;
-        validatorConfig.productId = kGumroadProductId;
+        validatorConfig.productIds = { kGumroadProductId, kGumroadProductId2 };
 
         licenseDialog = std::make_unique<toolboy_license::LicenseDialog>(
             dialogConfig,
@@ -1678,6 +1848,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
         licenseDialog->setBounds(getLocalBounds());
         licenseDialog->toFront(true);
     }
+#endif
 }
 
 void ClockSyncAudioProcessorEditor::paint(juce::Graphics& g)
@@ -1715,31 +1886,7 @@ void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
 {
     // Scalable overlay painting is handled by uiRoot layers.
 
-   #if CLOCKV3_DEMO
-    if (processor.isDemoExpiredUI())
-    {
-        auto bounds = getLocalBounds().reduced((int) std::round(16.0 * uiScale),
-                                               (int) std::round(36.0 * uiScale));
-        g.setColour(processor.theme.fixedBase().withAlpha(0.9f));
-        g.fillRoundedRectangle(bounds.toFloat(), 10.0f * (float) uiScale);
-        g.setColour(processor.theme.cyan().withAlpha(0.85f));
-        g.drawRoundedRectangle(bounds.toFloat(), 10.0f * (float) uiScale, 1.5f * (float) uiScale);
-
-        auto headline = bounds.removeFromTop((int) std::round(42.0 * uiScale));
-        auto detail = bounds.reduced((int) std::round(12.0 * uiScale), (int) std::round(8.0 * uiScale));
-
-        g.setColour(processor.theme.cyan());
-        g.setFont(juce::Font(juce::FontOptions("Arial", 15.0f * (float) uiScale, juce::Font::bold)));
-        g.drawFittedText("DEMO EXPIRED", headline, juce::Justification::centred, 1);
-
-        g.setColour(processor.theme.cyan().withAlpha(0.72f));
-        g.setFont(juce::Font(juce::FontOptions("Arial", 10.0f * (float) uiScale, juce::Font::plain)));
-        g.drawFittedText("This demo runs for 30 minutes.\nOpen the full version for unrestricted runtime.",
-                         detail,
-                         juce::Justification::centred,
-                         2);
-    }
-   #endif
+   // Demo expired overlay is now painted inside the overlayFg layer (base coords).
 
     // Debug stack (left side): show last clicked stored step, logical mapping, host bar and scheduled targets
     // {
@@ -1805,12 +1952,42 @@ void ClockSyncAudioProcessorEditor::resized()
     uiRoot.setTopLeftPosition(uiOffset);
     colorPaletteToggle.setPopupScale((float) uiScale);
 
+#if ! CLOCKV3_DEMO
     if (licenseDialog)
     {
         licenseDialog->setBounds(getLocalBounds());
         if (licenseDialog->isVisible())
             licenseDialog->toFront(true);
     }
+#endif
+
+   #if CLOCKV3_DEMO
+    {
+        // Position the NOOO button inside the expired overlay in base coords (uiRoot child).
+        auto overlayBounds = juce::Rectangle<int>(0, 0, kBaseW, kBaseH).reduced(16, 36);
+        // Skip past headline + 15px extra
+        overlayBounds.removeFromTop(57);
+        // Button sits right below headline
+        auto buttonArea = overlayBounds.removeFromTop(44);
+        demoExpiredButton.setBounds(buttonArea.withSizeKeepingCentre(170, 44));
+        demoExpiredButton.setVisible(processor.isDemoExpiredUI());
+        if (demoExpiredButton.isVisible())
+        {
+            demoExpiredButton.toFront(true);
+            demoExpiredButton.setAlwaysOnTop(true);
+        }
+        else
+        {
+            demoExpiredButton.setAlwaysOnTop(false);
+        }
+        // Position the DEMO label button where the help ? button was (bottom-left)
+        const int demoHelpSize = 24;
+        const int demoLabelX = 5 + (ColorPaletteToggle::kDotSize - demoHelpSize) / 2 + 5;
+        const int demoLabelY = 210  / 2 - 5;
+        demoLabelButton.setBounds(demoLabelX, demoLabelY, 50, 25);
+        demoLabelButton.toFront(false);
+    }
+   #endif
 
     if (backdropLayer)  backdropLayer->setBounds(0, 0, kBaseW, kBaseH);
     if (overlayBgLayer) overlayBgLayer->setBounds(0, 0, kBaseW, kBaseH);
@@ -1914,16 +2091,21 @@ void ClockSyncAudioProcessorEditor::resized()
         const int paletteW = 40;
         const int paletteH = 61;
         const int paletteX = 5;
-        const int paletteY = (ringAreaBase.getCentreY() - (paletteH / 2)) - 75;
+        const int paletteY = (ringAreaBase.getCentreY() - (paletteH / 2)) - 70;
         colorPaletteToggle.setBounds(paletteX, paletteY, paletteW, paletteH);
 
         const int helpSize = 24;
-        const int helpX = paletteX + (ColorPaletteToggle::kDotSize - helpSize) / 2;
+       #if CLOCKV3_DEMO
+        // Help ? swapped to where DEMO button was (bottom-right)
+        helpToggle.setBounds(269, 212, helpSize, helpSize);
+       #else
+        const int helpX = paletteX + (paletteW - helpSize) / 2 - 10;
         const int helpY = 210 + (setupSize - helpSize) / 2;
         helpToggle.setBounds(helpX, helpY, helpSize, helpSize);
+       #endif
 
         if (setupCornerButton){
-            setupCornerButton->setBounds(kBaseW - setupSize, 210, setupSize, setupSize);
+            setupCornerButton->setBounds(268, 33, setupSize, setupSize);
             setupCornerButton->setEdgeIndent(setupSize / 4);
         }
     }
@@ -1944,15 +2126,19 @@ void ClockSyncAudioProcessorEditor::resized()
         // no legacy triggerRect fallback
         // stepOffsetMenu no longer present.
         const int setupSize = 30;
-        colorPaletteToggle.setBounds(5, 25, 40, 61);
+        colorPaletteToggle.setBounds(5, 30, 40, 61);
 
         const int helpSize = 24;
-        const int helpX = 5 + (ColorPaletteToggle::kDotSize - helpSize) / 2;
+       #if CLOCKV3_DEMO
+        helpToggle.setBounds(269, 212, helpSize, helpSize);
+       #else
+        const int helpX = 5 + (40 - helpSize) / 2 - 10;
         const int helpY = 210 + (setupSize - helpSize) / 2;
         helpToggle.setBounds(helpX, helpY, helpSize, helpSize);
+       #endif
         
         if (setupCornerButton){
-            setupCornerButton->setBounds(kBaseW - setupSize, 210, setupSize, setupSize);
+            setupCornerButton->setBounds(278, 33, setupSize, setupSize);
             setupCornerButton->setEdgeIndent(setupSize / 4);
         }
     }
@@ -1968,11 +2154,17 @@ void ClockSyncAudioProcessorEditor::resized()
            #else
             50;
            #endif
-        statusBar->setBounds(kBaseW - w - 9, 0, w, headerH);
+          const int statusBarX =
+              #if CLOCKV3_DEMO
+                kBaseW - w - 9 + 15;
+              #else
+                kBaseW - w - 9;
+              #endif
+          statusBar->setBounds(statusBarX, 0, w, headerH);
     }
 
     // Sync Latch Button moved to the old palette position.
-    syncLatchButton.setBounds(124, 32, 52, 16);
+    syncLatchButton.setBounds(124, 37, 52, 16);
 
 
     // Force absolute placement to keep toggle at exact design coordinates.
@@ -1987,9 +2179,30 @@ void ClockSyncAudioProcessorEditor::resized()
     if (statusBar)
         statusBar->toFront(false);
 
-    // Keep the gear button always front-most.
+    // Keep the gear button behind header/submenu but above other content.
+    // When the setup overlay is open, keep it in front so it can be clicked to close.
     if (setupCornerButton)
-        setupCornerButton->toFront(true);
+    {
+        if (setupOverlayVisible)
+        {
+            setupCornerButton->setAlwaysOnTop(true);
+            setupCornerButton->toFront(true);
+        }
+        else
+        {
+            setupCornerButton->setAlwaysOnTop(false);
+            if (overlayBgLayer)
+                setupCornerButton->toBehind(overlayBgLayer.get());
+        }
+    }
+
+    // Position custom resize triangle in the bottom-right corner (editor coords, not uiRoot)
+    if (cornerResizer)
+    {
+        const int sz = (int) std::round(14.0 * uiScale);
+        cornerResizer->setBounds(getWidth() - sz, getHeight() - sz, sz, sz);
+        cornerResizer->toFront(false);
+    }
 }
 
 void ClockSyncAudioProcessorEditor::paintBackdropLayer(juce::Graphics& g)
@@ -2000,14 +2213,19 @@ void ClockSyncAudioProcessorEditor::paintBackdropLayer(juce::Graphics& g)
     g.fillRect(bounds);
 
     {
-        g.setColour(processor.theme.accent().darker(0.33f).withAlpha(0.33f));
+       #if CLOCKV3_DEMO
+        // DEMO label is now a clickable button (demoLabelButton); skip painting text here.
+       #else
+        g.setColour(processor.theme.accent().withAlpha(0.22f));
         g.setFont(juce::Font(juce::FontOptions("Arial", 10.0f, juce::Font::bold)));
         juce::String buildText = juce::String(PLUGIN_VERSION_WITH_BUILD);
-        g.drawFittedText(buildText, juce::Rectangle<int>(210, 31, 82, 14), juce::Justification::centredRight, 1);
+        g.drawFittedText(buildText, juce::Rectangle<int>(194, 225, 84, 14), juce::Justification::centredRight, 1);
+       #endif
     }
 
-    // Decorative backdrop circles
-    auto centre = bounds.getCentre();
+    // Decorative backdrop circles — centred on the step-offset ring (150, 135)
+    const float ringCentreX = 150.0f;
+    const float ringCentreY = 135.0f;
     const auto& sizes = UiLayout::kBackdropSizes;
     for (size_t i = 0; i < sizes.size(); ++i)
     {
@@ -2017,9 +2235,49 @@ void ClockSyncAudioProcessorEditor::paintBackdropLayer(juce::Graphics& g)
         const float extraScale = backdropPulseScale[i] * progress;
         const float sz = baseSz * (UiLayout::kBackdropMultiplier + extraScale);
         juce::Colour col = processor.theme.base().withAlpha(alphaFactor);
-        juce::Rectangle<float> rc(centre.x - sz * 0.5f, centre.y - sz * 0.5f + 10.0f, sz, sz);
+        juce::Rectangle<float> rc(ringCentreX - sz * 0.5f, ringCentreY - sz * 0.5f, sz, sz);
         g.setColour(col);
         g.fillEllipse(rc);
+    }
+
+    // Toolboy Clock logo — fades in when submenu opens, centered on ring
+    if (logoAlpha > 0.0f && logoDrawable)
+    {
+        constexpr float kLogoSize = 101.0f;
+        const float lx = ringCentreX - kLogoSize * 0.5f;
+        const float ly = ringCentreY - kLogoSize * 0.5f + 15.0f;
+        const auto sourceBounds = logoDrawable->getDrawableBounds();
+        const auto transform = juce::RectanglePlacement(juce::RectanglePlacement::centred)
+                                   .getTransformToFit(sourceBounds,
+                                                      juce::Rectangle<float>(lx, ly, kLogoSize, kLogoSize));
+        logoDrawable->draw(g, logoAlpha, transform);
+    }
+}
+
+void ClockSyncAudioProcessorEditor::initDropShadows()
+{
+    juce::DropShadow ds(juce::Colours::black.withAlpha(0.45f), 14, juce::Point<int>(0, 6));
+
+    // Header shadow pre-render: target size (kBaseW - 2, 30)
+    {
+        const int targetW = kBaseW - 2;
+        const int targetH = 30;
+        const int imgW = targetW + ds.radius * 2;
+        const int imgH = targetH + ds.radius * 2;
+        headerShadowImage = juce::Image(juce::Image::ARGB, imgW, imgH, true);
+        juce::Graphics g(headerShadowImage);
+        ds.drawForRectangle(g, juce::Rectangle<int>(ds.radius - ds.offset.x, ds.radius - ds.offset.y, targetW, targetH));
+    }
+
+    // Submenu shadow pre-render: target size (kBaseW - 4, 34)
+    {
+        const int targetW = kBaseW - 4;
+        const int targetH = 34;
+        const int imgW = targetW + ds.radius * 2;
+        const int imgH = targetH + ds.radius * 2;
+        submenuShadowImage = juce::Image(juce::Image::ARGB, imgW, imgH, true);
+        juce::Graphics g(submenuShadowImage);
+        ds.drawForRectangle(g, juce::Rectangle<int>(ds.radius - ds.offset.x, ds.radius - ds.offset.y, targetW, targetH));
     }
 }
 
@@ -2034,9 +2292,14 @@ void ClockSyncAudioProcessorEditor::paintOverlayBackgroundLayer(juce::Graphics& 
         const float submenuH  = 30.0f;
         const float topY = hiddenTop + (shownTop - hiddenTop) * setupSubmenuProgress;
         juce::Rectangle<float> submenuRect(0.0f, topY, (float) kBaseW, submenuH);
+        auto shadowInt = submenuRect.toNearestInt().expanded(-2, 2);
+        if (submenuShadowImage.isValid())
+        {
+            g.drawImageAt(submenuShadowImage, shadowInt.getX() - 14, shadowInt.getY() - 8);
+        }
+        else
         {
             juce::DropShadow ds(juce::Colours::black.withAlpha(0.45f), 14, juce::Point<int>(0, 6));
-            auto shadowInt = submenuRect.toNearestInt().expanded(-2, 2);
             ds.drawForRectangle(g, shadowInt);
         }
         g.setColour(kFixedHeaderBaseColour);
@@ -2049,6 +2312,11 @@ void ClockSyncAudioProcessorEditor::paintHeaderBackgroundLayer(juce::Graphics& g
     // Header background (covers submenu content when it slides under the header)
     const int headerPaintH = 30;
     juce::Rectangle<float> headerRect(0.0f, 0.0f, (float) kBaseW, (float) headerPaintH);
+    if (headerShadowImage.isValid())
+    {
+        g.drawImageAt(headerShadowImage, -14, -8);
+    }
+    else
     {
         juce::DropShadow ds(juce::Colours::black.withAlpha(0.45f), 14, juce::Point<int>(0, 6));
         auto shadowInt = headerRect.toNearestInt().withWidth((int) headerRect.getWidth() - 2);
@@ -2060,6 +2328,52 @@ void ClockSyncAudioProcessorEditor::paintHeaderBackgroundLayer(juce::Graphics& g
 
 void ClockSyncAudioProcessorEditor::paintOverlayForegroundLayer(juce::Graphics& g)
 {
+   #if CLOCKV3_DEMO
+    if (processor.isDemoExpiredUI())
+    {
+        // All coordinates in base space (kBaseW x kBaseH) — uiRoot transform handles scaling.
+        auto bounds = juce::Rectangle<int>(0, 0, kBaseW, kBaseH).reduced(16, 36);
+        g.setColour(processor.theme.fixedBase().withAlpha(0.9f));
+        g.fillRoundedRectangle(bounds.toFloat(), 10.0f);
+        g.setColour(processor.theme.cyan().withAlpha(0.85f));
+        g.drawRoundedRectangle(bounds.toFloat(), 10.0f, 1.5f);
+
+        // --- Headline: "DEMO EXPIRED" ---
+        auto headline = bounds.removeFromTop(42);
+        g.setColour(processor.theme.cyan());
+        g.setFont(juce::Font(juce::FontOptions("Arial", 15.0f, juce::Font::bold)));
+        g.drawFittedText("DEMO EXPIRED", headline, juce::Justification::centred, 1);
+
+        // --- Button area (NOOO button placed by resized()) ---
+        bounds.removeFromTop(59);
+
+        // --- Detail text below button, shifted down ---
+        auto detail = bounds.reduced(12, 0);
+        detail.removeFromTop(15);
+
+        g.setColour(processor.theme.cyan().withAlpha(0.72f));
+        g.setFont(juce::Font(juce::FontOptions("Arial", 11.0f, juce::Font::plain)));
+
+        const int cooldownSec = processor.getDemoCooldownRemainingSecondsUI();
+        if (cooldownSec >= 0)
+        {
+            const int mins = cooldownSec / 60;
+            const int secs = cooldownSec % 60;
+            g.drawFittedText("DEMO resets to 30 min in: "
+                             + juce::String(mins).paddedLeft('0', 2) + ":"
+                             + juce::String(secs).paddedLeft('0', 2)
+                             + "\nGet the full version for unrestricted runtime.",
+                             detail, juce::Justification::centred, 3);
+        }
+        else
+        {
+            g.drawFittedText("Next DEMO runs for " + juce::String(processor.getNextDemoRuntimeMinutesUI()) + " minutes."
+                             + "\nGet the full version for unrestricted runtime.",
+                             detail, juce::Justification::centred, 3);
+        }
+    }
+   #endif
+
     // Submenu hover tooltips
     const bool submenuActive = (setupSubmenuTargetOn || setupSubmenuProgress > 0.0f);
     if (submenuActive && hoveredSetupIndex >= 0)
@@ -2091,8 +2405,7 @@ void ClockSyncAudioProcessorEditor::paintOverlayForegroundLayer(juce::Graphics& 
         {
             g.setColour(processor.theme.cyan());
             g.setFont(juce::Font(juce::FontOptions("Arial", 12.0f, juce::Font::bold)));
-            const int textX = helpToggle.getRight() + 4;
-            g.drawFittedText(hoverText, juce::Rectangle<int>(textX, y, kBaseW - textX - 8, h), juce::Justification::centredLeft, 1);
+            g.drawFittedText(hoverText, juce::Rectangle<int>(0, y, kBaseW, h), juce::Justification::centred, 1);
         }
     }
 
@@ -2242,6 +2555,26 @@ void ClockSyncAudioProcessorEditor::timerCallback()
         editorHoverText = newHoverText;
         repaint(0, 214, getWidth(), 22);
     }
+
+   #if CLOCKV3_DEMO
+    {
+        const bool expired = processor.isDemoExpiredUI();
+        demoExpiredButton.setVisible(expired);
+        if (expired)
+        {
+            demoExpiredButton.setAlwaysOnTop(true);
+            demoExpiredButton.toFront(true);
+            // Repaint overlay once per second for countdown refresh
+            static juce::uint32 lastRepaintTick = 0;
+            auto now = juce::Time::getMillisecondCounter();
+            if (now - lastRepaintTick >= 1000)
+            {
+                lastRepaintTick = now;
+                if (overlayFgLayer) overlayFgLayer->repaint();
+            }
+        }
+    }
+   #endif
 
     bool needAll = false;
     bool needRing = false;
@@ -2791,16 +3124,12 @@ void ClockSyncAudioProcessorEditor::timerCallback()
             
             if (isRunning)
             {
-                int pulsesInQuarter = 24; 
-                switch (rateIndexCached)
-                {
-                    case 0: pulsesInQuarter = 24; break; 
-                    case 1: pulsesInQuarter = 12; break; 
-                    case 2: pulsesInQuarter = 6;  break; 
-                    case 3: pulsesInQuarter = 6;  break; 
-                    default: pulsesInQuarter = 24; break;
-                }
-                const int scaledCycle = pulsesInQuarter * 4; 
+                // Use the *active* audio-thread rate index so the dancer
+                // reflects the actual clock speed, not the pending change.
+                // Fixed cycle length: the different PPQN emission rates (48/24/12/6)
+                // naturally produce the desired dancer speed ratios:
+                //   1/32 = double, 1/16 = normal, 1/8 = half, 1/4 = quarter.
+                constexpr int scaledCycle = 48;
                 const int pInCycle = (int) (pulses % (unsigned long long) scaledCycle);
                 frameIdx = (pInCycle * totalFrames) / scaledCycle;
                 frameIdx = juce::jlimit(0, totalFrames - 1, frameIdx);
@@ -2812,20 +3141,18 @@ void ClockSyncAudioProcessorEditor::timerCallback()
             else
             {
                 const double bpm = juce::jmax(1.0, processor.getUiBpm());
-                const double quarterMs = (60.0 / bpm) * 1000.0;
+                const double halfNoteMs = (120.0 / bpm) * 1000.0; // half tempo
                 const double nowMs = juce::Time::getMillisecondCounterHiRes();
-                const double tInQuarter = std::fmod(nowMs, quarterMs);
-                const int frames3 = 3;
-                double x = (tInQuarter / quarterMs) * 2.0; 
+                const double tInCycle = std::fmod(nowMs, halfNoteMs);
+                const int stopFrameCount = 6;
+                const int stopFrameStart = 7; // Dancer_8 (index 7) to Dancer_13 (index 12)
+                double x = (tInCycle / halfNoteMs) * 2.0; 
                 if (x > 2.0) x -= std::floor(x);
                 double tri = 1.0 - std::fabs(x - 1.0); 
-                int localIdx = (int) std::floor(tri * (double) (frames3 - 1) + 0.5);
-                localIdx = juce::jlimit(0, frames3 - 1, localIdx);
+                int localIdx = (int) std::floor(tri * (double) (stopFrameCount - 1) + 0.5);
+                localIdx = juce::jlimit(0, stopFrameCount - 1, localIdx);
                 
-                int off = dancerFrameOffset % totalFrames;
-                if (off < 0) off += totalFrames;
-                int blockStart = (off / 3) * 3; 
-                frameIdx = (blockStart + localIdx) % totalFrames;
+                frameIdx = (stopFrameStart + localIdx) % totalFrames;
             }
             svgDancer->setFrame(frameIdx);
         }
@@ -2876,6 +3203,39 @@ void ClockSyncAudioProcessorEditor::updateSetupButtonImages()
         setupCornerOnDrawable.get(),  setupCornerOnDrawable.get(),  setupCornerOnDrawable.get(),  setupCornerOnDrawable.get());
 }
 
+void ClockSyncAudioProcessorEditor::updateHelpButtonImages()
+{
+    if (!helpDrawable) return;
+
+    auto makeTinted = [&](juce::Colour tint) -> std::unique_ptr<juce::Drawable> {
+        const int imgSz = 64;
+        juce::Image img(juce::Image::ARGB, imgSz, imgSz, true);
+        {
+            juce::Graphics gg(img);
+            juce::Rectangle<float> area(0, 0, (float) imgSz, (float) imgSz);
+            helpDrawable->drawWithin(gg, area, juce::RectanglePlacement::centred, 1.0f);
+        }
+        juce::Image::BitmapData bd(img, juce::Image::BitmapData::readWrite);
+        for (int y = 0; y < imgSz; ++y)
+            for (int x = 0; x < imgSz; ++x)
+            {
+                auto col = bd.getPixelColour(x, y);
+                if (col.getAlpha() > 0)
+                    bd.setPixelColour(x, y, tint.withAlpha(col.getFloatAlpha() * tint.getFloatAlpha()));
+            }
+        auto di = std::make_unique<juce::DrawableImage>();
+        di->setImage(img);
+        return di;
+    };
+
+    helpOffDrawable = makeTinted(processor.theme.cyan().withAlpha(0.5f));
+    helpOnDrawable  = makeTinted(processor.theme.cyan());
+
+    helpToggle.setImages(
+        helpOffDrawable.get(), helpOffDrawable.get(), helpOnDrawable.get(), helpOffDrawable.get(),
+        helpOnDrawable.get(),  helpOnDrawable.get(),  helpOnDrawable.get(),  helpOnDrawable.get());
+}
+
 // ---------------- Dancer PNG sequence ----------------
 // void ClockSyncAudioProcessorEditor::loadDancerFrames()
 // {
@@ -2900,6 +3260,7 @@ ClockSyncAudioProcessorEditor::~ClockSyncAudioProcessorEditor()
     nameBox.setLookAndFeel(nullptr);
     nameMidiSwitch.setLookAndFeel(nullptr);
     syncLatchButton.setLookAndFeel(nullptr);
+    demoExpiredButton.setLookAndFeel(nullptr);
     // Clear help button look-and-feel
     helpToggle.setLookAndFeel(nullptr);
 }
@@ -3395,6 +3756,14 @@ void ClockSyncAudioProcessorEditor::refreshDeviceList()
     deviceBox.addItem("select midi-out...", idx++);
     int selectionToSet = 1;
     const auto currentId = processor.getExternalDeviceId();
+
+   #if JUCE_WINDOWS
+    // Virtual MIDI port option for Windows MIDI Services UMP multi-client virtual endpoints
+    deviceBox.addItem("[Virtual MIDI Out]", idx++);
+    if (currentId == "__VIRTUAL_PORT__")
+        selectionToSet = 2;
+   #endif
+
     for (const auto& d : midiOutputs)
     {
         deviceBox.addItem(d.name, idx);

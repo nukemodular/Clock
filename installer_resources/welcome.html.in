@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+        font-size: 13px;
+        line-height: 1.5;
+        color: #222222;
+        background-color: transparent;
+        margin: 20px;
+    }
+    @media (prefers-color-scheme: dark) {
+        body {
+            color: #E6E6E6;
+        }
+        .highlight {
+            color: #FF8800;
+        }
+        .box {
+            background-color: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+        }
+    }
+    h1 {
+        font-size: 20px;
+        font-weight: 600;
+        margin-top: 0;
+        margin-bottom: 8px;
+    }
+    h2 {
+        font-size: 14px;
+        font-weight: 600;
+        margin-top: 16px;
+        margin-bottom: 6px;
+    }
+    .highlight {
+        color: #E65100;
+        font-weight: 600;
+    }
+    .box {
+        background-color: rgba(0, 0, 0, 0.03);
+        border: 1px solid rgba(0, 0, 0, 0.1);
+        border-radius: 6px;
+        padding: 12px 16px;
+        margin-top: 14px;
+    }
+    ul {
+        margin: 6px 0 6px 18px;
+        padding: 0;
+    }
+    li {
+        margin-bottom: 4px;
+    }
+</style>
+</head>
+<body>
+    <h1>Welcome to <span class="highlight">@TB_PRODUCT_NAME@</span></h1>
+    <p>This installer will install the <strong>@TB_PRODUCT_NAME@ v@PROJECT_VERSION@</strong> audio plugins onto your Mac.</p>
+
+    <div class="box">
+        <h2>Included Plug-In Formats:</h2>
+        <ul>
+            <li><strong>Audio Units (AU)</strong>: <code>/Library/Audio/Plug-Ins/Components/@TB_PRODUCT_NAME@.component</code></li>
+            <li><strong>VST3</strong>: <code>/Library/Audio/Plug-Ins/VST3/@TB_PRODUCT_NAME@.vst3</code></li>
+        </ul>
+    </div>
+
+    <p style="margin-top: 18px;">Click <strong>Continue</strong> to proceed with the installation.</p>
+</body>
+</html>
+

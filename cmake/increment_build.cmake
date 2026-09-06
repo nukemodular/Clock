@@ -25,8 +25,22 @@ endif()
 
 math(EXPR NEW_BUILD_NUM "${BUILD_NUM} + 1")
 
+# Wrap build number: 999 → 001
+if(NEW_BUILD_NUM GREATER 999)
+  set(NEW_BUILD_NUM 1)
+endif()
+
 # Overwrite build_number.txt with the new number (persisting across builds)
 file(WRITE "${BUILD_NUM_FILE}" "${NEW_BUILD_NUM}\n")
+
+# Zero-pad build number to 3 digits
+if(NEW_BUILD_NUM LESS 10)
+  set(PADDED_BUILD "00${NEW_BUILD_NUM}")
+elseif(NEW_BUILD_NUM LESS 100)
+  set(PADDED_BUILD "0${NEW_BUILD_NUM}")
+else()
+  set(PADDED_BUILD "${NEW_BUILD_NUM}")
+endif()
 
 # Ensure output dir exists
 file(MAKE_DIRECTORY "${OUT_DIR}")
@@ -45,7 +59,7 @@ else()
 endif()
 
 # Compose version with build string
-string(CONCAT PLUGIN_VERSION_WITH_BUILD "build " "${NEW_BUILD_NUM}")
+string(CONCAT PLUGIN_VERSION_WITH_BUILD "build v3.0." "${PADDED_BUILD}")
 
 # Write generated header
 file(WRITE "${OUT_HEADER}" "#pragma once\n")

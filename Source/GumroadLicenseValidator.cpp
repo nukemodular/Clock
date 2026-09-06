@@ -13,50 +13,53 @@ LicenseDialog::RemoteValidator GumroadLicenseValidator::makeValidator(Config con
         {
             LicenseDialog::ValidationResult result;
 
-            try
+            for (const auto& productId : config.productIds)
             {
-                juce::URL url(config.endpoint);
-                const juce::String postData = "product_id=" + juce::URL::addEscapeChars(config.productId, true)
-                                            + "&license_key=" + juce::URL::addEscapeChars(licenseKey, true)
-                                            + "&increment_uses_count=" + juce::String(config.incrementUsesCount ? "true" : "false");
-
-                const auto response = url.withPOSTData(postData).readEntireTextStream(true);
-                const auto parsed = juce::JSON::parse(response);
-
-                auto* object = parsed.getDynamicObject();
-                if (object == nullptr)
+                try
                 {
-                    result.errorMessage = config.invalidResponseMessage;
-                    completion(std::move(result));
-                    return;
-                }
+                    juce::URL url(config.endpoint);
+                    const juce::String postData = "product_id=" + juce::URL::addEscapeChars(productId, true)
+                                                + "&license_key=" + juce::URL::addEscapeChars(licenseKey, true)
+                                                + "&increment_uses_count=" + juce::String(config.incrementUsesCount ? "true" : "false");
 
-                const auto successVar = object->getProperty("success");
-                result.ok = successVar.isBool() ? (bool) successVar : false;
+                    const auto response = url.withPOSTData(postData).readEntireTextStream(true);
+                    const auto parsed = juce::JSON::parse(response);
 
-                if (! result.ok)
-                {
-                    const auto message = object->getProperty("message").toString().trim();
-                    result.errorMessage = message.isNotEmpty() ? message : config.invalidLicenseMessage;
-                    completion(std::move(result));
-                    return;
-                }
-
-                result.licensedUser = email;
-                const auto purchase = object->getProperty("purchase");
-                if (purchase.isObject())
-                {
-                    if (auto* purchaseObject = purchase.getDynamicObject())
+                    auto* object = parsed.getDynamicObject();
+                    if (object == nullptr)
                     {
-                        const auto purchaseEmail = purchaseObject->getProperty("email").toString().trim();
-                        if (purchaseEmail.isNotEmpty())
-                            result.licensedUser = purchaseEmail;
+                        result.errorMessage = config.invalidResponseMessage;
+                        continue;
                     }
+
+                    const auto successVar = object->getProperty("success");
+                    result.ok = successVar.isBool() ? (bool) successVar : false;
+
+                    if (! result.ok)
+                    {
+                        const auto message = object->getProperty("message").toString().trim();
+                        result.errorMessage = message.isNotEmpty() ? message : config.invalidLicenseMessage;
+                        continue;
+                    }
+
+                    result.licensedUser = email;
+                    const auto purchase = object->getProperty("purchase");
+                    if (purchase.isObject())
+                    {
+                        if (auto* purchaseObject = purchase.getDynamicObject())
+                        {
+                            const auto purchaseEmail = purchaseObject->getProperty("email").toString().trim();
+                            if (purchaseEmail.isNotEmpty())
+                                result.licensedUser = purchaseEmail;
+                        }
+                    }
+
+                    break; // success — stop trying further product IDs
                 }
-            }
-            catch (const std::exception& exception)
-            {
-                result.errorMessage = exception.what();
+                catch (const std::exception& exception)
+                {
+                    result.errorMessage = exception.what();
+                }
             }
 
             completion(std::move(result));

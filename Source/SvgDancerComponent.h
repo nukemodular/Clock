@@ -16,7 +16,9 @@ public:
 private:
     int currentFrame = 0;
     std::vector<std::unique_ptr<juce::Drawable>> tintedFrames;
+    std::vector<juce::Image> cachedFrameImages;
     juce::Colour tintColour = juce::Colours::transparentBlack;
 
     void rebuildTintedFrames();
+    void rebuildRasterCache();
 };

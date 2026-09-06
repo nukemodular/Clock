@@ -21,26 +21,39 @@ public:
     // Draw an inward ring of 16 wedges inside the provided centre with given outer & inner radius.
     // activeColour used for active steps; baseColour for inactive if hideInactive == false.
     // When hideInactive is true, inactive wedges are not filled (still hittable for editing).
+    // Draw an inward ring of 16 wedges inside the provided centre with given outer & inner radius.
+    // activeColour used for active steps; baseColour for inactive if hideInactive == false.
+    // When hideInactive is true, inactive wedges are not filled (still hittable for editing).
     void draw(juce::Graphics& g, juce::Point<float> centre, float outerRadius, float innerRadius,
               juce::Colour activeColour, juce::Colour baseColour, int hoverIndex, UiThemeColours& theme, bool hideInactive=false) const
     {
-        juce::Rectangle<float> outer (centre.x - outerRadius, centre.y - outerRadius, outerRadius*2.0f, outerRadius*2.0f);
-        const float stepAngle = juce::MathConstants<float>::twoPi / 16.0f;
-        const float startAngle = 0.0f; // 12 o'clock in JUCE addPieSegment
-        // Angular gap calculation: create small visual gaps (~3px arc length) between wedges.
-        // Convert 3px (at outer radius) into radians: theta = arcLength / r.
-        const float gapPx = 3.0f;
-        float anglePad = gapPx / juce::jmax(1.0f, outerRadius);
-        // Clamp pad so wedges never fully disappear (avoid excessive gap on very small radius).
-        anglePad = std::min(anglePad, stepAngle * 0.40f);
-        // Backdrop ellipse removed (handled by parent component if desired).
+        if (centre != cachedCentre || outerRadius != cachedOuterRadius || innerRadius != cachedInnerRadius)
+        {
+            cachedCentre = centre;
+            cachedOuterRadius = outerRadius;
+            cachedInnerRadius = innerRadius;
+
+            juce::Rectangle<float> outer (centre.x - outerRadius, centre.y - outerRadius, outerRadius*2.0f, outerRadius*2.0f);
+            const float stepAngle = juce::MathConstants<float>::twoPi / 16.0f;
+            const float startAngle = 0.0f; // 12 o'clock in JUCE addPieSegment
+            const float gapPx = 3.0f;
+            float anglePad = gapPx / juce::jmax(1.0f, outerRadius);
+            anglePad = std::min(anglePad, stepAngle * 0.40f);
+
+            for (int i=0; i<16; ++i)
+            {
+                const float a0Full = startAngle + i*stepAngle;
+                const float a1Full = a0Full + stepAngle;
+                const float a0 = a0Full + anglePad * 0.5f;
+                const float a1 = a1Full - anglePad * 0.5f;
+                cachedWedges[(size_t) i].clear();
+                cachedWedges[(size_t) i].addPieSegment(outer, a0, a1, innerRadius/outerRadius);
+            }
+        }
+
         for (int i=0;i<16;++i)
         {
-            const float a0Full = startAngle + i*stepAngle;
-            const float a1Full = a0Full + stepAngle;
-            const float a0 = a0Full + anglePad * 0.5f;
-            const float a1 = a1Full - anglePad * 0.5f;
-            juce::Path seg; seg.addPieSegment(outer, a0, a1, innerRadius/outerRadius);
+            const auto& seg = cachedWedges[(size_t) i];
             const bool on = steps[(size_t)i];
             bool drewFill = false;
             if (on || !hideInactive)
@@ -92,4 +105,8 @@ public:
 
 private:
     std::array<bool,16> steps;
+    mutable std::array<juce::Path, 16> cachedWedges {};
+    mutable juce::Point<float> cachedCentre { -1.0f, -1.0f };
+    mutable float cachedOuterRadius { -1.0f };
+    mutable float cachedInnerRadius { -1.0f };
 };

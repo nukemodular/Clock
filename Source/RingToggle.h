@@ -25,7 +25,7 @@ public:
     {
         auto lb = getLocalBounds();
         // Constrain to a centered square of up to 30x30 (or smaller if component is smaller)
-        const int d = std::max(preferredSize, std::min(lb.getWidth(), lb.getHeight()));
+        const int d = std::min(preferredSize, std::min(lb.getWidth(), lb.getHeight()));
         juce::Rectangle<int> square(lb.getCentreX() - d / 2, lb.getCentreY() - d / 2, d, d);
         auto rf = square.toFloat();
 

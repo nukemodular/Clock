@@ -11,7 +11,7 @@ class GumroadLicenseValidator
 public:
     struct Config
     {
-        juce::String productId;
+        juce::StringArray productIds;
         juce::String endpoint = "https://api.gumroad.com/v2/licenses/verify";
         bool incrementUsesCount = false;
         juce::String invalidResponseMessage = "Invalid Gumroad API response.";

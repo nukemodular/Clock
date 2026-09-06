@@ -2,10 +2,10 @@
 set -e
 
 # Configuration
-APP_NAME="${APP_NAME:-toolBoy Clock v3}"
+APP_NAME="${APP_NAME:-Clock v3}"
 FALLBACK_APP_NAME="${FALLBACK_APP_NAME:-Clock v3}"
-DMG_NAME="${DMG_NAME:-toolBoy_Clock_v3_Installer.dmg}"
-VOL_NAME="${VOL_NAME:-toolBoy Clock v3 Installer}"
+DMG_NAME="${DMG_NAME:-Clock_v3_Installer.dmg}"
+VOL_NAME="${VOL_NAME:-Clock v3 Installer}"
 BUILD_PRESET="${BUILD_PRESET:-release}"
 ARTEFACTS_DIR="${ARTEFACTS_DIR:-build/release/ClockV3_artefacts/Release}"
 STAGING_DIR="${STAGING_DIR:-release_dmg_temp}"
