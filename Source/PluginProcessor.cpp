@@ -3176,14 +3176,6 @@ void ClockSyncAudioProcessor::tryFirePattern(double ppqStart, double barLenQ, do
             startSampleForRunSignal = sampleOffset;
             lastStartBar.store(barForStart, std::memory_order_relaxed);
             lastStartStep.store(stepForStart, std::memory_order_relaxed);
-            // For preview-only emissions (editor mask activation) do not modify
-            // processor run/resync state or diagnostic counts. Only record
-            // real pattern emissions.
-            if (! preview)
-            {
-                lastStartSource.store(1, std::memory_order_relaxed); // pattern
-                patternStartCount.fetch_add(1, std::memory_order_relaxed);
-            }
             lastBarEmitted = std::max(lastBarEmitted, barForStart);
 
             // If a deferred pattern-requested restart targets this same bar,
@@ -3502,8 +3494,6 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
                 pendingBarRestart.store(false, std::memory_order_relaxed);
                 uiNextRestartPending.store(false, std::memory_order_relaxed);
                 pendingPatternRestartTargetBar.store(-1, std::memory_order_relaxed);
-                // pattern already emitted the Start; record that the last source was pattern
-                lastStartSource.store(1, std::memory_order_relaxed);
             }
             else
             {
@@ -3544,19 +3534,6 @@ ClockSyncAudioProcessor::BarRestartWindow ClockSyncAudioProcessor::handleBarAlig
                     startSampleForRunSignal = sampleOffset;
                     lastStartBar.store(barForStart, std::memory_order_relaxed);
                     lastStartStep.store(stepForStart, std::memory_order_relaxed);
-
-                    // Record source: resyncMatches => resync, otherwise bar-aligned restart
-                    if (resyncMatches)
-                    {
-                        lastStartSource.store(3, std::memory_order_relaxed); // resync
-                        resyncStartCount.fetch_add(1, std::memory_order_relaxed);
-                    }
-                    else
-                    {
-                        lastStartSource.store(2, std::memory_order_relaxed); // barRestart
-                        barRestartStartCount.fetch_add(1, std::memory_order_relaxed);
-                    }
-
                 }
 
                 lastBarRestartStartSampleInBlock = sampleOffset;

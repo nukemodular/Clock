@@ -1884,48 +1884,9 @@ HitResult ClockSyncAudioProcessorEditor::routeHit(const juce::MouseEvent& e, boo
 
 void ClockSyncAudioProcessorEditor::paintOverChildren(juce::Graphics& g)
 {
+    juce::ignoreUnused(g);
     // Scalable overlay painting is handled by uiRoot layers.
-
-   // Demo expired overlay is now painted inside the overlayFg layer (base coords).
-
-    // Debug stack (left side): show last clicked stored step, logical mapping, host bar and scheduled targets
-    // {
-    //     const int leftX = 6;
-    //     int y = 40;
-    //     const int lineH = 14;
-    //     g.setColour(UiThemeColours::cyan().withAlpha(0.95f));
-    //     g.setFont(juce::Font(juce::FontOptions("Arial", 11.0f, juce::Font::plain)));
-
-    //     int clicked = lastClickedStoredIndex;
-    //     const int visualRotation = 4;
-    //     juce::String clickedLine;
-    //     if (clicked >= 0)
-    //     {
-    //         int logical = ((clicked - visualRotation) & 15) + 1; // 1..16
-    //         clickedLine = "Clicked stored: " + juce::String(clicked) + "  (logical " + juce::String(logical) + ")";
-    //     }
-    //     else clickedLine = "Clicked stored: N/A";
-    //     g.drawFittedText(clickedLine, juce::Rectangle<int>(leftX, y, 200, lineH), juce::Justification::left, 1);
-    //     y += lineH + 2;
-
-    //     int hostBar = processor.getUiExternalBarNumber();
-    //     juce::String hostLine = "Host bar: "; hostLine += (hostBar >= 0) ? juce::String(hostBar) : juce::String("N/A");
-    //     g.drawFittedText(hostLine, juce::Rectangle<int>(leftX, y, 200, lineH), juce::Justification::left, 1);
-    //     y += lineH + 2;
-
-    //     long long rtBar = processor.getResyncTargetBar();
-    //     int rtStep = processor.getResyncTargetStep();
-    //     juce::String resyncLine = "Resync target: ";
-    //     if (rtBar >= 0) resyncLine += "bar " + juce::String(rtBar) + " step " + juce::String(rtStep);
-    //     else resyncLine += "none";
-    //     g.drawFittedText(resyncLine, juce::Rectangle<int>(leftX, y, 240, lineH), juce::Justification::left, 1);
-    //     y += lineH + 2;
-
-    //     long long pendingBar = processor.getPendingPatternRestartTargetBar();
-    //     juce::String pendingLine = "Pending pat restart bar: "; pendingLine += (pendingBar >= 0) ? juce::String(pendingBar) : juce::String("N/A");
-    //     g.drawFittedText(pendingLine, juce::Rectangle<int>(leftX, y, 240, lineH), juce::Justification::left, 1);
-    // }
-
+    // Demo expired overlay is painted inside the overlayFg layer (base coords).
 }
 
 void ClockSyncAudioProcessorEditor::resized()
@@ -3236,19 +3197,6 @@ void ClockSyncAudioProcessorEditor::updateHelpButtonImages()
         helpOnDrawable.get(),  helpOnDrawable.get(),  helpOnDrawable.get(),  helpOnDrawable.get());
 }
 
-// ---------------- Dancer PNG sequence ----------------
-// void ClockSyncAudioProcessorEditor::loadDancerFrames()
-// {
-//     // Removed in favor of SvgDancerComponent
-// }
-
-// void ClockSyncAudioProcessorEditor::drawDancer(juce::Graphics& g)
-// {
-//     // Removed in favor of SvgDancerComponent
-// }
-
-// OverlayTooltip handlers unused.
-
 ClockSyncAudioProcessorEditor::~ClockSyncAudioProcessorEditor()
 {
     processor.onThemeChanged = nullptr;
@@ -3567,7 +3515,6 @@ void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
                             mask |= (uint16_t)(1u << storedIndex);
                             if (playgroundComp) playgroundComp->setPatternBitmask(mask);
                             else pattern.setStep(storedIndex, true);
-                            lastClickedStoredIndex = storedIndex;
                             pushPatternStateToProcessor();
                             repaint(ringArea);
                         }
@@ -3679,7 +3626,6 @@ void ClockSyncAudioProcessorEditor::mouseDrag(const juce::MouseEvent& e)
         {
             pattern.setStep(pw, patternDragSetState);
         }
-        lastClickedStoredIndex = pw;
         pushPatternStateToProcessor();
         repaint(ringArea);
     }
@@ -4017,7 +3963,5 @@ void ClockSyncAudioProcessorEditor::updateInlineNameEditorBounds()
         nameEntryEditor->setBounds(nameBox.getBounds().reduced(1, 1));
     }
 }
-
-// Dancer frame loading no longer used.
 
 

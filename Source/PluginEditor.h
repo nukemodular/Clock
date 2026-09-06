@@ -520,7 +520,6 @@ private:
     bool patternDragActive { false }; // true while mouse dragging over pattern
     bool patternDragSetState { false }; // desired state (on/off) applied to dragged wedges
     bool patternDragTouched[16] { false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false }; // prevent re-applying
-    int lastClickedStoredIndex { -1 }; // last clicked/dragged stored step index (0..15) for debug display
     void pushPatternStateToProcessor();
     void updatePatternParamFromPopup3(int popupIndex);
     void mouseDrag(const juce::MouseEvent& e) override; // implement pattern drag

@@ -96,11 +96,6 @@ public:
     long long getLastPatternFiredBar() const { return lastPatternFiredBar; }
     long long getLastPatternRestartScheduledBar() const { return lastPatternRestartScheduledBar; }
     long long getNextRandomPatternTargetBar() const { return nextRandomPatternTargetBar; }
-    // Diagnostics getters
-    int getLastStartSource() const;
-    int getPatternStartCount() const;
-    int getBarRestartStartCount() const;
-    int getResyncStartCount() const;
     // Expose cached time-signature and ppq-last-bar-start to UI/editor
     int getUiTimeSigNumerator() const;
     int getUiTimeSigDenominator() const;
@@ -382,11 +377,6 @@ private:
     std::atomic<bool> uiHostStartPending { false };
     // UI-only signal: when a pattern step triggers, request an idx1 blink with the logical step (1..16)
     std::atomic<int> uiBlinkIdx1Step { 0 };
-    // Diagnostics: source and counters for last Start emission (1=pattern,2=barRestart,3=resync,4=host)
-    std::atomic<int> lastStartSource { 0 };
-    std::atomic<int> patternStartCount { 0 };
-    std::atomic<int> barRestartStartCount { 0 };
-    std::atomic<int> resyncStartCount { 0 };
     // Behaviour mode
     std::atomic<bool> legacyModeEnabled { false }; // false => modern (default), true => legacy pre-stop gating
     // Pattern sequencer state
@@ -535,9 +525,3 @@ private:
 inline int ClockSyncAudioProcessor::getUiTimeSigNumerator() const { return uiTimeSigNumerator.load(std::memory_order_relaxed); }
 inline int ClockSyncAudioProcessor::getUiTimeSigDenominator() const { return uiTimeSigDenominator.load(std::memory_order_relaxed); }
 inline double ClockSyncAudioProcessor::getUiPpqPositionOfLastBarStart() const { return uiPpqPositionOfLastBarStart.load(std::memory_order_relaxed); }
-
-    // Diagnostics getters
-    inline int ClockSyncAudioProcessor::getLastStartSource() const { return lastStartSource.load(std::memory_order_relaxed); }
-    inline int ClockSyncAudioProcessor::getPatternStartCount() const { return patternStartCount.load(std::memory_order_relaxed); }
-    inline int ClockSyncAudioProcessor::getBarRestartStartCount() const { return barRestartStartCount.load(std::memory_order_relaxed); }
-    inline int ClockSyncAudioProcessor::getResyncStartCount() const { return resyncStartCount.load(std::memory_order_relaxed); }
