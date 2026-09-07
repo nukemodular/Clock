@@ -7,16 +7,6 @@
   },
   "configurePresets": [
     {
-      "name": "debug",
-      "displayName": "debug",
-      "generator": "Unix Makefiles",
-      "binaryDir": "build/debug",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_OSX_ARCHITECTURES": "arm64;x86_64"
-      }
-    },
-    {
       "name": "release",
       "displayName": "release",
       "generator": "Unix Makefiles",
@@ -40,16 +30,14 @@
   ],
   "buildPresets": [
     {
-      "name": "debug",
-      "configurePreset": "debug"
-    },
-    {
       "name": "release",
-      "configurePreset": "release"
+      "configurePreset": "release",
+      "jobs": 2
     },
     {
       "name": "release-demo",
-      "configurePreset": "release-demo"
+      "configurePreset": "release-demo",
+      "jobs": 2
     }
   ]
 }

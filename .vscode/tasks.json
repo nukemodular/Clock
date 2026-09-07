@@ -2,169 +2,117 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"label": "Build Release After Crash Fix",
+			"label": "Build & Install: VST3 Only (Release)",
 			"type": "shell",
 			"command": "cmake",
 			"args": [
 				"--build",
-				"--preset",
-				"release"
+				"build/release",
+				"--target",
+				"ClockV3_VST3",
+				"-j2"
 			],
-			"isBackground": false,
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
 			"problemMatcher": [
 				"$gcc"
 			],
-			"group": "build"
+			"detail": "Builds and installs only the Clock v3 VST3 plugin to ~/Library/Audio/Plug-Ins/VST3 (Release, -j2)"
 		},
 		{
-			"label": "Build Release After Crash Fix",
+			"label": "Build & Install: Demo VST3 Only (Release)",
 			"type": "shell",
 			"command": "cmake",
 			"args": [
 				"--build",
-				"--preset",
-				"release"
+				"build/release_demo",
+				"--target",
+				"ClockV3Demo_VST3",
+				"-j2"
 			],
-			"isBackground": false,
+			"group": "build",
 			"problemMatcher": [
 				"$gcc"
 			],
-			"group": "build"
+			"detail": "Builds and installs only the Clock v3 Demo VST3 plugin to ~/Library/Audio/Plug-Ins/VST3 (Release, -j2)"
 		},
 		{
-			"label": "Build Release After Crash Fix",
+			"label": "Build & Install: Full Release (AU + VST3)",
 			"type": "shell",
 			"command": "cmake",
 			"args": [
 				"--build",
-				"--preset",
-				"release"
+				"build/release",
+				"--target",
+				"ClockV3_All",
+				"-j2"
 			],
-			"isBackground": false,
+			"group": "build",
 			"problemMatcher": [
 				"$gcc"
 			],
-			"group": "build"
+			"detail": "Builds and installs both AU and VST3 plugins for Clock v3 Full (Release, -j2)"
 		},
 		{
-			"label": "Build Release After Crash Fix",
+			"label": "Build & Install: Demo Release (AU + VST3)",
 			"type": "shell",
 			"command": "cmake",
 			"args": [
 				"--build",
-				"--preset",
-				"release"
+				"build/release_demo",
+				"--target",
+				"ClockV3Demo_All",
+				"-j2"
 			],
-			"isBackground": false,
-			"group": "build"
+			"group": "build",
+			"problemMatcher": [
+				"$gcc"
+			],
+			"detail": "Builds and installs both AU and VST3 plugins for Clock v3 Demo (Release, -j2)"
 		},
 		{
-			"label": "Build Release After Crash Fix",
+			"label": "Package: Full Release PKG (Signed & Notarized)",
 			"type": "shell",
-			"command": "cmake",
-			"args": [
-				"--build",
-				"--preset",
-				"release"
-			],
-			"isBackground": false,
-			"group": "build"
+			"command": "./package_pkg.sh",
+			"group": "build",
+			"problemMatcher": [],
+			"detail": "Compiles Full Release (-j2), codesigns, builds .pkg installer, signs, and notarizes with Apple"
 		},
 		{
-			"label": "Build Release After Crash Fix",
+			"label": "Package: Full Release PKG (Local Test, Skip Notarize)",
 			"type": "shell",
-			"command": "cmake",
+			"command": "./package_pkg.sh",
 			"args": [
-				"--build",
-				"--preset",
-				"release"
+				"--skip-notarize"
 			],
-			"isBackground": false,
-			"group": "build"
+			"group": "build",
+			"problemMatcher": [],
+			"detail": "Compiles Full Release (-j2), codesigns, and builds signed .pkg installer locally without Apple notarization wait"
 		},
 		{
-			"label": "Build Release After Crash Fix",
+			"label": "Package: Demo Release PKG (Signed & Notarized)",
 			"type": "shell",
-			"command": "cmake",
+			"command": "./package_pkg.sh",
 			"args": [
-				"--build",
-				"--preset",
-				"release"
+				"--demo"
 			],
-			"isBackground": false,
-			"group": "build"
+			"group": "build",
+			"problemMatcher": [],
+			"detail": "Compiles Demo Release (-j2), codesigns, builds .pkg installer, signs, and notarizes with Apple"
 		},
 		{
-			"label": "Build Release After Crash Fix",
+			"label": "Package: Demo Release PKG (Local Test, Skip Notarize)",
 			"type": "shell",
-			"command": "cmake",
+			"command": "./package_pkg.sh",
 			"args": [
-				"--build",
-				"--preset",
-				"release"
+				"--demo",
+				"--skip-notarize"
 			],
-			"isBackground": false,
-			"group": "build"
-		},
-		{
-			"label": "Build Release After Crash Fix",
-			"type": "shell",
-			"command": "cmake",
-			"args": [
-				"--build",
-				"--preset",
-				"release"
-			],
-			"isBackground": false,
-			"group": "build"
-		},
-		{
-			"label": "Build Release After Crash Fix",
-			"type": "shell",
-			"command": "cmake",
-			"args": [
-				"--build",
-				"--preset",
-				"release"
-			],
-			"isBackground": false,
-			"group": "build"
-		},
-		{
-			"label": "Build Release After Crash Fix",
-			"type": "shell",
-			"command": "cmake",
-			"args": [
-				"--build",
-				"--preset",
-				"release"
-			],
-			"isBackground": false,
-			"group": "build"
-		},
-		{
-			"label": "Build Release After Crash Fix",
-			"type": "shell",
-			"command": "cmake",
-			"args": [
-				"--build",
-				"--preset",
-				"release"
-			],
-			"isBackground": false,
-			"group": "build"
-		},
-		{
-			"label": "Build Release After Crash Fix",
-			"type": "shell",
-			"command": "cmake",
-			"args": [
-				"--build",
-				"--preset",
-				"release"
-			],
-			"isBackground": false,
-			"group": "build"
+			"group": "build",
+			"problemMatcher": [],
+			"detail": "Compiles Demo Release (-j2), codesigns, and builds signed demo .pkg installer locally without Apple notarization wait"
 		}
 	]
 }
