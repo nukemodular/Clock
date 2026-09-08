@@ -620,3 +620,164 @@ private:
             onColorChanged(currentColour);
     }
 };
+
+// ---------------- TriggerOffsetNumSlider -----------------
+class TriggerOffsetNumSlider : public juce::Component
+{
+public:
+    TriggerOffsetNumSlider(UiThemeColours& t) : theme(t)
+    {
+        setSize(40, 20);
+        setMouseCursor(juce::MouseCursor::UpDownResizeCursor);
+    }
+
+    void paint(juce::Graphics& g) override
+    {
+        auto b = getLocalBounds().toFloat().reduced(1.5f);
+
+        // Background
+        g.setColour(theme.base());
+        g.fillRoundedRectangle(b, 6.0f);
+
+        // Accent / Cyan fill
+        juce::Colour fillCol = isDragging ? theme.cyan().withAlpha(0.25f)
+                             : (isHover ? theme.accent().withAlpha(0.40f) : theme.accent().withAlpha(0.20f));
+        g.setColour(fillCol);
+        g.fillRoundedRectangle(b, 6.0f);
+
+        // Border outline
+        juce::Colour borderCol = (isDragging || isHover) ? theme.cyan() : theme.accent().withAlpha(0.65f);
+        g.setColour(borderCol);
+        g.drawRoundedRectangle(b, 6.0f, 3.0f);
+
+        // Text display (when not typing inline)
+        if (textEditor == nullptr)
+        {
+            g.setColour(theme.cyan());
+            g.setFont(juce::Font(juce::FontOptions("Arial", 13.0f, juce::Font::bold)));
+            juce::String str;
+            if (currentValue > 0)
+                str = "+" + juce::String(currentValue);
+            else
+                str = juce::String(currentValue);
+            g.drawFittedText(str, getLocalBounds(), juce::Justification::centred, 1);
+        }
+    }
+
+    void mouseDown(const juce::MouseEvent& e) override
+    {
+        if (e.mods.isAltDown() || e.mods.isRightButtonDown())
+        {
+            setValue(0);
+            return;
+        }
+        dragStartValue = currentValue;
+        isDragging = true;
+        repaint();
+    }
+
+    void mouseDrag(const juce::MouseEvent& e) override
+    {
+        if (!isDragging) return;
+        float deltaY = -((float)e.getDistanceFromDragStartY());
+        int delta = e.mods.isShiftDown() ? (int)std::round(deltaY) : (int)std::round(deltaY * 10.0f);
+        int newVal = juce::jlimit(minValue, maxValue, dragStartValue + delta);
+        if (newVal != currentValue)
+        {
+            setValue(newVal);
+        }
+    }
+
+    void mouseUp(const juce::MouseEvent&) override
+    {
+        isDragging = false;
+        repaint();
+    }
+
+    void mouseDoubleClick(const juce::MouseEvent&) override
+    {
+        showTextEditor();
+    }
+
+    void mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) override
+    {
+        int step = e.mods.isShiftDown() ? 1 : 25;
+        setValue(juce::jlimit(minValue, maxValue, currentValue + (wheel.deltaY > 0 ? step : -step)));
+    }
+
+    void mouseEnter(const juce::MouseEvent&) override
+    {
+        isHover = true;
+        if (onHoverChanged) onHoverChanged(true);
+        repaint();
+    }
+
+    void mouseExit(const juce::MouseEvent&) override
+    {
+        isHover = false;
+        if (onHoverChanged) onHoverChanged(false);
+        repaint();
+    }
+
+    void setValue(int val, bool notify = true)
+    {
+        val = juce::jlimit(minValue, maxValue, val);
+        if (val != currentValue)
+        {
+            currentValue = val;
+            if (notify && onValueChanged)
+                onValueChanged(currentValue);
+            repaint();
+        }
+    }
+
+    int getValue() const noexcept { return currentValue; }
+
+    std::function<void(int)> onValueChanged;
+    std::function<void(bool)> onHoverChanged;
+
+private:
+    void showTextEditor()
+    {
+        textEditor = std::make_unique<juce::TextEditor>();
+        textEditor->setBounds(getLocalBounds());
+        textEditor->setFont(juce::Font(juce::FontOptions("Arial", 13.0f, juce::Font::bold)));
+        textEditor->setJustification(juce::Justification::centred);
+        textEditor->setColour(juce::TextEditor::textColourId, theme.cyan());
+        textEditor->setColour(juce::TextEditor::backgroundColourId, theme.base());
+        textEditor->setColour(juce::TextEditor::outlineColourId, theme.cyan());
+        textEditor->setText(juce::String(currentValue));
+        textEditor->selectAll();
+        textEditor->onReturnKey = [this]() {
+            if (textEditor)
+            {
+                int typed = textEditor->getText().trim().getIntValue();
+                setValue(typed);
+                textEditor.reset();
+            }
+        };
+        textEditor->onFocusLost = [this]() {
+            if (textEditor)
+            {
+                int typed = textEditor->getText().trim().getIntValue();
+                setValue(typed);
+                textEditor.reset();
+            }
+        };
+        textEditor->onEscapeKey = [this]() {
+            textEditor.reset();
+            repaint();
+        };
+        addAndMakeVisible(*textEditor);
+        textEditor->grabKeyboardFocus();
+    }
+
+    std::unique_ptr<juce::TextEditor> textEditor;
+    UiThemeColours& theme;
+    int currentValue = 0;
+    int minValue = -2048;
+    int maxValue = 256;
+    int dragStartValue = 0;
+    bool isDragging = false;
+    bool isHover = false;
+};

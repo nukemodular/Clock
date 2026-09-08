@@ -291,6 +291,8 @@ private:
     std::unique_ptr<juce::Label> pulseWidthLabel;
     std::unique_ptr<juce::Label> pulseWidthValueLabel;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> pulseWidthAttachment;
+    std::unique_ptr<TriggerOffsetNumSlider> triggerOffsetSlider;
+    int triggerOffsetSamplesCached { 0 };
     ClockSyncAudioProcessor& processor;
 
     // Timer
@@ -523,6 +525,8 @@ private:
     void pushPatternStateToProcessor();
     void updatePatternParamFromPopup3(int popupIndex);
     void mouseDrag(const juce::MouseEvent& e) override; // implement pattern drag
+    void toggleTriggerOffsetSlider();
+    void exitPatternEditMode();
 
     // Build HitContext and derive InteractionMode for routing.
     HitContext buildHitContext() const;

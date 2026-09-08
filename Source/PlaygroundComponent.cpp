@@ -22,7 +22,7 @@ PlaygroundComponent::PlaygroundComponent(UiThemeColours& t) : theme(t)
         flashes.set(i, 0.0f);
         scheduledPulseAtMs.set(i, 0.0);
     }
-    hoverTexts = {"Stop/Re-sync next bar + offset", "Re-trigger quantized", "Autofill pattern edit", "Autofill play interval", "Shuffle Amount", "Shuffle type 909 (1-7) or linear", "Set scale 1/32, 1/16, 1/8, 1/4", "Audio Click: off, beat, 8th, 16th, 24ppq", "Re-sync + offset on/off", "Send midi-clocks while idle/stopped", "Legacy send always stop before start", "Send song position pointer (SPP)"};
+    hoverTexts = {"Stop/Re-sync next bar + offset", "Re-trigger quantized", "Autofill pattern edit (Shift+Click: Trigger Offset)", "Autofill play interval", "Shuffle Amount", "Shuffle type 909 (1-7) or linear", "Set scale 1/32, 1/16, 1/8, 1/4", "Audio Click: off", "Re-sync + offset on/off", "Send midi-clocks while idle/stopped", "Legacy send always stop before start", "Send song position pointer (SPP)"};
     ring.reset(new Ring16Component(theme));
     if (circles.size() > 0)
     {
@@ -98,8 +98,7 @@ PlaygroundComponent::PlaygroundComponent(UiThemeColours& t) : theme(t)
                 // OFF => remains false
                 if (patternBarActive)
                 {
-                    if (autoRandomizePattern)
-                        randomizePatternSteps();
+                    patternRandomizedForCurrentFill = false;
                     flashFullRing(1.1f); // visual cue that a fill bar has begun
                 }
             }
@@ -121,13 +120,19 @@ PlaygroundComponent::PlaygroundComponent(UiThemeColours& t) : theme(t)
                 }
 
             // End of bar: the current pattern bar has just finished.
-            // Reset the global bar counter so the cyan progress starts at 0
-            // for the next bar, regardless of interval mode.
+            // Generate the next pattern strictly AFTER the current pattern has completed triggering.
             if (patternBarActive && logical == 15)
             {
+                if (autoRandomizePattern && !patternRandomizedForCurrentFill)
+                {
+                    patternRandomizedForCurrentFill = true;
+                    randomizePatternSteps();
+                }
                 barsSinceAutoTrigger = 0; // begin counting fresh next bar
                 if (autoTriggerRandom || autoTriggerIntervalBars != 1)
                     patternBarActive = false;
+                else
+                    patternRandomizedForCurrentFill = false; // continuous mode: reset for next bar
             }
         }
         repaint(); };
@@ -291,6 +296,11 @@ void PlaygroundComponent::setExternalBarNumber(int barNumber)
     // so the cyan progress starts at 0 for the new bar.
     if (prevBarWasActive)
     {
+        if (autoRandomizePattern && !patternRandomizedForCurrentFill)
+        {
+            patternRandomizedForCurrentFill = true;
+            randomizePatternSteps();
+        }
         barsSinceAutoTrigger = 0;
     }
 
@@ -300,9 +310,8 @@ void PlaygroundComponent::setExternalBarNumber(int barNumber)
         if (autoTriggerRng.nextFloat() < (rndPatternAmount / 100.0f))
         {
             patternBarActive = true;
+            patternRandomizedForCurrentFill = false;
             barsSinceAutoTrigger = 0;
-            if (autoRandomizePattern)
-                randomizePatternSteps();
             flashFullRing(1.1f);
         }
         else
@@ -315,8 +324,7 @@ void PlaygroundComponent::setExternalBarNumber(int barNumber)
     {
         // Continuous: every bar is a pattern bar
         patternBarActive = true;
-        if (autoRandomizePattern)
-            randomizePatternSteps();
+        patternRandomizedForCurrentFill = false;
         flashFullRing(1.1f);
     }
     else if (autoTriggerIntervalBars > 1)
@@ -326,8 +334,7 @@ void PlaygroundComponent::setExternalBarNumber(int barNumber)
         {
             barsSinceAutoTrigger = 0;
             patternBarActive = true;
-            if (autoRandomizePattern)
-                randomizePatternSteps();
+            patternRandomizedForCurrentFill = false;
             flashFullRing(1.1f);
         }
         else
@@ -563,10 +570,9 @@ juce::String PlaygroundComponent::getCurrentHoverText() const
     }
     else if (ringHoverSegment >= 0)
         label = "Re-sync at step " + juce::String(ringHoverSegment + 1);
-    else if (hoverIndex == 7)
+    else if (hoverIndex == 7 || rotaryHandleHover || isDraggingOffsetRotary)
     {
-        if (hoverTexts.size() > 7)
-            label = hoverTexts[7];
+        label = "Audio Click: " + getClickRateText();
     }
     else if (clickToPulseHover)
     {
@@ -576,10 +582,6 @@ juce::String PlaygroundComponent::getCurrentHoverText() const
     {
        // label = juce::String(hoverIndex + 1) + ": " + hoverTexts[hoverIndex];
         label = hoverTexts[hoverIndex];
-    }
-    else if (rotaryHandleHover && hoverTexts.size() > 7)
-    {
-        label = hoverTexts[7];
     }
     else if (hoverShuffleId != -1)
     {
@@ -613,9 +615,9 @@ void PlaygroundComponent::paint(juce::Graphics &g)
     // the red donut in z-order. Keep the magenta diagnostic outline visible
     // in Release builds.
     juce::Rectangle<float> runRectFloat;
-    // Draw stop diagonal only when stopped AND pattern edit mode is OFF.
-    // In pattern edit mode, the diagonal is always hidden regardless of state.
-    if (circles.size() > 0 && !runState && !patternEditMode)
+    // Draw stop diagonal only when stopped AND pattern edit mode is OFF AND submenu is inactive.
+    // In pattern edit mode or when setup submenu ("S") is active, the diagonal is hidden.
+    if (circles.size() > 0 && !runState && !patternEditMode && !submenuActive)
     {
         const auto &c0 = circles.getReference(0);
         auto r = RunButton::suggestedBoundsForCentre((int)std::round(c0.x), (int)std::round(c0.y));
@@ -648,8 +650,10 @@ void PlaygroundComponent::paint(juce::Graphics &g)
         const auto &c0 = circles.getReference(0);
         float outerR = (ring->getInnerRadius() - PatternGeometry::kPatternInset) + PatternGeometry::kPatternOutwardShift;
         float innerR = outerR * PatternGeometry::kPatternThicknessRatio; // keep proportional thickness
-        // Hide inactive wedges (only show active cyan ones) per user request.
-        pattern.draw(g, {c0.x, c0.y}, outerR, innerR, theme.cyan(), theme.base(), patternHoverIndex, theme, true);
+        int currentStep = ring ? ring->getCurrentStepLogical() : externalStepForDisplay;
+        int chaseIndex = (runState && currentStep >= 1 && currentStep <= 16) ? ((currentStep - 1) & 15) : -1;
+        // Hide inactive wedges (only show active cyan ones, plus chaselight) per user request.
+        pattern.draw(g, {c0.x, c0.y}, outerR, innerR, theme.cyan(), theme.base(), patternHoverIndex, theme, true, chaseIndex, patternBarActive);
         // Center UI (RND amount number, AUTO toggle above, RND trigger below)
         float centreX = c0.x;
         float centreY = c0.y;
@@ -759,7 +763,7 @@ void PlaygroundComponent::paint(juce::Graphics &g)
         float insetR = 17.0f;
         g.setColour(theme.base());
         g.fillEllipse(c.x - insetR, c.y - insetR, insetR * 2, insetR * 2);
-        const float startAng = -juce::MathConstants<float>::pi * 1.2f;
+        const float startAng = -juce::MathConstants<float>::pi * 1.25f;
         const float endAng = juce::MathConstants<float>::pi * 0.2f;
         float ang = startAng + offsetRotaryT * (endAng - startAng);
         float needleR = insetR + 2.0f;
@@ -1725,6 +1729,8 @@ void PlaygroundComponent::makeButton(int idx)
     {
         b->onToggled = [this](bool on)
         { if (onPatternEditToggled) onPatternEditToggled(on); };
+        b->onShiftClicked = [this]()
+        { if (onPatternEditShiftClicked) onPatternEditShiftClicked(); };
     }
     addAndMakeVisible(b);
 }
@@ -1948,4 +1954,20 @@ void PlaygroundComponent::setLinearShuffleAmount(float amount)
     linearShuffleAmount = juce::jlimit(0.5f, 0.75f, amount);
     linearShufflePos = juce::jlimit(0.0f, 1.0f, (linearShuffleAmount - 0.5f) / 0.25f);
     repaint();
+}
+
+void PlaygroundComponent::setPatternBarActive(bool active)
+{
+    if (patternBarActive != active)
+    {
+        if (patternBarActive && !active && autoRandomizePattern && !patternRandomizedForCurrentFill)
+        {
+            patternRandomizedForCurrentFill = true;
+            randomizePatternSteps();
+        }
+        patternBarActive = active;
+        if (patternBarActive)
+            patternRandomizedForCurrentFill = false;
+        repaint();
+    }
 }

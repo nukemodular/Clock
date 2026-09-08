@@ -494,7 +494,7 @@ namespace
             g.setColour(theme.fixedBase().withAlpha(0.9f));
             g.fillRoundedRectangle(getLocalBounds().toFloat(), 6.0f);
             g.setColour(theme.cyan());
-            g.drawRoundedRectangle(getLocalBounds().toFloat(), 6.0f, 2.0f);
+            g.drawRoundedRectangle(getLocalBounds().toFloat(), 6.0f, 3.0f);
 
             g.setColour(theme.cyan().withAlpha(0.72f));
             g.setFont(juce::Font(juce::FontOptions("Arial", 10.0f, juce::Font::plain)));
@@ -971,6 +971,12 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
             setupButton.setToggleState(setupSubmenuTargetOn, juce::dontSendNotification);
             setupSubmenuProgress = setupSubmenuTargetOn ? 1.0f : 0.0f;
             setupSubmenuAnimatingHide = ! setupSubmenuTargetOn;
+            logoAlpha = setupSubmenuProgress;
+            if (setupSubmenuTargetOn && patternEditMode)
+            {
+                patternEditMode = false;
+                processor.getAPVTS().state.setProperty("ui.patternEditMode", false, nullptr);
+            }
         }
         // Load instrument names early so populateNameBox can restore selection
         loadInstrumentNamesFromState();
@@ -985,11 +991,13 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     playgroundComp->setHeaderHeight(30);
     playgroundComp->toBack();
 
-    // Ensure playground reflects any persisted pattern-edit state loaded earlier
+    // Ensure playground reflects any persisted pattern-edit and submenu state loaded earlier
     if (playgroundComp)
     {
         playgroundComp->setPatternEditButtonState(patternEditMode);
         playgroundComp->setInterceptsMouseClicks(!patternEditMode, !patternEditMode);
+        if (setupSubmenuTargetOn)
+            playgroundComp->setSubmenuActive(true);
     }
 
     // Help toggle (SVG icon) - restore visibility and behaviour so users can enable/disable tooltips.
@@ -1085,7 +1093,30 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
             nameBox.setSelectedId(sel, juce::dontSendNotification);
     }
 
-    // Pattern start fine-tune slider removed
+    // Trigger offset numslider (timing adjustment for manual Start and auto pattern triggers)
+    triggerOffsetSlider = std::make_unique<TriggerOffsetNumSlider>(processor.theme);
+    if (auto* p = dynamic_cast<juce::AudioParameterInt*>(processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramTriggerOffsetSamples)))
+    {
+        triggerOffsetSamplesCached = p->get();
+        triggerOffsetSlider->setValue(triggerOffsetSamplesCached, false);
+    }
+    triggerOffsetSlider->onValueChanged = [this](int val) {
+        processor.setTriggerOffsetSamples(val);
+        if (auto* p = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramTriggerOffsetSamples))
+        {
+            const auto& r = p->getNormalisableRange();
+            p->beginChangeGesture();
+            p->setValueNotifyingHost(r.convertTo0to1((float) val));
+            p->endChangeGesture();
+        }
+        triggerOffsetSamplesCached = val;
+    };
+    triggerOffsetSlider->onHoverChanged = [this](bool hov) {
+        editorHoverText = hov ? "Trigger Offset: +/- samples for start & auto-trigger" : "";
+        repaint(0, 0, getWidth(), 28);
+    };
+    addChildComponent(*triggerOffsetSlider);
+    triggerOffsetSlider->setVisible(false);
 
     // Initialize SVG Dancer
     svgDancer = std::make_unique<SvgDancerComponent>();
@@ -1098,7 +1129,21 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     if (auto svg = juce::Drawable::createFromImageData(BinaryData::toolboy_clock_svg,
                                                         BinaryData::toolboy_clock_svgSize))
     {
-        svg->replaceColour(juce::Colours::black, processor.theme.accent());
+        std::function<void(juce::Drawable*)> setAllFillsToCyan = [&](juce::Drawable* d) {
+            if (d == nullptr) return;
+            if (auto* ds = dynamic_cast<juce::DrawableShape*>(d))
+            {
+                ds->setFill(processor.theme.cyan());
+                if (ds->getStrokeFill().colour != juce::Colours::transparentBlack)
+                    ds->setStrokeFill(processor.theme.cyan());
+            }
+            else if (auto* dc = dynamic_cast<juce::DrawableComposite*>(d))
+            {
+                for (int i = 0; i < dc->getNumChildren(); ++i)
+                    setAllFillsToCyan(&dc->getChild(i));
+            }
+        };
+        setAllFillsToCyan(svg.get());
         logoDrawable = std::move(svg);
     }
 
@@ -1331,7 +1376,7 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
             if (auto* pParam = processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramClickRate))
             {
                 pParam->beginChangeGesture();
-                pParam->setValueNotifyingHost(pParam->getNormalisableRange().convertTo0to1((float) juce::jlimit(0,4,v)));
+                pParam->setValueNotifyingHost(pParam->getNormalisableRange().convertTo0to1((float) juce::jlimit(0, 6, v)));
                 pParam->endChangeGesture();
             }
         };
@@ -1348,7 +1393,15 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
             }
         };
         playgroundComp->onPopup3Selected = [this](int idx){ updatePatternParamFromPopup3(idx); };
+        playgroundComp->onPatternEditShiftClicked = [this]() {
+            toggleTriggerOffsetSlider();
+        };
         playgroundComp->onPatternEditToggled = [this](bool on){
+            if (on && (setupSubmenuTargetOn || setupButton.getToggleState() || setupSubmenuProgress > 0.0f))
+            {
+                exitPatternEditMode();
+                return;
+            }
             patternEditMode = on;
             if (playgroundComp) playgroundComp->setPatternEditButtonState(on);
             if (on)
@@ -1358,6 +1411,11 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
                     if (playgroundComp) playgroundComp->setPatternBitmask(m);
                     else pattern.setBitmask(m);
                 }
+            }
+            else
+            {
+                if (triggerOffsetSlider)
+                    triggerOffsetSlider->setVisible(false);
             }
             // Persist editor-only pattern edit flag
             processor.getAPVTS().state.setProperty("ui.patternEditMode", on, nullptr);
@@ -1383,6 +1441,8 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
             playgroundComp->setClickPulseState(cp->load() > 0.5f);
         if (auto* tm = apvts.getRawParameterValue(ClockSyncAudioProcessor::paramTriggerModeEnabled))
             playgroundComp->setTriggerModeState(tm->load() > 0.5f);
+        if (auto* cr = apvts.getRawParameterValue(ClockSyncAudioProcessor::paramClickRate))
+            playgroundComp->setClickRateIndex((int) std::round(cr->load()));
 
         // Restore popup3 (autofill interval) visual label from the parameter
         if (auto* pchoice = dynamic_cast<juce::AudioParameterChoice*>(processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramPatternBars)))
@@ -1544,7 +1604,11 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
             legacyModernButton.setInterceptsMouseClicks(active, active);
             sppButton.setInterceptsMouseClicks(active, active);
             pulseWidthSlider->setInterceptsMouseClicks(active, active);
-            if (playgroundComp) { playgroundComp->setExternalHoverBlocked(active); if (!active) playgroundComp->clearForcedHoverIndex(); }
+            if (playgroundComp) { 
+                playgroundComp->setExternalHoverBlocked(active); 
+                if (!active) playgroundComp->clearForcedHoverIndex(); 
+                playgroundComp->setSubmenuActive(active);
+            }
             // Arrow visibility depends on header toggle: hide arrowDown when headerSwitchToggle is OFF
             if (arrowDown) arrowDown->setVisible(active && (!headerSwitchToggle || headerSwitchToggle->getToggleState()));
             // Crossfade dancer out / logo in during submenu open
@@ -1562,6 +1626,12 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
     setupButton.onClick = [this]{
         setupSubmenuTargetOn = setupButton.getToggleState();
         setupSubmenuAnimatingHide = ! setupSubmenuTargetOn;
+        if (setupSubmenuTargetOn && patternEditMode)
+        {
+            exitPatternEditMode();
+        }
+        if (playgroundComp)
+            playgroundComp->setSubmenuActive(setupSubmenuTargetOn);
         setupAnimator->start();
         // Persist submenu open state
         processor.getAPVTS().state.setProperty("ui.setupSubmenuOn", setupSubmenuTargetOn, nullptr);
@@ -1787,6 +1857,11 @@ ClockSyncAudioProcessorEditor::ClockSyncAudioProcessorEditor(ClockSyncAudioProce
             helpToggle.toBehind(overlayBgLayer.get());
             colorPaletteToggle.toBehind(overlayBgLayer.get());
             syncLatchButton.toBehind(overlayBgLayer.get());
+            if (triggerOffsetSlider)
+            {
+                triggerOffsetSlider->toBehind(overlayBgLayer.get());
+                triggerOffsetSlider->setVisible(false);
+            }
         }
 
         // Submenu controls must be above submenu background but behind the header background.
@@ -2041,6 +2116,12 @@ void ClockSyncAudioProcessorEditor::resized()
             {
                 const int w = (int) std::round(r2 * 2.0f);
                 idleClockToggle.setBounds((int)std::round(x2 - r2), (int)std::round(y2 - r2), w, w);
+                if (triggerOffsetSlider)
+                {
+                    const int sx = (int) std::round(x2 + r2 + 3.0f);
+                    const int sy = (int) std::round(y2 - 10.0f);
+                    triggerOffsetSlider->setBounds(sx, sy, 40, 20);
+                }
             }
         }
 
@@ -2206,7 +2287,7 @@ void ClockSyncAudioProcessorEditor::paintBackdropLayer(juce::Graphics& g)
     {
         constexpr float kLogoSize = 101.0f;
         const float lx = ringCentreX - kLogoSize * 0.5f;
-        const float ly = ringCentreY - kLogoSize * 0.5f + 15.0f;
+        const float ly = ringCentreY - kLogoSize * 0.5f;
         const auto sourceBounds = logoDrawable->getDrawableBounds();
         const auto transform = juce::RectanglePlacement(juce::RectanglePlacement::centred)
                                    .getTransformToFit(sourceBounds,
@@ -2789,6 +2870,19 @@ void ClockSyncAudioProcessorEditor::timerCallback()
                 playgroundComp->setPopup3Index(popupIndex);
             }
         }
+        // Mirror Trigger Offset Samples
+        if (triggerOffsetSlider)
+        {
+            if (auto* p = dynamic_cast<juce::AudioParameterInt*>(processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramTriggerOffsetSamples)))
+            {
+                int val = p->get();
+                if (val != triggerOffsetSamplesCached)
+                {
+                    triggerOffsetSamplesCached = val;
+                    triggerOffsetSlider->setValue(val, false);
+                }
+            }
+        }
     }
 
     // Update trigger fade animator (drives repaint via value changed callback)
@@ -2885,6 +2979,7 @@ void ClockSyncAudioProcessorEditor::timerCallback()
                 // Forward cached bar number (may be -1 when host transport is unavailable)
                 // so the playground can reset its autofill counters when the DAW stops.
                 playgroundComp->setExternalBarNumber(barNumber);
+                playgroundComp->setPatternBarActive(processor.isPatternBarActiveUI());
 
                 // Always forward DAW step to the playground after bar info so
                 // `patternBarActive` is set correctly before onStepChanged runs.
@@ -3004,6 +3099,12 @@ void ClockSyncAudioProcessorEditor::timerCallback()
                 pattern.setBitmask((uint16_t) v);
             needRing = true;
         }
+    }
+    if (auto* cr = processor.getAPVTS().getRawParameterValue(ClockSyncAudioProcessor::paramClickRate))
+    {
+        int val = juce::jlimit(0, 6, (int) std::round(cr->load()));
+        if (playgroundComp && !playgroundComp->isRotaryHandleDragging() && playgroundComp->getClickRateIndex() != val)
+            playgroundComp->setClickRateIndex(val);
     }
 
     // Playground reflects shuffle amount visually.
@@ -3467,10 +3568,22 @@ void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
                 juce::Rectangle<int> r2((int)std::round(c2x - c2r), (int)std::round(c2y - c2r), (int)std::round(c2r * 2.0f), (int)std::round(c2r * 2.0f));
                 if (r2.contains(e.getPosition()))
                 {
+                    if (e.mods.isShiftDown())
+                    {
+                        toggleTriggerOffsetSlider();
+                        return;
+                    }
+                    if (setupSubmenuTargetOn || setupButton.getToggleState() || setupSubmenuProgress > 0.0f)
+                    {
+                        exitPatternEditMode();
+                        return;
+                    }
                     bool next = ! patternEditMode;
                     patternEditMode = next;
                     playgroundComp->setInterceptsMouseClicks(!next, !next);
                     playgroundComp->setPatternEditButtonState(next);
+                    if (!next && triggerOffsetSlider)
+                        triggerOffsetSlider->setVisible(false);
                     if (next)
                         if (auto* psi = dynamic_cast<juce::AudioParameterInt*>(processor.getAPVTS().getParameter(ClockSyncAudioProcessor::paramPatternSteps)))
                         {
@@ -3507,7 +3620,7 @@ void ClockSyncAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
                     if (patternEditMode)
                     {
                         int logicalStep = juce::jlimit(1,16, relativeStepCached);
-                        constexpr int visualRotation = 4;
+                        constexpr int visualRotation = 0;
                         int storedIndex = ((logicalStep - 1) + visualRotation) & 15;
                         uint16_t mask = playgroundComp ? playgroundComp->getPatternBitmask() : pattern.getBitmask();
                         if ((mask & (1u << storedIndex)) == 0)
@@ -3639,6 +3752,37 @@ void ClockSyncAudioProcessorEditor::mouseUp(const juce::MouseEvent& e)
         patternDragSetState = false;
         std::fill(std::begin(patternDragTouched), std::end(patternDragTouched), false);
     }
+}
+
+void ClockSyncAudioProcessorEditor::toggleTriggerOffsetSlider()
+{
+    if (triggerOffsetSlider)
+    {
+        bool show = ! triggerOffsetSlider->isVisible();
+        triggerOffsetSlider->setVisible(show);
+        if (show)
+        {
+            triggerOffsetSlider->toFront(true);
+            if (overlayBgLayer)
+                triggerOffsetSlider->toBehind(overlayBgLayer.get());
+        }
+        repaint();
+    }
+}
+
+void ClockSyncAudioProcessorEditor::exitPatternEditMode()
+{
+    patternEditMode = false;
+    if (playgroundComp)
+    {
+        playgroundComp->setInterceptsMouseClicks(true, true);
+        playgroundComp->setPatternEditButtonState(false);
+    }
+    patternHoverIndex = -1;
+    if (triggerOffsetSlider)
+        triggerOffsetSlider->setVisible(false);
+    processor.getAPVTS().state.setProperty("ui.patternEditMode", false, nullptr);
+    repaint(ringArea);
 }
 
 // Map popup3 selection index -> patternBars parameter index (OFF,1,2,4,8,16,32,64)

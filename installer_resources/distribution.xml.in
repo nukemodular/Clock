@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
-    <title>@TB_PRODUCT_NAME@ v@PROJECT_VERSION@</title>
+    <title>TOOLBOY @TB_PRODUCT_NAME@</title>
     
     <!-- Custom Sidebar Background Graphic / Logo (Bottom-Left) -->
     <background file="background.png" 

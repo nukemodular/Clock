@@ -39,8 +39,13 @@ public:
             g.fillEllipse(c.x - dotR, c.y - dotR, dotR * 2, dotR * 2);
         }
     }
-    void mouseDown(const juce::MouseEvent &) override
+    void mouseDown(const juce::MouseEvent &e) override
     {
+        if (e.mods.isShiftDown() && onShiftClicked)
+        {
+            onShiftClicked();
+            return;
+        }
         isOn = !isOn;
         if (onToggled)
             onToggled(isOn);
@@ -63,6 +68,7 @@ public:
     }
     bool getState() const noexcept { return isOn; }
     std::function<void(bool)> onToggled;
+    std::function<void()> onShiftClicked;
     std::function<void(bool)> onHoverChanged;
 
 private:
@@ -120,6 +126,11 @@ public:
         fullRingFlash = juce::jlimit(0.0f, 1.5f, intensity);
         // Ensure the decay timer is running so the cyan overlay fades out.
         if (! isTimerRunning()) startTimerHz(60);
+        if (! isTimerRunning())
+        {
+            lastTickMs = juce::Time::getMillisecondCounterHiRes();
+            startTimerHz(60);
+        }
         repaint();
     }
     // state setters
@@ -137,8 +148,12 @@ public:
             if (onPlayStateChanged)
                 onPlayStateChanged(isPlaying);
             if (isPlaying)
+            {
                 playStartMs = juce::Time::getMillisecondCounterHiRes();
             startTimerHz(60);
+                lastTickMs = playStartMs;
+                startTimerHz(60);
+            }
         }
     }
     void setExternalPlayheadStepLogical(int step1to16)
@@ -205,6 +220,18 @@ public:
                 {
                     const juce::Path& seg = wedgePaths[(size_t) hovIdx];
                     g.setColour(theme.accent().darker(0.25f).withAlpha(0.25f));
+                    g.fillPath(seg);
+                }
+            }
+
+            // Flashed wedges in pattern edit mode (e.g. trigger click)
+            for (int i = 0; i < 16; ++i)
+            {
+                float flash = ringFlashes[i];
+                if (flash > 0.01f && i != selIdx && i != chaseIdx)
+                {
+                    const juce::Path& seg = wedgePaths[(size_t) i];
+                    g.setColour(theme.cyan().withAlpha(juce::jlimit(0.0f, 1.0f, flash)));
                     g.fillPath(seg);
                 }
             }
@@ -507,6 +534,15 @@ private:
             double now = juce::Time::getMillisecondCounterHiRes();
             segmentHoldUntilMs.set(rawIndex, now + kFlashHoldMs);
         }
+        else
+        {
+            segmentHoldUntilMs.set(rawIndex, 0.0);
+        }
+        if (! isTimerRunning())
+        {
+            lastTickMs = juce::Time::getMillisecondCounterHiRes();
+            startTimerHz(60);
+        }
         repaint();
     }
     void timerCallback() override
@@ -514,9 +550,11 @@ private:
         double now = juce::Time::getMillisecondCounterHiRes();
         double dt = now - lastTickMs;
         lastTickMs = now;
+        if (dt < 0.0 || dt > 100.0) dt = 16.67;
         bool any = false;
         if (isPlaying && !useExternalPlayhead)
         {
+            any = true;
             tickAccumMs += dt * speedMultiplier;
             double msPerStep = (60000.0 / bpm) / 4.0;
             while (tickAccumMs >= msPerStep)
@@ -595,9 +633,9 @@ private:
     juce::Array<float> ringFlashes;
     juce::Array<float> segmentFade;
     juce::Array<double> segmentHoldUntilMs;
-    static constexpr double kFlashHoldMs = 220.0;
-    static constexpr float kFadeDecayMs = 33.0f;
-    static constexpr float kFlashDecayFactor = 0.94f;
+    static constexpr double kFlashHoldMs = 280.0;
+    static constexpr float kFadeDecayMs = 300.0f;
+    static constexpr float kFlashDecayFactor = 0.92f;
     const float outerR = 70.0f;
     const float innerR = 55.0f;
     bool patternEditMode = false;
@@ -662,6 +700,7 @@ public:
     std::function<void(bool)> onTriggerModeRequested;
     std::function<void(int)> onPopup3Selected;
     std::function<void(bool)> onPatternEditToggled;
+    std::function<void()> onPatternEditShiftClicked;
     // Callback invoked when the pattern bitmask changes via UI edits
     std::function<void(uint16_t)> onPatternChanged;
     // Additional callbacks the editor can wire for UI-only toggles
@@ -707,6 +746,37 @@ public:
     void setSelectedShuffle(int v);
     void setLinearShuffleModeState(bool on);
     void setLinearShuffleAmount(float amount);
+    void setPatternBarActive(bool active);
+    bool isPatternBarActive() const noexcept { return patternBarActive; }
+    void setSubmenuActive(bool active)
+    {
+        if (submenuActive != active)
+        {
+            submenuActive = active;
+            repaint();
+        }
+    }
+    bool isSubmenuActive() const noexcept { return submenuActive; }
+
+    void setClickRateIndex(int index)
+    {
+        int nearest = juce::jlimit(0, offsetRotarySteps - 1, index);
+        offsetRotaryT = (offsetRotarySteps > 1) ? (float) nearest / (float) (offsetRotarySteps - 1) : 0.0f;
+        repaint();
+    }
+    int getClickRateIndex() const noexcept
+    {
+        return juce::jlimit(0, offsetRotarySteps - 1, (int) std::round(offsetRotaryT * (offsetRotarySteps - 1)));
+    }
+    juce::String getClickRateText() const
+    {
+        const int idx = getClickRateIndex();
+        static const juce::String names[] = { "off", "beat", "8th", "16th", "24ppq", "48ppq", "96ppq" };
+        if (idx >= 0 && idx < 7)
+            return names[idx];
+        return "off";
+    }
+    bool isRotaryHandleDragging() const noexcept { return isDraggingOffsetRotary; }
 
     // Pattern bitmask accessors for external sync (editor)
     inline uint16_t getPatternBitmask() const noexcept { return (uint16_t) pattern.getBitmask(); }
@@ -785,7 +855,7 @@ private:
     bool isDraggingShuffle = false;
     float linearShufflePos = 0.0f;
     float linearShuffleAmount = 0.5f;
-    static constexpr int offsetRotarySteps = 5;
+    static constexpr int offsetRotarySteps = 7;
     bool isDraggingOffsetRotary = false;
     juce::Point<float> offsetDragStart{0, 0};
     float offsetRotaryStartT = 0.0f;
@@ -834,11 +904,13 @@ public:
     // Auto pattern trigger scheduling (popup3). Interval in bars (16 steps). 0 = OFF.
     int autoTriggerIntervalBars = 0;   // 1,2,4,8,16,32,64
     bool autoTriggerRandom = false;    // RND mode selected
+    bool submenuActive = false;        // true when setup submenu ("S") is active/opening
     int barsSinceAutoTrigger = 0;      // completed bars since last auto trigger
     int lastExternalBarNumber = -1;    // last host-provided bar number (for robust interval tracking)
     juce::Random autoTriggerRng;       // random source for RND mode
     bool patternEditMode = false;      // active when pattern edit button (circle idx2) toggled on
     bool patternBarActive = false;     // true while pattern is firing steps this bar (one-bar fill unless interval=1 for continuous)
+    bool patternRandomizedForCurrentFill = false; // ensures randomization occurs only once AFTER the pattern has finished triggering
     int rndPatternAmount = 6;          // 1..16: exact number of randomized steps
     bool autoRandomizePattern = false; // AUTO toggle: randomize pattern each time it engages
     bool rndAmountDragging = false;

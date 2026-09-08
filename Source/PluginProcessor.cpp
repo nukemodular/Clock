@@ -690,8 +690,9 @@ ClockSyncAudioProcessor::ClockSyncAudioProcessor()
     resyncOffsetParamObj  = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramResyncOffsetStep));
     shuffleStepParamObj   = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramShuffleStep));
     shuffleLinearParamObj = dynamic_cast<juce::AudioParameterFloat*>(parameters.getParameter(paramShuffleLinear));
-    patternBarsParamObj   = dynamic_cast<juce::AudioParameterChoice*>(parameters.getParameter(paramPatternBars));
-    patternStepsParamObj  = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramPatternSteps));
+    patternBarsParamObj          = dynamic_cast<juce::AudioParameterChoice*>(parameters.getParameter(paramPatternBars));
+    patternStepsParamObj         = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramPatternSteps));
+    triggerOffsetSamplesParamObj = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramTriggerOffsetSamples));
 
    #if ! CLOCKV3_DEMO
     isLicensedCached.store(toolboy_license::LicenseManager::isLicensed(licenseConfig_), std::memory_order_release);
@@ -1033,9 +1034,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout ClockSyncAudioProcessor::cre
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         paramClickLevelDb, "Click Level (dB)", juce::NormalisableRange<float>(-12.0f, 0.0f), -6.0f));
 
-    // Click rate: discrete stages 0..4 (0 = off). Default changed to 0 so rotary starts at OFF.
+    // Click rate: discrete stages 0..6 (0 = off). Default changed to 0 so rotary starts at OFF.
     params.push_back(std::make_unique<juce::AudioParameterInt>(
-        paramClickRate, "Click Rate", 0, 4, 0));
+        paramClickRate, "Click Rate", 0, 6, 0));
 
     // Pulse width (ms): 1–20, automatable
     params.push_back(std::make_unique<juce::AudioParameterInt>(
@@ -1077,7 +1078,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout ClockSyncAudioProcessor::cre
     params.push_back(std::make_unique<juce::AudioParameterInt>(
         paramPatternSteps, "Pattern Steps Mask", 0, 65535, 0x0000)); // default empty, user must activate steps explicitly
 
-    // Pattern start fine-tune parameter removed
+    // Trigger timing offset in samples (-2000..+2000, default 0) for manual & auto triggers
+    params.push_back(std::make_unique<juce::AudioParameterInt>(
+        paramTriggerOffsetSamples, "Trigger Offset", -2048, 256, 0));
 
     return { params.begin(), params.end() };
 }
@@ -1093,6 +1096,8 @@ void ClockSyncAudioProcessor::prepareToPlay(double sr, int /*samplesPerBlock*/)
     midiRemoteCollector.reset(currentSampleRate);
     lastWasPlaying = false;
     lastTickIndex = std::numeric_limits<long long>::min();
+    lastClickIndex = std::numeric_limits<long long>::min();
+    lastClickRateCached = -1;
     pendingRateIndex = -1;
     currentRateIndex = 1; // 1/16 => normal speed (24)
     uiActiveRateIndex.store(1, std::memory_order_relaxed);
@@ -1151,8 +1156,11 @@ void ClockSyncAudioProcessor::prepareToPlay(double sr, int /*samplesPerBlock*/)
     resyncOffsetParamObj  = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramResyncOffsetStep));
     shuffleStepParamObj   = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramShuffleStep));
     shuffleLinearParamObj = dynamic_cast<juce::AudioParameterFloat*>(parameters.getParameter(paramShuffleLinear));
-    patternBarsParamObj   = dynamic_cast<juce::AudioParameterChoice*>(parameters.getParameter(paramPatternBars));
-    patternStepsParamObj  = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramPatternSteps));
+    patternBarsParamObj          = dynamic_cast<juce::AudioParameterChoice*>(parameters.getParameter(paramPatternBars));
+    patternStepsParamObj         = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramPatternSteps));
+    triggerOffsetSamplesParamObj = dynamic_cast<juce::AudioParameterInt*>(parameters.getParameter(paramTriggerOffsetSamples));
+    if (triggerOffsetSamplesParamObj != nullptr)
+        triggerOffsetSamples.store(triggerOffsetSamplesParamObj->get(), std::memory_order_relaxed);
 
     // Cache raw parameter pointers
     runParam = parameters.getRawParameterValue(paramRun);
@@ -1349,6 +1357,8 @@ void ClockSyncAudioProcessor::resetAccumulators()
     fracAccPrimaryBefore = 0.0;
     fracAccPrimaryAfter = 0.0;
     lastBpmForAcc = -1.0;
+    lastClickIndex = std::numeric_limits<long long>::min();
+    lastClickRateCached = -1;
 }
 
 bool ClockSyncAudioProcessor::isDuplicateStart(long long barForStart, int stepForStart, int sampleOffset, int toleranceSamples) const
@@ -1732,9 +1742,17 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
 
         }
     }
+    if (triggerOffsetChanged.exchange(false, std::memory_order_acq_rel))
+    {
+        const double barLenQ = (pos.timeSigNumerator > 0 && pos.timeSigDenominator > 0)
+            ? (4.0 * (double) pos.timeSigNumerator / (double) pos.timeSigDenominator)
+            : 4.0;
+        const double barStartPPQ = pos.ppqPositionOfLastBarStart;
+        rescheduleRemainingPatternTargets(barStartPPQ, barLenQ, pos.ppqPosition);
+    }
 
     // --- Cache parameter reads to avoid repeated dynamic_casts and lookups in inner loops ---
-    const int clickRateCached = clickRateParam ? juce::jlimit(0, 4, (int)clickRateParam->load(std::memory_order_relaxed)) : 0;
+    const int clickRateCached = clickRateParam ? juce::jlimit(0, 6, (int)clickRateParam->load(std::memory_order_relaxed)) : 0;
     const bool clickEnabled = (clickRateCached > 0);
     const bool clickPulseCached = clickPulseParam->load(std::memory_order_relaxed) > 0.5f;
 
@@ -2210,28 +2228,25 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
 
 
                 }
-            const double deltaQ = juce::jmax(0.0, nextBoundaryQ - ppqStart);
-            const int nextGridOffset = fastRoundPositive(deltaQ * samplesPerQuarter);
+            const int offsetSamples = triggerOffsetSamples.load(std::memory_order_relaxed);
+            const double triggerOffsetQ = (samplesPerQuarter > 0.0) ? ((double) offsetSamples / samplesPerQuarter) : 0.0;
+            const double targetTriggerQ = nextBoundaryQ + triggerOffsetQ;
+            const double deltaQ = targetTriggerQ - ppqStart;
+            int nextGridOffset = fastRoundPositive(deltaQ * samplesPerQuarter);
             if (triggerArmedForNextSixteenth.load(std::memory_order_relaxed))
             {
+                // If targetTriggerQ has already passed (due to negative offset or late click), fire immediately
+                if (targetTriggerQ <= ppqStart)
+                    nextGridOffset = 0;
+
                 if (nextGridOffset >= 0 && nextGridOffset < numSamples)
                 {
                     const auto startMsg = juce::MidiMessage::midiStart();
-                    // Use the PPQ position where the Start is actually emitted.
-                    // Using ppqStart here can be off-by-one near bar boundaries and
-                    // causes resync scheduling to slip by an extra bar.
                     long long barForStart = computeCurrentBar(nextBoundaryQ, barLenQ);
-                    // Use active shiftQ (linear or quantized) to derive logical step consistently
                     int stepForStart = computeLogicalStepFromPPQ(nextBoundaryQ, barLenQ, shiftQActive);
 
-                    // Read offset step early to decide whether to defer Start to resync path.
                     const int offsetStep = resyncOffsetParamObj ? juce::jlimit(1, 16, resyncOffsetParamObj->get()) : 1;
 
-                    // When trigger mode is active, offset != step 1, AND the engine is not
-                    // yet running (first/clean start), defer the Start to the resync path so
-                    // external devices receive it at the offset step rather than immediately.
-                    // When the engine IS already running (retrigger via idx1), always fire
-                    // the immediate Start so the retrigger works regardless of offset step.
                     const bool deferToResync = triggerModeEnabled.load(std::memory_order_relaxed)
                                             && !syncLatchEnabled.load(std::memory_order_relaxed)
                                             && offsetStep != 1
@@ -2239,9 +2254,8 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
 
                     if (! deferToResync)
                     {
-                        // Duplicate suppression: skip if same bar+step already emitted
-                        // or if a near-simultaneous Start was already emitted this block.
-                        if (! isDuplicateStart(barForStart, stepForStart, nextGridOffset))
+                        // Manual trigger: user explicitly pressed trigger, do not suppress unless duplicate at exact same sample
+                        if (nextGridOffset != lastPatternStartSampleInBlock)
                         {
                             // Legacy mode: send Stop before Start for manual triggers too
                             if (legacyModeEnabled.load(std::memory_order_relaxed))
@@ -2362,6 +2376,124 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
         // Use persistent per-primary fractional accumulator (declared in header).
         // Note: conservative persistence (carries across blocks) but reset on transport/bpm/sample-rate/rate changes.
 
+        // Audio Click dedicated generator for all PPQN rates (1, 2, 4, 24, 48, 96 ppq)
+        auto generateAudioClicks = [&](int regionStartSample, int regionEndSample, double shiftQ)
+        {
+            if (!clickEnabled || !runActive || suppressUntilRestart || !audioPulsesEnabled.load(std::memory_order_acquire))
+                return;
+            if (regionEndSample < regionStartSample || regionEndSample < 0 || regionStartSample >= numSamples)
+                return;
+
+            int clickResolution = 24;
+            switch (clickRateCached)
+            {
+                case 1: clickResolution = 1; break;  // beat (4th)
+                case 2: clickResolution = 2; break;  // 8th
+                case 3: clickResolution = 4; break;  // 16th
+                case 4: clickResolution = 24; break; // 24ppq
+                case 5: clickResolution = 48; break; // 48ppq
+                case 6: clickResolution = 96; break; // 96ppq
+                default: clickResolution = 4; break;
+            }
+
+            const double ppqRegionStart = ppqStart + (double) regionStartSample * ppqPerSample;
+            const double ppqRegionEnd   = ppqStart + (double) regionEndSample * ppqPerSample;
+
+            long long startClickIdx = (long long) std::floor(ppqRegionStart * (double) clickResolution);
+            if (lastClickIndex == std::numeric_limits<long long>::min() || startClickIdx < lastClickIndex || clickRateCached != lastClickRateCached)
+            {
+                lastClickRateCached = clickRateCached;
+                lastClickIndex = startClickIdx - 1;
+            }
+
+            const long long endClickIdx = (long long) std::floor(ppqRegionEnd * (double) clickResolution) + 2;
+
+            // Swing constants for click resolution
+            const double pairLenQ = 0.5;
+            const int pulsesPerPair = (clickResolution >= 4) ? (clickResolution / 2) : 0;
+            const int pulsesPer16th = pulsesPerPair / 2;
+            const double firstLen = 0.25 + shiftQ;
+            const double secondLen = 0.25 - shiftQ;
+            const double spacingFirst = (pulsesPer16th > 0) ? (firstLen / (double) pulsesPer16th) : 0.0;
+            const double spacingSecond = (pulsesPer16th > 0) ? (secondLen / (double) pulsesPer16th) : 0.0;
+
+            const float outLevel = 1.0f; // Always fixed 0 dB, all beats even
+            double pulseMs = (double) pulseWidthMs;
+            if (clickResolution >= 96)      pulseMs = std::min(pulseMs, 1.2);
+            else if (clickResolution >= 48) pulseMs = std::min(pulseMs, 3.0);
+            else if (clickResolution >= 24) pulseMs = std::min(pulseMs, 8.0);
+
+            const int pulseSamples = (int) juce::jmax(1, (int) std::round((pulseMs / 1000.0) * currentSampleRate));
+            const int leftCh = 0;
+            const bool haveLeft = (leftCh < buffer.getNumChannels());
+
+            long long lastProcessedClick = lastClickIndex;
+
+            for (long long ct = lastClickIndex + 1; ct <= endClickIdx; ++ct)
+            {
+                double ctPPQ;
+                if (shiftQ <= 1e-12 || clickResolution < 4)
+                {
+                    ctPPQ = (double) ct / (double) clickResolution;
+                }
+                else
+                {
+                    long long pairIndex = (long long) std::floor((double) ct / (double) pulsesPerPair);
+                    int indexInPair = (int) (ct - pairIndex * (long long) pulsesPerPair);
+                    double pairStart = (double) pairIndex * pairLenQ;
+                    if (indexInPair < pulsesPer16th)
+                        ctPPQ = pairStart + (double) indexInPair * spacingFirst;
+                    else
+                    {
+                        int idxSecond = indexInPair - pulsesPer16th;
+                        ctPPQ = pairStart + firstLen + (double) idxSecond * spacingSecond;
+                    }
+                }
+
+                const double deltaQuarter = ctPPQ - ppqStart;
+                const double exactSample = deltaQuarter * samplesPerQuarter;
+                const int mappedOffset = (exactSample >= 0.0) ? fastRoundPositive(exactSample) : (int) std::floor(exactSample + 0.5);
+
+                if (mappedOffset > regionEndSample)
+                {
+                    break; // carry to next block or next region
+                }
+
+                if (mappedOffset < regionStartSample)
+                {
+                    lastProcessedClick = ct;
+                    continue;
+                }
+
+                if (mappedOffset >= 0 && mappedOffset < numSamples)
+                {
+                    if (! clickPulseCached)
+                    {
+                        // 1-sample spike
+                        if (haveLeft)
+                            buffer.addSample(leftCh, mappedOffset, outLevel);
+                    }
+                    else
+                    {
+                        // Pulse: hold high for pulseSamples
+                        for (int s = 0; s < pulseSamples; ++s)
+                        {
+                            const int idx = mappedOffset + s;
+                            if (haveLeft && idx >= 0 && idx < numSamples)
+                                buffer.addSample(leftCh, idx, outLevel);
+                        }
+                        const int tailBeyond = (mappedOffset + pulseSamples) - numSamples;
+                        if (tailBeyond > 0)
+                            clickHoldRemainingSamples = juce::jmax(clickHoldRemainingSamples, tailBeyond);
+                    }
+                }
+
+                lastProcessedClick = ct;
+            }
+
+            lastClickIndex = lastProcessedClick;
+        };
+
         // Phase 1: ticks before a restart boundary (or whole block if no restart boundary). May include a mid-block shuffle activation.
         const int preEndSample = boundaryInBlock ? (startSampleAtBoundary - 1) : (numSamples - 1);
         if (preEndSample >= 0)
@@ -2468,58 +2600,76 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
 
                     if (clickEnabled && runActive && audioPulsesEnabled.load(std::memory_order_acquire))
                     {
-                        int stepSpan = 1;
+                        int targetPPQN = 24;
                         switch (clickRateCached)
                         {
-                            case 1: stepSpan = 24; break; // quarter note (Standard 24PPQN base)
-                            case 2: stepSpan = 12; break; // eighth
-                            case 3: stepSpan = 6; break;  // sixteenth
-                            case 4: stepSpan = 1; break;  // every pulse
-                            default: stepSpan = 6; break;
+                            case 1: targetPPQN = 1; break;  // beat (4th)
+                            case 2: targetPPQN = 2; break;  // 8th
+                            case 3: targetPPQN = 4; break;  // 16th
+                            case 4: targetPPQN = 24; break; // 24ppq
+                            case 5: targetPPQN = 48; break; // 48ppq
+                            case 6: targetPPQN = 96; break; // 96ppq
+                            default: targetPPQN = 4; break;
                         }
-                        if ((t % stepSpan) == 0)
-                        {
+
+                        auto emitClickSample = [&](int clickOffset) {
+                            if (clickOffset < 0 || clickOffset >= numSamples)
+                                return;
                             const float outLevel = 1.0f; // Always fixed 0 dB, all beats even
-                            // Use user-selected pulse width (ms)
                             double pulseMs = (double) pulseWidthMs;
-                            if (clickRateCached == 4)
+                            if (targetPPQN >= 96)      pulseMs = std::min(pulseMs, 2.0);
+                            else if (targetPPQN >= 48) pulseMs = std::min(pulseMs, 4.0);
+                            else if (targetPPQN >= 24)
                             {
                                 if (resolutionBefore == 48) pulseMs = std::min(pulseMs, 5.0);
                                 else if (resolutionBefore == 24) pulseMs = std::min(pulseMs, 10.0);
                             }
+
                             const int pulseSamples = (int) juce::jmax(1, (int) std::round((pulseMs / 1000.0) * currentSampleRate));
                             const int leftCh = 0;
                             const bool haveLeft = (leftCh < buffer.getNumChannels());
                             if (! clickPulseCached)
                             {
                                 // 1-sample spike
-                                if (haveLeft && sampleOffset >= 0 && sampleOffset < numSamples)
-                                {
-                                    buffer.addSample(leftCh, sampleOffset, outLevel);
-                                }
+                                if (haveLeft)
+                                    buffer.addSample(leftCh, clickOffset, outLevel);
                             }
                             else
                             {
                                 // Pulse: hold high for pulseWidthMs, no decay
-                                int s = 0;
-                                for (; s < pulseSamples; ++s)
+                                for (int s = 0; s < pulseSamples; ++s)
                                 {
-                                    const int idx = sampleOffset + s;
+                                    const int idx = clickOffset + s;
                                     if (haveLeft && idx >= 0 && idx < numSamples)
-                                    {
                                         buffer.addSample(leftCh, idx, outLevel);
-                                    }
                                 }
-                                // If the pulse extends beyond the end of this block, carry the remaining tail.
-                                const int tailBeyond = (sampleOffset + pulseSamples) - numSamples;
+                                const int tailBeyond = (clickOffset + pulseSamples) - numSamples;
                                 if (tailBeyond > 0)
                                     clickHoldRemainingSamples = juce::jmax(clickHoldRemainingSamples, tailBeyond);
+                            }
+                        };
+
+                        if (targetPPQN <= resolutionBefore)
+                        {
+                            const int stepSpan = juce::jmax(1, resolutionBefore / targetPPQN);
+                            if ((t % stepSpan) == 0)
+                                emitClickSample(sampleOffset);
+                        }
+                        else
+                        {
+                            const int subClicks = targetPPQN / resolutionBefore;
+                            const double tickSamples = samplesPerQuarter / (double) resolutionBefore;
+                            for (int k = 0; k < subClicks; ++k)
+                            {
+                                const int clickOffset = sampleOffset + (int) std::round((double) k * (tickSamples / (double) subClicks));
+                                emitClickSample(clickOffset);
                             }
                         }
                     }
                 lastProcessedT = t;
             }
             lastTickIndex = lastProcessedT;
+            generateAudioClicks(0, preEndSample, shiftQBefore);
         }
 
         // Precompute 'after' resolution swing/pulse mapping constants for use in the post-boundary loop
@@ -2549,6 +2699,20 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
             {
                 lastTickIndex = baseIdx - 1;
             }
+
+            int clickResAfter = 24;
+            switch (clickRateCached)
+            {
+                case 1: clickResAfter = 1; break;
+                case 2: clickResAfter = 2; break;
+                case 3: clickResAfter = 4; break;
+                case 4: clickResAfter = 24; break;
+                case 5: clickResAfter = 48; break;
+                case 6: clickResAfter = 96; break;
+                default: clickResAfter = 4; break;
+            }
+            const long long baseClickIdx = (long long) std::floor(boundaryPPQ * (double) clickResAfter);
+            lastClickIndex = baseClickIdx - 1;
 
             const long long tickIndexEndPost   = tickAt(ppqBlockEnd,  resolutionAfter);
             long long lastProcessedT = lastTickIndex;
@@ -2639,22 +2803,26 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
 
                     if (clickEnabled && runActive && audioPulsesEnabled.load(std::memory_order_acquire))
                     {
-                        int stepSpan = 1;
+                        int targetPPQN = 24;
                         switch (clickRateCached)
                         {
-                            case 1: stepSpan = 24; break;
-                            case 2: stepSpan = 12; break;
-                            case 3: stepSpan = 6; break;
-                            case 4: stepSpan = 1; break;
-                            default: stepSpan = 6; break;
+                            case 1: targetPPQN = 1; break;  // beat (4th)
+                            case 2: targetPPQN = 2; break;  // 8th
+                            case 3: targetPPQN = 4; break;  // 16th
+                            case 4: targetPPQN = 24; break; // 24ppq
+                            case 5: targetPPQN = 48; break; // 48ppq
+                            case 6: targetPPQN = 96; break; // 96ppq
+                            default: targetPPQN = 4; break;
                         }
-                        if ((t % stepSpan) == 0)
-                        {
-                            const float outLevel = 1.0f; // Always fixed 0 dB, all beats even
-                            // Use user-selected pulse width (ms)
-                            double pulseMs = (double) pulseWidthMs;
 
-                            if (clickRateCached == 4)
+                        auto emitClickSample = [&](int clickOffset) {
+                            if (clickOffset < 0 || clickOffset >= numSamples)
+                                return;
+                            const float outLevel = 1.0f; // Always fixed 0 dB, all beats even
+                            double pulseMs = (double) pulseWidthMs;
+                            if (targetPPQN >= 96)      pulseMs = std::min(pulseMs, 2.0);
+                            else if (targetPPQN >= 48) pulseMs = std::min(pulseMs, 4.0);
+                            else if (targetPPQN >= 24)
                             {
                                 if (resolutionAfter == 48) pulseMs = std::min(pulseMs, 5.0);
                                 else if (resolutionAfter == 24) pulseMs = std::min(pulseMs, 10.0);
@@ -2665,25 +2833,39 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
                             const bool haveLeft = (leftCh < buffer.getNumChannels());
                             if (! clickPulseCached)
                             {
-                                if (haveLeft && mappedOffset >= 0 && mappedOffset < numSamples)
-                                {
-                                    buffer.addSample(leftCh, mappedOffset, outLevel);
-                                }
+                                // 1-sample spike
+                                if (haveLeft)
+                                    buffer.addSample(leftCh, clickOffset, outLevel);
                             }
                             else
                             {
-                                int s = 0;
-                                for (; s < pulseSamples; ++s)
+                                // Pulse: hold high for pulseWidthMs, no decay
+                                for (int s = 0; s < pulseSamples; ++s)
                                 {
-                                    const int idx = mappedOffset + s;
+                                    const int idx = clickOffset + s;
                                     if (haveLeft && idx >= 0 && idx < numSamples)
-                                    {
                                         buffer.addSample(leftCh, idx, outLevel);
-                                    }
                                 }
-                                const int tailBeyond = (mappedOffset + pulseSamples) - numSamples;
+                                const int tailBeyond = (clickOffset + pulseSamples) - numSamples;
                                 if (tailBeyond > 0)
                                     clickHoldRemainingSamples = juce::jmax(clickHoldRemainingSamples, tailBeyond);
+                            }
+                        };
+
+                        if (targetPPQN <= resolutionAfter)
+                        {
+                            const int stepSpan = juce::jmax(1, resolutionAfter / targetPPQN);
+                            if ((t % stepSpan) == 0)
+                                emitClickSample(mappedOffset);
+                        }
+                        else
+                        {
+                            const int subClicks = targetPPQN / resolutionAfter;
+                            const double tickSamples = samplesPerQuarter / (double) resolutionAfter;
+                            for (int k = 0; k < subClicks; ++k)
+                            {
+                                const int clickOffset = mappedOffset + (int) std::round((double) k * (tickSamples / (double) subClicks));
+                                emitClickSample(clickOffset);
                             }
                         }
                     }
@@ -2692,6 +2874,7 @@ void ClockSyncAudioProcessor::generateClockAndClick(const juce::AudioPlayHead::C
             lastTickIndex = lastProcessedT;
             // Consume the one-shot suppression
             suppressClockAtBoundaryOnce = false;
+            generateAudioClicks(startSampleAtBoundary, numSamples - 1, shiftQAfter);
         }
 
         // extClock will be flushed once after scheduling (below)
@@ -2796,6 +2979,10 @@ void ClockSyncAudioProcessor::updatePatternParams()
             patternMaskJustActivated.store(true, std::memory_order_relaxed);
         patternStepsMask.store(newMask, std::memory_order_relaxed);
     }
+    if (triggerOffsetSamplesParamObj != nullptr)
+    {
+        triggerOffsetSamples.store(triggerOffsetSamplesParamObj->get(), std::memory_order_relaxed);
+    }
 }
 
 int ClockSyncAudioProcessor::getPatternBarIntervalFromMode(int mode) const
@@ -2818,12 +3005,9 @@ void ClockSyncAudioProcessor::preparePatternForBar(double barStartPPQ, double ba
     pendingPatternCount = 0;
     const uint16_t mask = patternStepsMask.load(std::memory_order_relaxed);
     if (mask != 0) {
-        // Visual interaction originally applied a +4 step rotation (see PatternRing::hitTest).
-        // The stored bitmask indices therefore represented (logicalIndex + 4) & 15.
-        // Use the UI rotation so scheduled pattern events align with visual steps.
-        // This preserves the +1-step alignment observed with hosts where UI uses
-        // 1..16 visual numbering while storage uses rotated bit indices.
-        constexpr int visualRotation = 4; // match UI rotation
+        // Visual UI starts at 12 o'clock (top right, wedge 0 = step 1).
+        // Stored bitmask indices directly represent logicalIndex (0..15).
+        constexpr int visualRotation = 0; // identity mapping (0 offset)
         const double shiftQ = getCurrentShiftQ(barLenQ); // quantized or linear depending on ui.linearShuffleMode
         for (int logicalIndex = 0; logicalIndex < 16; ++logicalIndex)
         {
@@ -2843,10 +3027,13 @@ void ClockSyncAudioProcessor::preparePatternForBar(double barStartPPQ, double ba
                 stepPosQ = (barLenQ / 16.0) * (double) triggerLogical;
             }
             // Snap exact bar-start triggers to the precise barStartPPQ to avoid
-            // tiny FP rounding moving step 1 off the quantized boundary.
-            double scheduledPPQ = barStartPPQ + stepPosQ;
-            if (std::fabs(stepPosQ) < 1e-9)
+            // tiny FP rounding moving step 1 off the quantized boundary, unless offset is active.
+            const int offsetSamples = triggerOffsetSamples.load(std::memory_order_relaxed);
+            const double offsetQ = (samplesPerQuarter > 0.0) ? ((double) offsetSamples / samplesPerQuarter) : 0.0;
+            double scheduledPPQ = barStartPPQ + stepPosQ + offsetQ;
+            if (std::fabs(stepPosQ) < 1e-9 && offsetSamples == 0)
                 scheduledPPQ = barStartPPQ;
+            scheduledPPQ = juce::jmax(0.0, scheduledPPQ);
             if (pendingPatternCount < 16)
                 pendingPatternPPQ[(size_t) pendingPatternCount++] = scheduledPPQ;
         }
@@ -2860,7 +3047,7 @@ void ClockSyncAudioProcessor::rescheduleRemainingPatternTargets(double barStartP
         return;
     const uint16_t mask = patternStepsMask.load(std::memory_order_relaxed);
     if (mask == 0) { pendingPatternCount = 0; return; }
-    constexpr int visualRotation = 4;
+    constexpr int visualRotation = 0;
     const double shiftQ = getCurrentShiftQ(barLenQ);
     int newCount = 0;
     for (int logicalIndex = 0; logicalIndex < 16; ++logicalIndex)
@@ -2879,8 +3066,11 @@ void ClockSyncAudioProcessor::rescheduleRemainingPatternTargets(double barStartP
         {
             stepPosQ = (barLenQ / 16.0) * (double) logicalIndex;
         }
-        double scheduledPPQ = barStartPPQ + stepPosQ;
-        if (std::fabs(stepPosQ) < 1e-9) scheduledPPQ = barStartPPQ;
+        const int offsetSamples = triggerOffsetSamples.load(std::memory_order_relaxed);
+        const double offsetQ = (samplesPerQuarter > 0.0) ? ((double) offsetSamples / samplesPerQuarter) : 0.0;
+        double scheduledPPQ = barStartPPQ + stepPosQ + offsetQ;
+        if (std::fabs(stepPosQ) < 1e-9 && offsetSamples == 0) scheduledPPQ = barStartPPQ;
+        scheduledPPQ = juce::jmax(0.0, scheduledPPQ);
         if (scheduledPPQ >= fromPPQ - 1e-9 && newCount < 16)
             pendingPatternPPQ[(size_t) newCount++] = scheduledPPQ;
     }
@@ -2953,7 +3143,11 @@ void ClockSyncAudioProcessor::tryFirePattern(double ppqStart, double barLenQ, do
     // state immediately so any scheduled bar-aligned restarts take effect in
     // the same block. We still honour the Pattern Bars mode being OFF below.
     const int mode = patternBarsMode.load(std::memory_order_relaxed);
-    if (mode == 0) return; // OFF
+    if (mode == 0)
+    {
+        uiPatternBarActive.store(false, std::memory_order_relaxed);
+        return; // OFF
+    }
     const bool rnd = (mode == 8);
     // Determine whether the current or upcoming bar should trigger the pattern.
     // Previously pattern preparation only ran when the block began exactly at a bar start.
@@ -3070,17 +3264,20 @@ void ClockSyncAudioProcessor::tryFirePattern(double ppqStart, double barLenQ, do
     };
 
     // If the block begins exactly at a bar start, consider that bar.
-    if (std::fabs(ppqStart - barStartPPQ) < eps)
+    const int offsetSamples = triggerOffsetSamples.load(std::memory_order_relaxed);
+    const double offsetQ = (samplesPerQuarter > 0.0) ? ((double) offsetSamples / samplesPerQuarter) : 0.0;
+    const double lookaheadQ = (offsetQ < 0.0) ? -offsetQ : 0.0;
+
+    // If the block begins near bar start (or with negative offset, if early target falls in this block), consider current bar:
+    if (std::fabs(ppqStart - barStartPPQ) < eps || (offsetQ < 0.0 && barStartPPQ + offsetQ <= blockEndPPQ + eps && barStartPPQ + offsetQ >= ppqStart - eps))
         considerBarStart(barStartPPQ, currentBar);
 
-    // Consider any future bar starts that fall within this block (typically only the next bar).
-    // Use an explicit candidateBar counter so that bar indices align with host-provided bar counts
-    // when available (we derived `currentBar` above possibly from uiExternalBarNumber).
+    // Consider any future bar starts that fall within this block (taking into account negative offset lookahead):
     double nextBar = barStartPPQ + barLenQ;
     long long candidateBar = currentBar + 1;
-    while (nextBar <= blockEndPPQ + eps)
+    while ((nextBar - lookaheadQ) <= blockEndPPQ + eps)
     {
-        if (nextBar >= ppqStart - eps)
+        if ((nextBar - lookaheadQ) >= ppqStart - eps)
             considerBarStart(nextBar, candidateBar);
         nextBar += barLenQ;
         ++candidateBar;
@@ -3088,6 +3285,7 @@ void ClockSyncAudioProcessor::tryFirePattern(double ppqStart, double barLenQ, do
     // Clear mode-change suppression flag after evaluating all candidate bars in this block.
     if (patternModeJustChanged.load(std::memory_order_relaxed))
         patternModeJustChanged.store(false, std::memory_order_relaxed);
+    uiPatternBarActive.store(lastPatternFiredBar == currentBar || (mode == 1), std::memory_order_relaxed);
     if (pendingPatternCount == 0) return;
     // Emit Start messages for pattern PPQ times that fall within this block; remove them after emission.
     auto clockResolution = getClockResolution(); // not strictly needed
@@ -3138,7 +3336,7 @@ void ClockSyncAudioProcessor::tryFirePattern(double ppqStart, double barLenQ, do
             continue;
         }
         // Compute logical step for duplicate suppression before emission
-        long long barForStart = computeCurrentBar(targetPPQ, barLenQ);
+        long long barForStart = computeCurrentBar(targetPPQ + lookaheadQ + 1e-4, barLenQ);
         // Compute logical step using current swing mapping (quantized or linear)
         int stepForStart;
         {
@@ -3167,13 +3365,14 @@ void ClockSyncAudioProcessor::tryFirePattern(double ppqStart, double barLenQ, do
                 stepForStart = bestIdx + 1;
             }
         }
-        bool duplicate = isDuplicateStart(barForStart, stepForStart, sampleOffset);
+        bool duplicate = (sampleOffset == lastPatternStartSampleInBlock) || (sampleOffset == lastBarRestartStartSampleInBlock);
         bool allowPatternStart = shouldAllowGeneratedStart();
         if (!duplicate && allowPatternStart)
         {
             midi.addEvent(startMsg, sampleOffset);
             extClock.addEvent(startMsg, sampleOffset);
             startSampleForRunSignal = sampleOffset;
+            lastPatternStartSampleInBlock = sampleOffset;
             lastStartBar.store(barForStart, std::memory_order_relaxed);
             lastStartStep.store(stepForStart, std::memory_order_relaxed);
             lastBarEmitted = std::max(lastBarEmitted, barForStart);

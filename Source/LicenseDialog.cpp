@@ -107,7 +107,7 @@ void LicenseDialog::paint(juce::Graphics& graphics)
     graphics.fillRoundedRectangle(cardBounds.toFloat(), 16.0f);
 
     graphics.setColour(config_.accentColour.withAlpha(0.18f));
-    graphics.drawRoundedRectangle(cardBounds.toFloat().reduced(0.5f), 16.0f, 1.0f);
+    graphics.drawRoundedRectangle(cardBounds.toFloat().reduced(0.5f), 16.0f, 2.0f);
 }
 
 void LicenseDialog::resized()

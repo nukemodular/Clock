@@ -56,8 +56,8 @@
 </style>
 </head>
 <body>
-    <h1>Welcome to <span class="highlight">@TB_PRODUCT_NAME@</span></h1>
-    <p>This installer will install the <strong>@TB_PRODUCT_NAME@ v@PROJECT_VERSION@</strong> audio plugins onto your Mac.</p>
+    <h1>Welcome to toolboy's <span class="highlight">@TB_PRODUCT_NAME@</span></h1>
+    <p>This installer will install the <strong>@TB_PRODUCT_NAME@</strong> audio plugins onto your Mac.</p>
 
     <div class="box">
         <h2>Included Plug-In Formats:</h2>

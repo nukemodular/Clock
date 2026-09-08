@@ -4,7 +4,7 @@ if (APPLE)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum OS X deployment version")
 endif()
 
-project(ClockV3 VERSION 0.1.0 LANGUAGES C CXX)
+project(ClockV3 VERSION 1.1.0 LANGUAGES C CXX)
 
 option(CLOCKV3_DEMO_BUILD "Build the 30-minute demo variant instead of the full plugin" OFF)
 

@@ -25,7 +25,8 @@ public:
     // activeColour used for active steps; baseColour for inactive if hideInactive == false.
     // When hideInactive is true, inactive wedges are not filled (still hittable for editing).
     void draw(juce::Graphics& g, juce::Point<float> centre, float outerRadius, float innerRadius,
-              juce::Colour activeColour, juce::Colour baseColour, int hoverIndex, UiThemeColours& theme, bool hideInactive=false) const
+              juce::Colour activeColour, juce::Colour baseColour, int hoverIndex, UiThemeColours& theme,
+              bool hideInactive = false, int chaseIndex = -1, bool isPatternFiring = false) const
     {
         if (centre != cachedCentre || outerRadius != cachedOuterRadius || innerRadius != cachedInnerRadius)
         {
@@ -51,25 +52,66 @@ public:
             }
         }
 
-        for (int i=0;i<16;++i)
+        for (int i = 0; i < 16; ++i)
         {
             const auto& seg = cachedWedges[(size_t) i];
-            const bool on = steps[(size_t)i];
+            const bool on = steps[(size_t) i];
+            const bool isChase = (i == chaseIndex);
             bool drewFill = false;
-            if (on || !hideInactive)
+
+            if (isChase)
+            {
+                if (on)
+                {
+                    // Active pattern step under playhead:
+                    // When pattern is actively firing (patternBarActive), intense bright cyan + white highlight
+                    // Otherwise (normal playback), bright cyan highlight
+                    float fillAlpha = isPatternFiring ? 1.0f : 0.85f;
+                    g.setColour(theme.cyan().brighter(isPatternFiring ? 0.6f : 0.3f).withAlpha(fillAlpha));
+                    g.fillPath(seg);
+                    if (isPatternFiring)
+                    {
+                        g.setColour(juce::Colours::white.withAlpha(0.6f));
+                        g.fillPath(seg);
+                        g.setColour(juce::Colours::white);
+                        g.strokePath(seg, juce::PathStrokeType(1.8f));
+                    }
+                    else
+                    {
+                        g.setColour(theme.cyan().brighter(0.5f));
+                        g.strokePath(seg, juce::PathStrokeType(1.6f));
+                    }
+                }
+                else
+                {
+                    // Inactive pattern step (red outline) under playhead:
+                    // Chaselight highlights this wedge as playhead passes through
+                    float fillAlpha = isPatternFiring ? 0.55f : 0.35f;
+                    g.setColour(theme.cyan().withAlpha(fillAlpha));
+                    g.fillPath(seg);
+                    g.setColour(theme.cyan().withAlpha(isPatternFiring ? 0.95f : 0.75f));
+                    g.strokePath(seg, juce::PathStrokeType(1.5f));
+                }
+                drewFill = true;
+            }
+            else if (on || !hideInactive)
             {
                 juce::Colour fill = on ? activeColour.withAlpha(0.66f) : baseColour.withAlpha(0.33f);
-                if (!on && i==hoverIndex)
+                if (!on && i == hoverIndex)
                     fill = fill.brighter(0.4f);
                 g.setColour(fill);
                 g.fillPath(seg);
                 drewFill = true;
             }
-            // Always draw outline: active = cyan (high alpha), inactive = accent (fainter)
-            juce::Colour outline = on ? theme.cyan().withAlpha(0.95f)
-                                      : theme.accent().withAlpha(drewFill ? 0.45f : 0.35f);
-            g.setColour(outline);
-            g.strokePath(seg, juce::PathStrokeType(1.4f));
+
+            if (!isChase)
+            {
+                // Always draw outline: active = cyan (high alpha), inactive = accent (fainter)
+                juce::Colour outline = on ? theme.cyan().withAlpha(0.95f)
+                                          : theme.accent().withAlpha(drewFill ? 0.45f : 0.35f);
+                g.setColour(outline);
+                g.strokePath(seg, juce::PathStrokeType(1.4f));
+            }
         }
     }
 

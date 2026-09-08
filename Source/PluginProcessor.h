@@ -104,6 +104,7 @@ public:
     bool consumeUiHostStartPending() { return uiHostStartPending.exchange(false, std::memory_order_acq_rel); }
     // Consume a pending idx1 blink step set by pattern triggers (returns 1..16, or 0 if none)
     int consumeUiIdx1BlinkStep() { return uiBlinkIdx1Step.exchange(0, std::memory_order_acq_rel); }
+    bool isPatternBarActiveUI() const { return uiPatternBarActive.load(std::memory_order_relaxed); }
      bool isDemoBuildUI() const
      {
          #if CLOCKV3_DEMO
@@ -164,7 +165,7 @@ public:
     static inline const juce::String paramClockRateIndex { "clockRateIndex" }; // choice index: 0..3 => 1/32,1/16,1/8,1/4
     static inline const juce::String paramClickLevelDb    { "clickLevelDb" }; // -12..0 dB
     // New click parameters:
-    //  - paramClickRate: 0..4 discrete stages (0=off,1=4th,2=8th,3=16th,4=24ppq)
+    //  - paramClickRate: 0..6 discrete stages (0=off,1=beat,2=8th,3=16th,4=24ppq,5=48ppq,6=96ppq)
     //  - paramClickPulse: false=sample click (1-sample), true=1ms pulse
     static inline const juce::String paramClickRate      { "clickRate" };
     static inline const juce::String paramClickPulse     { "clickPulse" };
@@ -178,7 +179,7 @@ public:
     static inline const juce::String paramPatternBars { "patternBars" }; // OFF,1,2,4,8,16,32,64,RND
     static inline const juce::String paramPatternSteps { "patternSteps" }; // 16-bit bitmask persisted (default non-zero for first logical step)
     static inline const juce::String paramSyncLatchEnabled { "syncLatchEnabled" }; // Gated Sync Mode Toggle
-    // Pattern start fine-tune parameter removed
+    static inline const juce::String paramTriggerOffsetSamples { "triggerOffsetSamples" }; // -500..+500 samples timing offset for manual & auto triggers
 
         std::atomic<int> lastPatternBarsMode { 0 }; // track previous interval mode to detect changes
         std::atomic<bool> intervalModeChangedThisBlock { false }; // one-shot suppression flag: changing interval never emits Start
@@ -202,6 +203,14 @@ public:
     std::atomic<int> midiRemoteChannel   { 0 };  // 0=Omni, 1-16=Specific
     std::atomic<bool> syncLatchEnabled   { false }; // Gated Sync Mode Toggle
     std::atomic<bool> isGateOpen         { false }; // Runtime state for Gated Sync (Note Held)
+
+    void setPatternSteps(uint16_t mask) { patternStepsMask.store(mask, std::memory_order_relaxed); }
+    void setPatternBarsMode(int mode) { patternBarsMode.store(mode, std::memory_order_relaxed); }
+    int getTriggerOffsetSamples() const { return triggerOffsetSamples.load(std::memory_order_relaxed); }
+    void setTriggerOffsetSamples(int val) {
+        triggerOffsetSamples.store(val, std::memory_order_relaxed);
+        triggerOffsetChanged.store(true, std::memory_order_relaxed);
+    }
 
     // Helper: returns true if internally generated (non-host) Start messages are allowed right now.
         // Rule: If interval (patternBarsMode>0) is active AND the pattern step mask is empty (no bits), then
@@ -252,6 +261,7 @@ private:
     juce::AudioParameterFloat*  shuffleLinearParamObj = nullptr;
     juce::AudioParameterChoice* patternBarsParamObj = nullptr;
     juce::AudioParameterInt*    patternStepsParamObj = nullptr;
+    juce::AudioParameterInt*    triggerOffsetSamplesParamObj = nullptr;
 
     // Lock-free queue for parameter changes originating on the audio thread
     struct PendingParamChange {
@@ -290,6 +300,8 @@ private:
     double lastClockBlockWallMs { -1.0 };
     bool lastWasPlaying { false };
     long long lastTickIndex { std::numeric_limits<long long>::min() };
+    long long lastClickIndex { std::numeric_limits<long long>::min() };
+    int lastClickRateCached { -1 };
     // Bar-aligned scheduling
     int currentRateIndex { 1 }; // default 1 => 1/16 => 24
     int pendingRateIndex { -1 };
@@ -386,6 +398,7 @@ private:
     // schedule in-bar pattern targets immediately instead of waiting for the next interval bar.
     std::atomic<bool> patternMaskJustActivated { false };
     std::atomic<bool> patternModeJustChanged { false }; // one-block flag to suppress immediate pattern firing on interval change
+    std::atomic<bool> uiPatternBarActive { false }; // true when current bar has active pattern firing
     // Resync flag (rule set per workflow.md): mono pending target (bar,step). When set by a Start (and gate idx8 TRUE)
     // or by rate change (unconditional), or pattern completion (idx3≠1 & idx8 TRUE), it schedules a future Start at
     // offset step either in current bar (if ahead) or next bar (if behind). Replacement only if new target earlier.
@@ -423,8 +436,8 @@ private:
     void attemptScheduleResync(long long currentBar, int currentStep, int offsetStep, bool force /* rate change */);
     // Compute 1-based bar index for a given PPQ position (first bar == 1).
     long long computeCurrentBar(double ppqStart, double barLenQ) const { return (long long) std::floor(ppqStart / juce::jmax(1e-9, barLenQ)) + 1; }
-    void setPatternSteps(uint16_t mask) { patternStepsMask.store(mask, std::memory_order_relaxed); }
-    void setPatternBarsMode(int mode) { patternBarsMode.store(mode, std::memory_order_relaxed); }
+    std::atomic<int> triggerOffsetSamples { 0 }; // timing offset in samples (-2000..+2000) for manual & auto triggers
+    std::atomic<bool> triggerOffsetChanged { false };
 
     // Helpers
     int getClockResolution() const; // returns 48/24/12/6 based on currentRateIndex
